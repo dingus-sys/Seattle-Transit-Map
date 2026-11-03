@@ -61,6 +61,7 @@
     },
   };
   // Route-number tags carry their own background, so one palette reads in both themes.
+  const FLEX = { light: "#8a3cc0", dark: "#c47ef0" }; // Metro Flex zones
   const TAG = {
     link1: "#2e8540", link2: "#0a7cb8", linkT: "#e07b00", sounder: "#4b5563", amtrak: "#4b5563", streetcar: "#e0692a",
     monorail: "#6b7280", rapidride: "#d0213b", swift: "#1f6fe0", frequent: "#08876b", local: "#2f7fd3",
@@ -374,6 +375,9 @@
       { id: "access-line", type: "line", source: "access", paint: { "line-color": acc, "line-width": 1.4, "line-dasharray": [3, 2], "line-opacity": 0.8 } },
       { id: "dart-fill", type: "fill", source: "dart", paint: { "fill-color": LINE[theme].dart, "fill-opacity": 0.1 } },
       { id: "dart-line", type: "line", source: "dart", paint: { "line-color": LINE[theme].dart, "line-width": 1.2, "line-dasharray": [2, 2] } },
+      { id: "flex-fill", type: "fill", source: "flex", paint: { "fill-color": FLEX[theme], "fill-opacity": theme === "dark" ? 0.12 : 0.09 } },
+      { id: "flex-line", type: "line", source: "flex", paint: { "line-color": FLEX[theme], "line-opacity": 0.85,
+        "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1, 13, 2, 16, 2.6] } },
     ];
   }
   function liveLayers(P) {
@@ -414,16 +418,14 @@
           "text-variable-anchor": ["right", "left", "top", "bottom"], "text-radial-offset": 1.15, "text-justify": "auto",
           "text-max-width": 8, "text-padding": 2 },
         paint: { "text-color": P.place, "text-halo-color": P.halo, "text-halo-width": 2 } },
-      { id: "flex", type: "symbol", source: "flex", minzoom: 10.5,
-        layout: { "text-field": ["concat", "Metro Flex · ", ["get", "name"]], "text-font": F_BOLD, "text-size": 11.5,
-          "text-max-width": 9, "icon-image": "flexpin", "icon-anchor": "bottom", "text-anchor": "top", "text-offset": [0, 0.2] },
-        paint: { "text-color": theme === "dark" ? "#e3b4ff" : "#7a2fa6", "text-halo-color": P.halo, "text-halo-width": 1.6 } },
+      { id: "flex", type: "symbol", source: "flexlabels", minzoom: 10,
+        layout: { "text-field": ["concat", "Metro Flex\n", ["get", "name"]], "text-font": F_BOLD,
+          "text-size": ["interpolate", ["linear"], ["zoom"], 10, 10.5, 14, 12.5], "text-max-width": 10, "text-padding": 4 },
+        paint: { "text-color": theme === "dark" ? "#e3b4ff" : "#6a2593", "text-halo-color": P.halo, "text-halo-width": 1.8 } },
       { id: "badges", type: "symbol", source: "netlabels", minzoom: 10.4,
         layout: { "icon-image": ["concat", "b:", ["get", "k"]], "icon-padding": 4, "symbol-sort-key": ["get", "p"] } },
       { id: "sel-badges", type: "symbol", source: "sellabels",
-        layout: { "symbol-placement": "line", "symbol-spacing": ["interpolate", ["linear"], ["zoom"], 10, 900, 14, 640, 17, 420],
-          "icon-image": ["concat", "b:", ["get", "k"]], "icon-rotation-alignment": "viewport",
-          "icon-pitch-alignment": "viewport", "icon-padding": 2 } },
+        layout: { "icon-image": ["concat", "b:", ["get", "k"]], "icon-padding": 2 } },
     ];
   }
 
@@ -838,7 +840,20 @@
         labels.push({ type: "Feature", properties: { k: t.k, p: t.p }, geometry: { type: "Point", coordinates: toLL(q) } });
       }
     }
-    if (selIdx >= 0) for (const E of EDGES) if (E.l.includes(selIdx)) selLabels.push({ type: "Feature", properties: { k: `${theme[0]}:${selIdx}` }, geometry: { type: "LineString", coordinates: E.c } });
+    // The selected route's own tag: along its whole path about every 550 px, never two within ~380 px.
+    if (selIdx >= 0) {
+      const gap = 380 * mpp, step = 550 * mpp, pts = [];
+      for (const E of EDGES.filter((x) => x.l.includes(selIdx)).sort((a, b) => b.len - a.len)) {
+        const cum = E.cum || (E.cum = cumLen(E.pts));
+        const n = Math.max(1, Math.floor(E.len / step));
+        for (let i = 0; i < n; i++) {
+          const q = pointAt(E.pts, cum, E.len * (i + 0.5) / n);
+          if (pts.some((o) => Math.hypot(o[0] - q[0], o[1] - q[1]) < gap)) continue;
+          pts.push(q);
+          selLabels.push({ type: "Feature", properties: { k: `${theme[0]}:${selIdx}` }, geometry: { type: "Point", coordinates: toLL(q) } });
+        }
+      }
+    }
     map.getSource("net").setData({ type: "FeatureCollection", features: feats });
     if (hoverKey) { hoverKey = ""; map.getSource("hover").setData({ type: "FeatureCollection", features: [] }); }
     map.getSource("sel").setData({ type: "FeatureCollection", features: selFeats });
@@ -913,18 +928,12 @@
     ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
     ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
   }
-  function flexPin() {
-    const dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
-    const s = 22 * dpr, cv = document.createElement("canvas");
-    cv.width = s; cv.height = s;
-    const ctx = cv.getContext("2d");
-    ctx.fillStyle = theme === "dark" ? "#c47ef0" : "#7a2fa6";
-    ctx.beginPath(); ctx.arc(s / 2, s * 0.4, s * 0.32, Math.PI * 0.85, Math.PI * 2.15); ctx.lineTo(s / 2, s * 0.95); ctx.closePath(); ctx.fill();
-    ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(s / 2, s * 0.4, s * 0.13, 0, Math.PI * 2); ctx.fill();
-    const d = ctx.getImageData(0, 0, s, s);
-    if (map.hasImage("flexpin")) map.removeImage("flexpin");
-    map.addImage("flexpin", { width: s, height: s, data: d.data }, { pixelRatio: dpr });
+  function flexHTML(p) {
+    const row = (d, t) => `<tr><th>${d}</th><td>${t ? esc(t) : "No service"}</td></tr>`;
+    return `<div class="pop"><h3>Metro Flex · ${esc(p.name)}</h3><p>On-demand rides anywhere inside this zone, booked in the Metro Flex app or by phone, for the price of a bus fare.</p>`
+      + `<table class="hours">${row("Weekdays", p.weekdays)}${row("Saturday", p.saturday)}${row("Sunday", p.sunday)}</table></div>`;
   }
+
 
   // ---------------------------------------------------------------- data → GeoJSON
   function stationsGeoJSON() {
@@ -967,7 +976,6 @@
       }
     }
     map.getSource("stations").setData(stationsGeoJSON());
-    flexPin();
     rebuild();
     applySelectionStyle();
     if (!selected) showHome(true);
@@ -1328,7 +1336,7 @@
       water: [P.ferry, 3.2, "dash"], dart: [P.dart, 3, "dash"],
     }[l.key];
     if (one) return `<svg viewBox="0 0 30 30" aria-hidden="true">${tube(one[0], one[1], 15, one[2])}</svg>`;
-    if (l.key === "flex") return `<svg viewBox="0 0 30 30" aria-hidden="true"><path d="M15 24 L10 15.5 A6 6 0 1 1 20 15.5 Z" fill="${theme === "dark" ? "#c47ef0" : "#7a2fa6"}"/><circle cx="15" cy="12" r="2.4" fill="#fff"/></svg>`;
+    if (l.key === "flex") return `<svg viewBox="0 0 30 30" aria-hidden="true"><rect x="5" y="7" width="20" height="16" rx="4" fill="${FLEX[theme]}" fill-opacity="0.18" stroke="${FLEX[theme]}" stroke-width="2"/></svg>`;
     if (l.key === "access") return `<svg viewBox="0 0 30 30" aria-hidden="true"><rect x="6" y="8" width="18" height="14" rx="4" fill="#7b5cc4" fill-opacity=".18" stroke="#7b5cc4" stroke-width="1.4" stroke-dasharray="3 2"/></svg>`;
     if (l.key === "live") return `<svg viewBox="0 0 30 30" aria-hidden="true"><circle cx="15" cy="15" r="9" fill="${P.frequent}" opacity=".18"/><path d="M15 7.5 L20.5 19.5 L15 16.8 L9.5 19.5 Z" fill="${P.frequent}" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>`;
     if (l.key === "stops") return `<svg viewBox="0 0 30 30" aria-hidden="true">${tube(P.frequent, 4, 15, "glass")}<circle cx="11" cy="15" r="3.2" fill="#fff" stroke="#8e8e93" stroke-width="1.5"/><circle cx="20" cy="15" r="3.2" fill="#fff" stroke="#8e8e93" stroke-width="1.5"/></svg>`;
@@ -1508,7 +1516,7 @@
     const vis = (key, ids) => ids.forEach((id) => map.getLayer(id) && map.setLayoutProperty(id, "visibility", enabled.has(key) ? "visible" : "none"));
     vis("dart", ["dart-fill", "dart-line"]);
     vis("access", ["access-fill", "access-line"]);
-    vis("flex", ["flex"]);
+    vis("flex", ["flex", "flex-fill", "flex-line"]);
     vis("stops", ["stops", "stop-name"]);
     vis("live", ["veh-icon", "veh-label"]);
     if (enabled.has("live")) startLive(); else stopLive();
@@ -1601,7 +1609,7 @@
       if (hit.length) {
         const f = hit.find((h) => h.layer.id === "stations") || hit[0];
         if (f.layer.id === "flex") {
-          openPopup(f.geometry.coordinates, `<div class="pop"><h3>Metro Flex · ${esc(f.properties.name)}</h3><p>An on-demand ride anywhere inside this zone, booked in the Metro Flex app or by phone, for a bus fare. King County doesn't publish the zone boundaries as open data, so the pin marks the zone's label on Metro's system map.</p></div>`, "280px");
+          openPopup(f.geometry.coordinates, flexHTML(f.properties), "290px");
           return;
         }
         selectStop(f.properties.id, { fly: false });
@@ -1613,10 +1621,10 @@
         openPopup(e.lngLat, `<div class="pop"><h3>${rs.length} routes on this street</h3>${routeRows(rs.slice(0, 16))}</div>`);
         return;
       }
-      const area = map.queryRenderedFeatures(e.point, { layers: ["dart-fill", "access-fill"].filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none") });
+      const area = map.queryRenderedFeatures(e.point, { layers: ["flex-fill", "dart-fill", "access-fill"].filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none") });
       if (area.length) {
-        const f = area[0];
-        const html = f.layer.id === "dart-fill"
+        const f = area.find((a) => a.layer.id === "flex-fill") || area.find((a) => a.layer.id === "dart-fill") || area[0];
+        const html = f.layer.id === "flex-fill" ? flexHTML(f.properties) : f.layer.id === "dart-fill"
           ? `<div class="pop"><h3>Dial-a-Ride area · route ${esc(f.properties.route)}</h3><p>Inside this area the DART bus can leave its regular path to pick you up or drop you off. Ask King County Metro to arrange an off-route trip.</p>${f.properties.slug && RBY[f.properties.slug] ? routeRows([RBY[f.properties.slug]]) : ""}</div>`
           : `<div class="pop"><h3>Access paratransit (approximate)</h3><p>Access serves riders with disabilities who can't use fixed-route buses, within ¾ mile of Metro's regular routes while they run. Riders apply for eligibility and book trips ahead. This shading uses the ¾-mile rule around all-day routes.</p></div>`;
         openPopup(e.lngLat, html, "290px");
@@ -1765,6 +1773,7 @@
           dart: { type: "geojson", data: AREAS.dart },
           access: { type: "geojson", data: AREAS.access },
           flex: { type: "geojson", data: AREAS.flex },
+          flexlabels: { type: "geojson", data: AREAS.flexLabels || empty },
           vehicles: { type: "geojson", data: empty },
           mask: { type: "geojson", data: maskGeoJSON() },
         },
@@ -1783,10 +1792,8 @@
     map.on("styleimagemissing", (e) => {
       if (e.id.startsWith("veh:")) drawVehicle(e.id);
       else if (e.id.startsWith("b:")) drawBadge(e.id);
-      else if (e.id === "flexpin") flexPin();
     });
     map.on("load", () => {
-      flexPin();
       map.getSource("stations").setData(stationsGeoJSON());
       map.getSource("stops").setData(stopsGeoJSON());
       applyLayerToggles();

@@ -55,7 +55,7 @@ FREEWAYS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "freeways.js
 
 
 def freeway_lines():
-    """Freeway centerlines (OpenMapTiles "motorway", ramps included, tunnels left out) as
+    """Freeway centerlines (OpenMapTiles "motorway", ramps and short tunnels included) as
     lon/lat lists, read from the cached z12 base-map tiles. The result is saved to
     pipeline/freeways.json so builds without the tiles (the weekly refresh) can use it too."""
     import mapbox_vector_tile
@@ -72,7 +72,7 @@ def freeway_lines():
         path = lambda x, y: os.path.join(root, v, str(z), str(x), f"{y}.pbf")  # noqa: E731
         if not all(os.path.exists(path(x, y)) for x, y in tiles):
             continue
-        out = []
+        out, tunnels = [], []
         for tx, ty in tiles:
             d = mapbox_vector_tile.decode(open(path(tx, ty), "rb").read(), default_options={"y_coord_down": True})
             tr = d.get("transportation")
@@ -80,16 +80,25 @@ def freeway_lines():
                 continue
             ext = tr["extent"]
             for feat in tr["features"]:
-                if feat["properties"].get("class") != "motorway" or feat["properties"].get("brunnel") == "tunnel":
+                if feat["properties"].get("class") != "motorway":
                     continue
                 geom = feat["geometry"]
                 parts = [geom["coordinates"]] if geom["type"] == "LineString" else geom["coordinates"] if geom["type"] == "MultiLineString" else []
                 for part in parts:
                     if len(part) < 2:
                         continue
-                    out.append([[round((tx + gx / ext) / n * 360 - 180, 5),
-                                 round(math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * (ty + gy / ext) / n)))), 5)]
-                                for gx, gy in part])
+                    line = [[round((tx + gx / ext) / n * 360 - 180, 5),
+                             round(math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * (ty + gy / ext) / n)))), 5)]
+                            for gx, gy in part]
+                    (tunnels if feat["properties"].get("brunnel") == "tunnel" else out).append(line)
+        # Short freeway tunnels (I-90 under Mount Baker, the lids) count; long ones (SR 99 under
+        # downtown) don't, so buses on the streets above aren't pulled onto them.
+        from shapely.ops import linemerge
+        merged = linemerge([LineString(t) for t in tunnels]) if tunnels else None
+        for t in getattr(merged, "geoms", [merged] if merged is not None else []):
+            xs, ys = fwd.transform(*zip(*t.coords))
+            if LineString(list(zip(xs, ys))).length < 1600:
+                out.append([list(c) for c in t.coords])
         if out:
             json.dump({"source": f"OpenFreeMap {v}, z{z}", "lines": out}, open(FREEWAYS, "w"), separators=(",", ":"))
             return out

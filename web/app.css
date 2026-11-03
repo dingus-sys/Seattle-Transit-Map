@@ -387,6 +387,10 @@ table.sched td.good { color: var(--good); font-weight: 650; }
 .pop h3 { margin: 2px 34px 8px 4px; font: 700 15px/1.25 var(--font-display); letter-spacing: -.01em; }
 .pop p { margin: 0 4px 8px; color: var(--muted); font-size: 13.5px; }
 .pop .group { background: var(--fill); }
+.pop .hours { margin: 0 4px 4px; border-collapse: collapse; width: calc(100% - 8px); font-size: 13.5px; background: var(--fill); border-radius: 12px; overflow: hidden; }
+.pop .hours th, .pop .hours td { padding: 6px 10px; text-align: left; font-weight: 500; }
+.pop .hours th { color: var(--muted); font-weight: 600; width: 40%; }
+.pop .hours tr + tr th, .pop .hours tr + tr td { border-top: 1px solid rgba(127, 127, 127, .16); }
 .pop .route-row .chev { display: none; }
 .maplibregl-ctrl-bottom-right { right: max(0px, env(safe-area-inset-right, 0px)); bottom: env(safe-area-inset-bottom, 0px); }
 .maplibregl-ctrl-attrib { background: var(--glass) !important; -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); color: var(--muted); font-size: 10.5px; border-radius: 12px !important; }

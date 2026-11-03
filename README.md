@@ -20,7 +20,7 @@ pipeline/         Python build steps (run in this order by build_all.py)
   config.py         map area (REGION) and data sources
   build_basemap.py  base map tiles + label fonts from OpenFreeMap, trimmed and packed
   process_gtfs.py   routes, categories, frequencies, hours, stops (Puget Sound GTFS)
-  build_areas.py    DART areas, Access area, Metro Flex pins
+  build_areas.py    DART areas, Access area, Metro Flex zones
   build_graph.py    the shared-corridor network and ribbon order
   build_site.py     assembles web/ into site/index.html (+ artifact.html)
 web/              page template, styles and app script
@@ -89,7 +89,8 @@ possible), and when a line must change sides it eases across over a short distan
   Ferries, Kitsap Transit, Seattle Center Monorail, Amtrak).
 - Live vehicle positions: OneBusAway Puget Sound. When live data isn't available the map
   shows positions estimated from the timetable.
-- DART service areas and Metro Flex zone label points: King County GIS (ArcGIS Online).
+- DART service areas: King County GIS (ArcGIS Online).
+- Metro Flex zones and hours: the service-area map on King County Metro's Metro Flex page.
 - Access paratransit area: computed with the ADA ¾-mile rule around Metro's all-day
   routes; approximate.
 - Base map: © OpenStreetMap contributors, OpenMapTiles schema, served by OpenFreeMap.
