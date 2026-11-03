@@ -1,5 +1,8 @@
 name: Publish map to GitHub Pages
 
+# Needs Settings -> Pages -> Source: "GitHub Actions" (free for public repositories).
+# Optional: a repository secret OBA_API_KEY turns on live vehicle positions.
+
 on:
   push:
     branches: [main]
