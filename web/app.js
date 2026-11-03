@@ -62,14 +62,14 @@
   };
   // Route-number tags carry their own background, so one palette reads in both themes.
   const TAG = {
-    link1: "#2e8540", link2: "#0a7cb8", sounder: "#4b5563", amtrak: "#4b5563", streetcar: "#e0692a",
+    link1: "#2e8540", link2: "#0a7cb8", linkT: "#e07b00", sounder: "#4b5563", amtrak: "#4b5563", streetcar: "#e0692a",
     monorail: "#6b7280", rapidride: "#d0213b", swift: "#1f6fe0", frequent: "#08876b", local: "#2f7fd3",
     peak: "#94703c", shuttle: "#e3a118", dart: "#b2467c", watertaxi: "#13809b", ferry: "#35639a",
   };
 
   const LAYER_GROUPS = [
     { title: "Trains", items: [
-      { key: "link", cats: ["link"], name: "Link light rail", desc: "1 Line and 2 Line", on: true },
+      { key: "link", cats: ["link"], name: "Link light rail", desc: "1 Line, 2 Line and Tacoma's T Line", on: true },
       { key: "rail", cats: ["sounder", "amtrak"], name: "Sounder & Amtrak", desc: "From King Street Station", on: true },
       { key: "streetcar", cats: ["streetcar"], name: "Streetcar", desc: "South Lake Union and First Hill", on: true },
       { key: "monorail", cats: ["monorail"], name: "Monorail", desc: "Westlake Center to Seattle Center", on: true },
@@ -156,7 +156,7 @@
 
   const enabledCat = (cat) => LAYERS.some((l) => l.cats.includes(cat) && enabled.has(l.key));
   const keyColor = (key, th = theme) => LINE[th][key] || LINE[th].local;
-  const tagColor = (r) => (r.cat === "link" ? (r.label === "1" ? TAG.link1 : TAG.link2) : TAG[r.cat] || TAG.local);
+  const tagColor = (r) => (r.cat === "link" ? (r.label === "1" ? TAG.link1 : r.label === "T" ? TAG.linkT : TAG.link2) : TAG[r.cat] || TAG.local);
   const tagText = (r) => (r.cat === "shuttle" ? "#1d1d1f" : "#ffffff");
   const isRound = (r) => r.cat === "link";
   const shortLabel = (r) => {

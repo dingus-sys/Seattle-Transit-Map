@@ -1,10 +1,12 @@
 # King County Transit Map
 
-An interactive, zoomable map of public transit from Lynnwood and Monroe to Federal Way,
-Vashon and the Snoqualmie Valley: Link light rail, Sounder, Amtrak, the streetcars, the
-Monorail, RapidRide, Swift, every King County Metro, Community Transit, Pierce, Everett
-and ST Express bus, the Water Taxi, state and Kitsap ferries, Dial-a-Ride (DART) areas,
-Metro Flex zones and the Access paratransit area, plus live vehicle positions.
+An interactive, zoomable map of Puget Sound public transit from Everett and Marysville to
+Tacoma, Lakewood and Puyallup, across to Bremerton, Bainbridge, Port Orchard, Gig Harbor
+and Vashon, and east to Monroe and North Bend: Link light rail (1, 2 and T Lines), Sounder,
+Amtrak, the streetcars, the Monorail, RapidRide, Swift, every King County Metro, Community
+Transit, Pierce Transit, Everett Transit, Kitsap Transit and ST Express bus, the Water Taxi,
+state and Kitsap ferries, Dial-a-Ride (DART) areas, Metro Flex zones and the Access
+paratransit area, plus live vehicle positions.
 
 Lines follow the real streets. Where several routes share a street, they're drawn
 side by side as ribbons in a consistent order, so you can tell them apart in busy

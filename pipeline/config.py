@@ -10,18 +10,19 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SITE = os.path.join(ROOT, "site")
 CACHE = os.environ.get("TRANSIT_CACHE", "/root/build")
 
-# Detailed map area: Lynnwood, Mill Creek and Monroe in the north; Federal Way in the south;
-# the Eastside out to Issaquah, Sammamish and the Snoqualmie Valley (North Bend); Vashon.
+# Detailed map area: Everett, Mukilteo and Marysville in the north; Tacoma, Lakewood,
+# Puyallup and Spanaway in the south; Kitsap (Bremerton, Bainbridge, Port Orchard, Gig Harbor)
+# in the west; the Eastside out to Monroe and North Bend.
 REGION = {
-    "name": "Seattle and King County",
-    "west": -122.53,
-    "south": 47.28,
-    "east": -121.74,
-    "north": 47.93,
+    "name": "Puget Sound",
+    "west": -122.75,
+    "south": 47.10,
+    "east": -121.70,
+    "north": 48.08,
 }
 
-# Wider, low-detail context ring for the zoomed-out view (Everett to Tacoma).
-CONTEXT = {"west": -123.05, "south": 47.05, "east": -121.40, "north": 48.15}
+# Wider, low-detail context ring for the zoomed-out view.
+CONTEXT = {"west": -123.30, "south": 46.85, "east": -121.20, "north": 48.40}
 
 # Base-map zoom levels: context ring up to CONTEXT_MAXZOOM, detail area up to DETAIL_MAXZOOM.
 CONTEXT_MAXZOOM = 10
