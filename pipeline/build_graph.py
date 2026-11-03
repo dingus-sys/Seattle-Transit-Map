@@ -696,6 +696,68 @@ def unhook(g, mask=None, reach=120.0, max_angle=35.0):
     return fixed
 
 
+def smooth_run(coords, sigma=80.0, step=8.0, taper=150.0, max_move=18.0):
+    """Gaussian-smooth a polyline (meters) along its length, keeping both ends where they are.
+
+    Freeway segments come from the traced middle of several route shapes that hop between
+    carriageways and ramps, so they drift 10-20 m side to side over a few hundred meters. A
+    smoothing window of a few hundred meters takes that out while keeping freeway curves
+    (radius 500 m and up) within a few meters. The smoothing fades in over `taper` meters from
+    each end so the segment still meets its junctions exactly."""
+    ls = LineString(coords)
+    L = ls.length
+    if L < 3 * step:
+        return list(coords)
+    n = int(L // step) + 1
+    d = np.linspace(0, L, n)
+    P = np.array([ls.interpolate(x).coords[0] for x in d])
+    half = int(3 * sigma / step)
+    k = np.exp(-0.5 * (np.arange(-half, half + 1) * step / sigma) ** 2)
+    pad = np.vstack([2 * P[0] - P[half:0:-1], P, 2 * P[-1] - P[-2:-half - 2:-1]])  # odd reflection: keeps straight ends straight
+    sm = np.column_stack([np.convolve(pad[:, j], k / k.sum(), mode="valid") for j in (0, 1)])
+    w = np.clip(np.minimum(d, L - d) / taper, 0, 1)
+    w = w * w * (3 - 2 * w)
+    delta = (sm - P) * w[:, None]
+    # never more than max_move: enough to take out the drift, not enough to flatten a loop ramp
+    mag = np.hypot(delta[:, 0], delta[:, 1])
+    delta *= np.minimum(1, max_move / np.maximum(mag, 1e-9))[:, None]
+    out = P + delta
+    out[0], out[-1] = coords[0], coords[-1]
+    return list(LineString(out).simplify(0.6).coords)
+
+
+def straighten_freeways(g, mask, min_run=250.0):
+    """Smooth the parts of segments that run along freeways (see smooth_run). Street parts are
+    left alone: there a bend is usually a real turn."""
+    if mask is None:
+        return 0
+    from shapely.prepared import prep
+    inside = prep(mask)
+    from shapely.geometry import Point
+    done = 0
+    for e in g.edges.values():
+        c = e["c"]
+        if len(c) < 4:
+            continue
+        flag = [inside.contains(Point(p)) for p in c]
+        out, i, changed = [], 0, False
+        while i < len(c):
+            j = i
+            while j + 1 < len(c) and flag[j + 1] == flag[i]:
+                j += 1
+            run = c[i:j + 1]
+            if flag[i] and len(run) >= 4 and LineString(run).length >= min_run:
+                run = smooth_run(run)
+                changed = True
+            out.extend(run if not out else run[(1 if out[-1] == run[0] else 0):])
+            i = j + 1
+        if changed:
+            out[0], out[-1] = c[0], c[-1]
+            e["c"] = out
+            done += 1
+    return done
+
+
 def bearing_at(g, eid, n, dist=25.0):
     c = g.coords_from(eid, n)
     ls = LineString(c)
@@ -846,9 +908,11 @@ def build_layer(routes, rank, name, mask=None):
     merge_chains(g, same=lambda e1, e2: e1["lines"] == e2["lines"])
     moved, replaced = refine_geometry(g, routes, rank)
     hooks = unhook(g, mask)
+    smoothed = straighten_freeways(g, mask)
     order_lines(g, rank)
     print(f"  {name}: {len(routes)} routes -> {len(g.edges)} edges, {fixed} gap segments filled, "
           f"{trimmed} stubs trimmed, {folded} detours folded, {hooks} ramp hooks straightened, "
+          f"{smoothed} freeway stretches smoothed, "
           f"{moved} junctions moved, "
           f"{replaced} segments on real shapes ({time.time() - t0:.0f}s)", flush=True)
     return g
