@@ -1636,7 +1636,7 @@ table.sched td.good { color: var(--good); font-weight: 650; }
       return `Live · ${live.count} running now · updated ${sec < 5 ? "just now" : sec + " s ago"}`;
     }
     if (mode === "est") {
-      const why = !LIVE ? " (live positions on the website)" : Date.now() < live.pauseUntil ? " (live feed busy)" : live.error ? " (live feed unreachable)" : "";
+      const why = !LIVE ? (MODE === "bundled" ? " (live positions on the website)" : " (live feed not set up)") : Date.now() < live.pauseUntil ? " (live feed busy)" : live.error ? " (live feed unreachable)" : "";
       return `Estimated from the timetable · ${live.count} running now${why}`;
     }
     return "Loading…";
