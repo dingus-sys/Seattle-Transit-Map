@@ -43,11 +43,72 @@ LAYERS = {
 }
 
 RES = 4.0      # raster cell size in meters
+R_FWY = 52.0   # merge radius on freeways: both carriageways and the ramps become one line
 R = 15.0       # merge radius: shapes closer than ~2R share a corridor
 SNAP = R + 7   # distance at which a route is considered to use an edge
 
 fwd = Transformer.from_crs(4326, 32610, always_xy=True)
 inv = Transformer.from_crs(32610, 4326, always_xy=True)
+
+
+FREEWAYS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "freeways.json")
+
+
+def freeway_lines():
+    """Freeway centerlines (OpenMapTiles "motorway", ramps included, tunnels left out) as
+    lon/lat lists, read from the cached z12 base-map tiles. The result is saved to
+    pipeline/freeways.json so builds without the tiles (the weekly refresh) can use it too."""
+    import mapbox_vector_tile
+    root = os.path.join(CACHE, "tiles_raw")
+    z = 12
+    n = 2 ** z
+    x0 = int((REGION["west"] + 180) / 360 * n)
+    x1 = int((REGION["east"] + 180) / 360 * n)
+    lat2y = lambda lat: int((1 - math.log(math.tan(math.radians(lat)) + 1 / math.cos(math.radians(lat))) / math.pi) / 2 * n)  # noqa: E731
+    y0, y1 = lat2y(REGION["north"]), lat2y(REGION["south"])
+    versions = sorted(os.listdir(root), reverse=True) if os.path.isdir(root) else []
+    for v in versions:
+        tiles = [(x, y) for x in range(x0, x1 + 1) for y in range(y0, y1 + 1)]
+        path = lambda x, y: os.path.join(root, v, str(z), str(x), f"{y}.pbf")  # noqa: E731
+        if not all(os.path.exists(path(x, y)) for x, y in tiles):
+            continue
+        out = []
+        for tx, ty in tiles:
+            d = mapbox_vector_tile.decode(open(path(tx, ty), "rb").read(), default_options={"y_coord_down": True})
+            tr = d.get("transportation")
+            if not tr:
+                continue
+            ext = tr["extent"]
+            for feat in tr["features"]:
+                if feat["properties"].get("class") != "motorway" or feat["properties"].get("brunnel") == "tunnel":
+                    continue
+                geom = feat["geometry"]
+                parts = [geom["coordinates"]] if geom["type"] == "LineString" else geom["coordinates"] if geom["type"] == "MultiLineString" else []
+                for part in parts:
+                    if len(part) < 2:
+                        continue
+                    out.append([[round((tx + gx / ext) / n * 360 - 180, 5),
+                                 round(math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * (ty + gy / ext) / n)))), 5)]
+                                for gx, gy in part])
+        if out:
+            json.dump({"source": f"OpenFreeMap {v}, z{z}", "lines": out}, open(FREEWAYS, "w"), separators=(",", ":"))
+            return out
+    if os.path.exists(FREEWAYS):
+        return json.load(open(FREEWAYS))["lines"]
+    return []
+
+
+def freeway_mask():
+    """Freeway corridors as one polygon in meters. Routes inside it are drawn wider so that both
+    directions of a freeway, which can run 30-80 m apart, collapse into a single line."""
+    from shapely.ops import unary_union
+    lines = []
+    for part in freeway_lines():
+        xs, ys = fwd.transform(*zip(*part))
+        lines.append(LineString(list(zip(xs, ys))))
+    if not lines:
+        return None
+    return unary_union([l.buffer(40, quad_segs=4) for l in lines]).simplify(5)
 
 
 def layer_of(cat):
@@ -76,21 +137,26 @@ def load_routes():
     return routes, rank
 
 
-def rasterize(routes):
+def rasterize(routes, mask=None):
     xs, ys = fwd.transform([REGION["west"], REGION["east"], REGION["west"], REGION["east"]],
                            [REGION["south"], REGION["south"], REGION["north"], REGION["north"]])
     x0, x1, y0, y1 = min(xs) - 50, max(xs) + 50, min(ys) - 50, max(ys) + 50
     W, H = int((x1 - x0) / RES) + 1, int((y1 - y0) / RES) + 1
     img = Image.new("1", (W, H), 0)
     d = ImageDraw.Draw(img)
-    w = int(round(2 * R / RES)) | 1
-    rr = R / RES
-    for g in routes.values():
-        for p in g.geoms:
+    def draw(geom, radius):
+        w, rr = int(round(2 * radius / RES)) | 1, radius / RES
+        for p in getattr(geom, "geoms", [geom]):
+            if p.geom_type != "LineString" or len(p.coords) < 2:
+                continue
             pts = [((x - x0) / RES, (y1 - y) / RES) for x, y in p.coords]
             d.line(pts, fill=1, width=w, joint="curve")
             for px, py in (pts[0], pts[-1]):
                 d.ellipse([px - rr, py - rr, px + rr, py + rr], fill=1)
+    for g in routes.values():
+        draw(g, R)
+        if mask is not None and g.intersects(mask):
+            draw(g.intersection(mask), R_FWY)
     arr = np.array(img, dtype=bool)
     # Fill pinholes where two nearly-parallel shapes almost touch; they would become tiny
     # rings in the centerline. ~500 m² is far smaller than a city block, so streets survive.
@@ -258,19 +324,21 @@ def smooth(g):
         e["c"] = chaikin(c, 2) if len(c) > 2 else c
 
 
-def assign_lines(g, routes):
+def assign_lines(g, routes, mask=None):
     eids = list(g.edges)
     geoms = [LineString(g.edges[k]["c"]) for k in eids]
     tree = shapely.STRtree(geoms)
     members = defaultdict(set)
+    on_fwy = [mask is not None and line.interpolate(0.5, normalized=True).within(mask) for line in geoms]
     for slug, rg in routes.items():
-        for idx in tree.query(rg, predicate="dwithin", distance=SNAP):
+        for idx in tree.query(rg, predicate="dwithin", distance=R_FWY + 10):
             line = geoms[idx]
+            snap = R_FWY + 10 if on_fwy[idx] else SNAP
             L = line.length
             trim = min(2 * R, L * 0.25)
             n = max(3, int((L - 2 * trim) / 6))
             pts = [line.interpolate(trim + (L - 2 * trim) * t / (n - 1)) for t in range(n)]
-            ok = shapely.dwithin(pts, rg, SNAP)
+            ok = shapely.dwithin(pts, rg, snap)
             if ok.mean() >= 0.7:
                 members[eids[idx]].add(slug)
     for k in eids:
@@ -279,6 +347,114 @@ def assign_lines(g, routes):
             g.remove(k)
     for n in [n for n, s in g.adj.items() if not s]:
         del g.adj[n]
+
+
+def trim_stubs(g, routes, max_len=140.0, mask=None):
+    """Drop a route from short dead-end pieces that aren't one of its real ends: leftovers
+    of ramps and station loops that would draw as little hooks. Near freeways, where ramps
+    run alongside the main line and pick up its routes, longer pieces (450 m) go too."""
+    near_fwy = mask.buffer(60) if mask is not None else None
+    limit = {}
+    for eid, e in g.edges.items():
+        mid = LineString(e["c"]).interpolate(0.5, normalized=True)
+        limit[eid] = 450.0 if near_fwy is not None and near_fwy.contains(mid) else max_len
+    removed = 0
+    for slug, rg in routes.items():
+        ends = [pt for p in rg.geoms for pt in (p.coords[0], p.coords[-1])]
+        changed = True
+        while changed:
+            changed = False
+            deg = defaultdict(list)
+            for eid, e in g.edges.items():
+                if slug in e["lines"] and e["a"] != e["b"]:
+                    deg[e["a"]].append(eid)
+                    deg[e["b"]].append(eid)
+            for n, eids in deg.items():
+                if len(eids) != 1:
+                    continue
+                if min(math.dist(g.pos[n], t) for t in ends) < 4 * R:
+                    continue
+                eid = eids[0]
+                other = g.other(eid, n)
+                if len(deg.get(other, [])) < 2 or g.length(eid) > limit.get(eid, max_len):
+                    continue
+                g.edges[eid]["lines"] = g.edges[eid]["lines"] - {slug}
+                removed += 1
+                changed = True
+                break
+    for eid in [k for k, e in g.edges.items() if not e["lines"]]:
+        g.remove(eid)
+    return removed
+
+
+def collapse_bubbles(g, mask=None):
+    """Fold side-by-side detours into one line.
+
+    Where a route's two directions take slightly different paths (the two ramps of a freeway
+    interchange, a loop ramp, a pair of parallel carriageways) the network has a "bubble": two
+    paths between the same junctions. When the second path carries every route of the first,
+    the first is dropped and its routes move over. Near freeways bubbles up to 1.2 km long and
+    160 m wide are folded; elsewhere only tiny ones (500 m, 60 m), so real one-way street pairs
+    in town stay apart."""
+    import heapq
+    near_fwy = mask.buffer(150) if mask is not None else None
+    folded = 0
+    changed = True
+    while changed:
+        changed = False
+        length = {k: g.length(k) for k in g.edges}
+        for eid in sorted(g.edges, key=lambda k: -length[k]):
+            if eid not in g.edges:
+                continue
+            e = g.edges[eid]
+            a, b, L = e["a"], e["b"], length[eid]
+            if a == b or L > 1200:
+                continue
+            line = LineString(e["c"])
+            fwy = near_fwy is not None and near_fwy.contains(line.interpolate(0.5, normalized=True))
+            max_len, max_sep = (1200.0, 160.0) if fwy else (500.0, 60.0)
+            if L > max_len:
+                continue
+            limit = 1.6 * L + 100
+            dist, prev, pq, found = {a: 0.0}, {}, [(0.0, a)], False
+            while pq:
+                d, n = heapq.heappop(pq)
+                if d > dist.get(n, 1e18):
+                    continue
+                if n == b:
+                    found = True
+                    break
+                for k in g.adj[n]:
+                    if k == eid or not (g.edges[k]["lines"] & e["lines"]):
+                        continue
+                    m = g.other(k, n)
+                    nd = d + length[k]
+                    if m != n and nd <= limit and nd < dist.get(m, 1e18):
+                        dist[m], prev[m] = nd, (n, k)
+                        heapq.heappush(pq, (nd, m))
+            if not found:
+                continue
+            path, n = [], b
+            while n != a:
+                n, k = prev[n]
+                path.append(k)
+            if not e["lines"] <= set().union(*(g.edges[k]["lines"] for k in path)):
+                continue
+            coords, n = [], a
+            for k in reversed(path):
+                c = g.coords_from(k, n)
+                coords += c if not coords else c[1:]
+                n = g.other(k, n)
+            if line.hausdorff_distance(LineString(coords)) > max_sep:
+                continue
+            for k in path:
+                g.edges[k]["lines"] = g.edges[k]["lines"] | e["lines"]
+            g.remove(eid)
+            folded += 1
+            changed = True
+    for n in [n for n, s in g.adj.items() if not s]:
+        del g.adj[n]
+    return folded
 
 
 def repair_gaps(g, routes, max_gap=700.0):
@@ -397,6 +573,46 @@ def refine_geometry(g, routes, rank):
         coords[0], coords[-1] = a, b
         e["c"] = coords
     return moved, replaced
+
+
+def unhook(g, mask=None, reach=120.0, max_angle=35.0):
+    """Straighten segments that leave a freeway junction with a sideways jog.
+
+    Freeways are traced wide, so a ramp's junction lands on the freeway line while the ramp
+    itself runs 30-50 m to the side; redrawn on the real shape, the segment would start with a
+    sharp hook out to the ramp. At junctions on freeways, points in the first stretch that lie
+    more than `max_angle` off the segment's overall direction are dropped."""
+    if mask is None:
+        return 0
+    from shapely.geometry import Point
+    near_fwy = mask.buffer(30)
+    cos_max = math.cos(math.radians(max_angle))
+    fixed = 0
+    for e in g.edges.values():
+        if e["a"] == e["b"]:
+            continue
+        for rev in (False, True):
+            c = e["c"][::-1] if rev else e["c"]
+            ls = LineString(c)
+            if ls.length < 1.5 * reach or not near_fwy.contains(Point(c[0])):
+                continue
+            n0 = np.asarray(c[0])
+            t = np.asarray(ls.interpolate(min(2 * reach, ls.length / 2)).coords[0])
+            d = (t - n0) / (np.linalg.norm(t - n0) or 1)
+            run, last = 0.0, -1
+            for i in range(1, len(c)):
+                run += math.dist(c[i - 1], c[i])
+                if run > reach:
+                    break
+                v = np.asarray(c[i]) - n0
+                r = np.linalg.norm(v)
+                if r > 1 and float(np.dot(v, d)) / r < cos_max:
+                    last = i
+            if 0 < last < len(c) - 1:
+                c = [c[0]] + c[last + 1:]
+                e["c"] = c[::-1] if rev else c
+                fixed += 1
+    return fixed
 
 
 def bearing_at(g, eid, n, dist=25.0):
@@ -524,10 +740,10 @@ def order_lines(g, rank):
         e["order"] = sorted(e["lines"], key=cmp_to_key(cmp))
 
 
-def build_layer(routes, rank, name):
+def build_layer(routes, rank, name, mask=None):
     import time
     t0 = time.time()
-    arr, origin = rasterize(routes)
+    arr, origin = rasterize(routes, mask)
     nodes, edges = skeleton_graph(arr, origin)
     g = Graph(nodes, edges)
     for _ in range(3):
@@ -536,21 +752,30 @@ def build_layer(routes, rank, name):
     contract_short(g, 2.8 * R)  # junctions closer than ~40 m become one (city blocks are 70 m+)
     merge_chains(g)
     smooth(g)
-    assign_lines(g, routes)
+    assign_lines(g, routes, mask)
     merge_chains(g, same=lambda e1, e2: e1["lines"] == e2["lines"])
     for eid in [k for k, e in g.edges.items() if e["a"] == e["b"] and g.length(k) < 150]:
         g.remove(eid)  # leftover rings and tight turnaround loops draw as blobs when bundled
     fixed = repair_gaps(g, routes)
+    trimmed = trim_stubs(g, routes, mask=mask)
+    merge_chains(g, same=lambda e1, e2: e1["lines"] == e2["lines"])
+    folded = collapse_bubbles(g, mask)
+    trimmed += trim_stubs(g, routes, mask=mask)  # folding a ramp loop leaves its two sides as stubs
     merge_chains(g, same=lambda e1, e2: e1["lines"] == e2["lines"])
     moved, replaced = refine_geometry(g, routes, rank)
+    hooks = unhook(g, mask)
     order_lines(g, rank)
     print(f"  {name}: {len(routes)} routes -> {len(g.edges)} edges, {fixed} gap segments filled, "
-          f"{moved} junctions moved, {replaced} segments on real shapes ({time.time() - t0:.0f}s)", flush=True)
+          f"{trimmed} stubs trimmed, {folded} detours folded, {hooks} ramp hooks straightened, "
+          f"{moved} junctions moved, "
+          f"{replaced} segments on real shapes ({time.time() - t0:.0f}s)", flush=True)
     return g
 
 
 def main():
     all_routes, rank = load_routes()
+    mask = freeway_mask()
+    print("freeway mask:", "none" if mask is None else f"{mask.area / 1e6:.1f} km²", flush=True)
     print(f"{len(all_routes)} routes clipped to region")
     lines = sorted(all_routes, key=lambda s: rank.get(s, 0))
     li = {s: i for i, s in enumerate(lines)}
@@ -559,7 +784,7 @@ def main():
         routes = {k: g for k, (lay, g) in all_routes.items() if lay == name}
         if not routes:
             continue
-        g = build_layer(routes, rank, name)
+        g = build_layer(routes, rank, name, mask if name == "surface" else None)
         for eid, e in g.edges.items():
             lon, lat = inv.transform(*zip(*e["c"]))
             coords = [[round(x, 5), round(y, 5)] for x, y in zip(lon, lat)]

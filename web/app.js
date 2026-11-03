@@ -419,11 +419,7 @@
           "text-max-width": 9, "icon-image": "flexpin", "icon-anchor": "bottom", "text-anchor": "top", "text-offset": [0, 0.2] },
         paint: { "text-color": theme === "dark" ? "#e3b4ff" : "#7a2fa6", "text-halo-color": P.halo, "text-halo-width": 1.6 } },
       { id: "badges", type: "symbol", source: "netlabels", minzoom: 10.4,
-        layout: { "symbol-placement": "line-center", "icon-image": ["concat", "b:", ["get", "k"]],
-          "icon-rotation-alignment": "viewport", "icon-pitch-alignment": "viewport", "icon-padding": 4, "symbol-sort-key": ["get", "p"] } },
-      { id: "badges-repeat", type: "symbol", source: "netlabels", minzoom: 13, filter: [">", ["get", "len"], 900],
-        layout: { "symbol-placement": "line", "symbol-spacing": 520, "icon-image": ["concat", "b:", ["get", "k"]],
-          "icon-rotation-alignment": "viewport", "icon-pitch-alignment": "viewport", "icon-padding": 6, "symbol-sort-key": ["get", "p"] } },
+        layout: { "icon-image": ["concat", "b:", ["get", "k"]], "icon-padding": 4, "symbol-sort-key": ["get", "p"] } },
       { id: "sel-badges", type: "symbol", source: "sellabels",
         layout: { "symbol-placement": "line", "symbol-spacing": ["interpolate", ["linear"], ["zoom"], 10, 900, 14, 640, 17, 420],
           "icon-image": ["concat", "b:", ["get", "k"]], "icon-rotation-alignment": "viewport",
@@ -822,10 +818,25 @@
     }
     const best = new Map();
     for (const e of tagKey.keys()) { const root = find(e); if (!best.has(root) || EDGES[e].len > EDGES[best.get(root)].len) best.set(root, e); }
-    for (const [e, t] of tagKey) {
+    // Tags are points: one at the middle of each stretch, more along long ones (about every
+    // 650 px), and never the same set of numbers within ~300 px of itself.
+    const mpp = MPP0 / 2 ** z, minGap = 300 * mpp, every = 650 * mpp;
+    const placed = new Map();
+    const cands = [...tagKey].filter(([e]) => best.get(find(e)) === e || EDGES[e].len >= 700)
+      .sort((x, y) => EDGES[y[0]].len - EDGES[x[0]].len);
+    for (const [e, t] of cands) {
       const E = EDGES[e];
-      if (best.get(find(e)) !== e && E.len < 700) continue;
-      labels.push({ type: "Feature", properties: { k: t.k, p: t.p, len: E.len }, geometry: { type: "LineString", coordinates: E.c } });
+      const cum = E.cum || (E.cum = cumLen(E.pts));
+      const near = placed.get(t.k) || [];
+      placed.set(t.k, near);
+      const n = Math.max(1, Math.floor(E.len / every));
+      const order = [...Array(n).keys()].sort((i, j) => Math.abs(i - (n - 1) / 2) - Math.abs(j - (n - 1) / 2));
+      for (const i of order) {
+        const q = pointAt(E.pts, cum, E.len * (i + 0.5) / n);
+        if (near.some((o) => Math.hypot(o[0] - q[0], o[1] - q[1]) < minGap)) continue;
+        near.push(q);
+        labels.push({ type: "Feature", properties: { k: t.k, p: t.p }, geometry: { type: "Point", coordinates: toLL(q) } });
+      }
     }
     if (selIdx >= 0) for (const E of EDGES) if (E.l.includes(selIdx)) selLabels.push({ type: "Feature", properties: { k: `${theme[0]}:${selIdx}` }, geometry: { type: "LineString", coordinates: E.c } });
     map.getSource("net").setData({ type: "FeatureCollection", features: feats });
@@ -1219,7 +1230,6 @@
       for (const id of [`case-${g}`, `shadow-${g}`]) if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", dim ? "none" : "visible");
     }
     map.setPaintProperty("badges", "icon-opacity", dim ? 0.12 : 1);
-    map.setPaintProperty("badges-repeat", "icon-opacity", dim ? 0.12 : 1);
   }
   function setHash(h) {
     try { history.replaceState(null, "", h ? "#" + h : location.pathname + location.search); } catch { /* sandboxed */ }
