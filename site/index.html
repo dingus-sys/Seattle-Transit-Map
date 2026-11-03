@@ -1436,7 +1436,7 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
       { id: "veh-icon", type: "symbol", source: "vehicles",
         layout: { "icon-image": ["concat", "veh:", ["get", "c"], ":", ["case", [">=", ["get", "b"], 0], "a", "o"]],
           "icon-rotate": ["max", ["get", "b"], 0], "icon-rotation-alignment": "map", "icon-allow-overlap": true, "icon-ignore-placement": true,
-          "icon-size": ["interpolate", ["linear"], ["zoom"], 9, 0.4, 11, 0.52, 13, 0.78, 15, 1, 18, 1.2], "symbol-sort-key": ["get", "s"] } },
+          "icon-size": ["interpolate", ["linear"], ["zoom"], 9, 0.32, 11, 0.42, 12.5, 0.58, 14, 0.8, 15.5, 1, 18, 1.15], "symbol-sort-key": ["get", "s"] } },
       { id: "veh-label", type: "symbol", source: "vehicles", minzoom: 14.5,
         layout: { "text-field": ["get", "lab"], "text-font": F_BOLD, "text-size": 11.5, "text-anchor": "left", "text-offset": [1.05, 0],
           "text-optional": true, "text-padding": 1 },
@@ -1460,15 +1460,18 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
       { id: "stations", type: "circle", source: "stations",
         filter: ["any", ["==", ["get", "major"], 1], [">=", ["zoom"], 12.5]],
         paint: {
-          "circle-radius": zr([[9, ["*", ["get", "size"], 2.4]], [12, ["*", ["get", "size"], 4.2]], [16, ["*", ["get", "size"], 7.5]]]),
+          // sized to the Link line: a little wider than the line it sits on (about 1.4x), so it
+          // reads as a station without turning into a blob
+          "circle-radius": zr([[9, ["*", ["get", "size"], 1.8]], [12, ["*", ["get", "size"], 2.9]], [14, ["*", ["get", "size"], 3.7]],
+            [16, ["*", ["get", "size"], 4.9]], [18, ["*", ["get", "size"], 6.4]]]),
           "circle-color": P.stationFill, "circle-stroke-color": ["get", "stroke"],
-          "circle-stroke-width": zr([[9, 1.5], [14, 2.8]]),
+          "circle-stroke-width": zr([[9, 1.1], [12, 1.5], [14, 1.9], [17, 2.4]]),
         } },
       { id: "station-name", type: "symbol", source: "stations",
         filter: ["any", ["all", ["==", ["get", "major"], 1], [">=", ["zoom"], 11]], [">=", ["zoom"], 14.3]],
         layout: { "text-field": ["get", "name"], "text-font": F_BOLD,
           "text-size": ["interpolate", ["linear"], ["zoom"], 11, 10.5, 15, 13],
-          "text-variable-anchor": ["right", "left", "top", "bottom"], "text-radial-offset": 1.15, "text-justify": "auto",
+          "text-variable-anchor": ["right", "left", "top", "bottom"], "text-radial-offset": 0.9, "text-justify": "auto",
           "text-max-width": 8, "text-padding": 2 },
         paint: { "text-color": P.place, "text-halo-color": P.halo, "text-halo-width": 2 } },
       { id: "flex", type: "symbol", source: "flexlabels", minzoom: 10,
@@ -1695,7 +1698,7 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
       if (!major && cats.has("streetcar")) stroke = LINE[theme].streetcar;
       if (!cats.has("link") && (cats.has("ferry") || cats.has("watertaxi"))) stroke = LINE[theme].ferry;
       if (!cats.has("link") && (cats.has("sounder") || cats.has("amtrak"))) stroke = LINE[theme].sounder;
-      const size = cats.has("link") ? (rs.filter((r) => r.cat === "link").length > 1 || rs.length > 2 ? 1.25 : 1.05) : major ? 1 : 0.7;
+      const size = cats.has("link") ? (rs.filter((r) => r.cat === "link").length > 1 ? 1.15 : 1) : major ? 0.95 : 0.7;
       return { type: "Feature", properties: { id: s.id, name: s.name, major: major ? 1 : 0, size, stroke },
         geometry: { type: "Point", coordinates: [s.lon, s.lat] } };
     }) };
@@ -1899,7 +1902,10 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
     else if (mode === "est") list = estVehicles();
     live.current = list;
     const sel = selected && selected.type === "route" ? selected.id : null;
-    const tier = tierFor(map.getZoom());
+    // vehicles thin out as you zoom out, more than the lines do: hundreds of markers would cover
+    // the map. Trains, RapidRide and boats always; frequent buses from 11.5; the rest from 12.5.
+    const z = map.getZoom();
+    const tier = Math.min(tierFor(z), z >= 12.5 ? 2 : z >= 11.5 ? 1 : 0);
     const feats = [];
     for (const v of list) {
       const r = v.r;
