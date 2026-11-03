@@ -332,6 +332,9 @@
   // Each service group draws, bottom to top: a soft drop shadow, a casing that separates
   // neighboring lines, the colored body, and the center treatment (glass highlight,
   // white rail center, RapidRide dots or railroad ties).
+  // Visual hierarchy: rush-hour lines recede, all-day lines are a touch softer, so the frequent
+  // network, RapidRide and trains read first in busy places like downtown.
+  const LINE_OP = ["match", ["get", "cat"], "peak", 0.6, "local", 0.88, "dart", 0.85, 1];
   function transitLayers(P) {
     const L = [];
     const inner = (id, src, filter, paint, layout = {}) => L.push({ id, type: "line", source: src, filter,
@@ -348,10 +351,10 @@
       }
       L.push({ id: `line-${g}`, type: "line", source: "net", filter: ["all", f, ["==", ["get", "d"], 0]],
         layout: { "line-cap": "round", "line-join": "round", "line-sort-key": ["get", "s"] },
-        paint: { "line-color": ["get", "c"], "line-width": px("wm") } });
+        paint: { "line-color": ["get", "c"], "line-width": px("wm"), "line-opacity": LINE_OP } });
       L.push({ id: `dash-${g}`, type: "line", source: "net", filter: ["all", f, ["==", ["get", "d"], 1]],
         layout: { "line-join": "round" },
-        paint: { "line-color": ["get", "c"], "line-width": px("wm"), "line-dasharray": [2.2, 1.3] } });
+        paint: { "line-color": ["get", "c"], "line-width": px("wm"), "line-dasharray": [2.2, 1.3], "line-opacity": LINE_OP } });
       inner(`glass-${g}`, "net", ["all", f, ["==", ["get", "h"], 1]],
         { "line-color": P.shine, "line-opacity": 0.38, "line-width": px("hm"), "line-blur": 0.6 }, { "line-cap": "round" });
       inner(`center-${g}`, "net", ["all", f, ["==", ["get", "h"], 2]],
@@ -382,8 +385,11 @@
         "icon-rotate": ["case", ["<", ["get", "ar"], 0], 180, 0], "icon-rotation-alignment": "map", "icon-keep-upright": false,
         "icon-allow-overlap": true, "icon-ignore-placement": true,
         "icon-size": ["interpolate", ["linear"], ["zoom"], 11, 0.6, 14, 0.8, 17, 1.05] } });
-    arrowLayer("arrows", "net", 14, ["interpolate", ["linear"], ["zoom"], 14, 160, 17, 220]);
+    // arrows only on the line in focus (hovered or selected): on every line they were noise
+    arrowLayer("hover-arrows", "hover", 11, ["interpolate", ["linear"], ["zoom"], 11, 90, 15, 120, 17, 170]);
     arrowLayer("sel-arrows", "sel", 10.5, ["interpolate", ["linear"], ["zoom"], 11, 90, 15, 120, 17, 170]);
+    // network lines fade smoothly when another line is in focus
+    for (const l of L) if (l.source === "net" && l.type === "line") l.paint["line-opacity-transition"] = { duration: 260 };
     return L;
   }
   function areaLayers(P) {
@@ -443,9 +449,7 @@
         layout: { "text-field": ["concat", "Metro Flex\n", ["get", "name"]], "text-font": F_BOLD,
           "text-size": ["interpolate", ["linear"], ["zoom"], 10, 10.5, 14, 12.5], "text-max-width": 10, "text-padding": 4 },
         paint: { "text-color": theme === "dark" ? "#e3b4ff" : "#6a2593", "text-halo-color": P.halo, "text-halo-width": 1.8 } },
-      { id: "sel-stops", type: "circle", source: "selstops",
-        paint: { "circle-radius": selStopRadius(1), "circle-color": P.stopFill, "circle-stroke-color": ["get", "c"],
-          "circle-stroke-width": selStopStroke(1), "circle-pitch-alignment": "map" } },
+      ...stopGroup("hov", "hoverstops", P), ...stopGroup("sel", "selstops", P), ...stopGroup("hl", "stophl", P, 1.8),
       { id: "badges", type: "symbol", source: "netlabels", minzoom: 9,
         layout: { "icon-image": ["concat", "b:", ["get", "k"]], "icon-padding": 4, "symbol-sort-key": ["get", "p"] } },
       { id: "sel-badges", type: "symbol", source: "sellabels",
@@ -540,7 +544,7 @@
   // coverage map underneath stays readable and the frequent network stands out.
   function minorScale(z) {
     const f = z <= 10.5 ? 0.5 : z >= 12.5 ? 1 : 0.5 + 0.5 * (z - 10.5) / 2;
-    return { local: f, peak: Math.min(1, f + 0.15), shuttle: f, dart: f };
+    return { local: f, peak: Math.max(0.5, Math.min(1, f + 0.15) * 0.8), shuttle: f, dart: f };
   }
   function tierFor(z) { const t = BUS_TIERS[settings.busDetail]; return z >= t[2] ? 2 : z >= t[1] ? 1 : 0; }
   let curStep = null, lastBuild = 0, buildTimer = null, builtView = null, lastFeats = [];
@@ -688,6 +692,7 @@
     document.documentElement.setAttribute("data-dark", theme === "dark" ? "1" : "0");
     if (!map || !map.isStyleLoaded()) return;
     const P = BASE[theme];
+    netDim = 1; // the loop below resets every layer to its normal look
     for (const set of [baseLayers(P), transitLayers(P), areaLayers(P), stopLayers(P), liveLayers(P)]) {
       for (const L of set) {
         if (!map.getLayer(L.id)) continue;
@@ -817,6 +822,7 @@
       const d = await fetch("data/schedule.json").then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); });
       for (const p of d.patterns) { p.pts = p.c.map(([x, y]) => toM(x, y)); p.cum = cumLen(p.pts); p.route = ROUTES[p.r]; }
       SCHED = d;
+      buildDepIndex();
       renderVehicles();
       updateLiveUI();
     } catch (e) { console.warn("timetable estimates unavailable", e); }
@@ -952,24 +958,52 @@
 
   // ---------------------------------------------------------------- selection
   const GROUPS = ["water", "bus", "rapid", "rail"];
-  // ---------------------------------------------------------------- selected route's stops
-  // F: how far each stop has "popped" (0 hidden .. 1 full size). During the animation it is an
-  // expression of the stop's place along the route (o, 0..1) and the animation clock T, with a
-  // small overshoot, so the stops pop out one after another from one end of the route.
-  const popF = (T) => (T >= 2 ? 1 : ["interpolate", ["linear"], ["max", 0, ["min", 1, ["/", ["-", T, ["*", ["get", "o"], 1.1]], 0.28]]],
-    0, 0, 0.62, 1.32, 0.82, 0.92, 1, 1]);
-  const selStopRadius = (T) => { const k = THICK[settings.thickness], F = ["*", popF(T), ["case", [">", ["get", "end"], 0], 1.55, 1]];
-    return ["interpolate", ["linear"], ["zoom"], 9, ["*", 1.6 * k, F], 12, ["*", 3 * k, F], 15, ["*", 4.6 * k, F], 18, ["*", 7 * k, F]]; };
-  const selStopStroke = (T) => { const k = THICK[settings.thickness], F = popF(T);
-    return ["interpolate", ["linear"], ["zoom"], 9, ["*", 1.2 * k, F], 14, ["*", 2.2 * k, F], 18, ["*", 3 * k, F]]; };
-  let popAnim = 0;
-  function showRouteStops(r) {
-    cancelAnimationFrame(popAnim);
-    const src = map && map.getSource("selstops");
-    if (!src) return;
-    if (!r) { src.setData({ type: "FeatureCollection", features: [] }); return; }
-    const color = keyColor(VKEY(r.cat));
-    // end: 2 = a trip ends here (end of the line), 1 = trips only start here, 0 = a stop on the way
+  // ---------------------------------------------------------------- route stops on hover / selection
+  // Stops of the route in focus: a soft glow (halo) and a white dot ringed in the route's color.
+  // They appear together with a fade and a gentle spring (no sequence): see popIn.
+  const END = ["case", [">", ["coalesce", ["get", "end"], 0], 0], 1.55, 1];
+  const stopRadius = (mult, sc = 1) => { const k = THICK[settings.thickness] * mult * sc;
+    return ["interpolate", ["linear"], ["zoom"], 9, ["*", 1.6 * k, END], 12, ["*", 3 * k, END], 15, ["*", 4.6 * k, END], 18, ["*", 7 * k, END]]; };
+  const stopStroke = (mult, sc = 1) => { const k = THICK[settings.thickness] * Math.sqrt(mult) * sc;
+    return ["interpolate", ["linear"], ["zoom"], 9, 1.2 * k, 14, 2.2 * k, 18, 3 * k]; };
+  function stopGroup(prefix, src, P, mult = 1) {
+    return [
+      { id: `${prefix}-stops-halo`, type: "circle", source: src,
+        paint: { "circle-radius": stopRadius(mult * 2.5), "circle-color": ["get", "c"], "circle-opacity": prefix === "hl" ? 0.3 : 0.2, "circle-blur": 0.85 } },
+      { id: `${prefix}-stops`, type: "circle", source: src,
+        paint: { "circle-radius": stopRadius(mult), "circle-color": P.stopFill, "circle-stroke-color": ["get", "c"],
+          "circle-stroke-width": stopStroke(mult), "circle-pitch-alignment": "map" } },
+    ];
+  }
+  const anims = {};
+  function popIn(prefix, mult = 1) {
+    cancelAnimationFrame(anims[prefix]);
+    const halo = prefix === "hl" ? 0.3 : 0.2;
+    const set = (sc, op) => {
+      map.setPaintProperty(`${prefix}-stops`, "circle-radius", stopRadius(mult, sc));
+      map.setPaintProperty(`${prefix}-stops`, "circle-stroke-width", stopStroke(mult, sc));
+      map.setPaintProperty(`${prefix}-stops`, "circle-opacity", op);
+      map.setPaintProperty(`${prefix}-stops`, "circle-stroke-opacity", op);
+      map.setPaintProperty(`${prefix}-stops-halo`, "circle-radius", stopRadius(mult * 2.5, 0.6 + 0.4 * sc));
+      map.setPaintProperty(`${prefix}-stops-halo`, "circle-opacity", halo * op);
+    };
+    if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) { set(1, 1); return; }
+    const t0 = performance.now(), DUR = prefix === "hl" ? 420 : 560;
+    const frame = (now) => {
+      const t = Math.max(0, Math.min(1, (now - t0) / DUR)); // a frame can start just before t0
+      // damped spring from 38% size: a slight overshoot (about 7%) and a soft settle
+      const sc = t >= 1 ? 1 : 1 - 0.62 * Math.exp(-6.5 * t) * Math.cos(9.5 * t);
+      const op = t >= 1 ? 1 : 1 - Math.pow(1 - Math.min(1, t / 0.55), 3);
+      set(sc, op);
+      if (t < 1) anims[prefix] = requestAnimationFrame(frame);
+    };
+    set(0.38, 0);
+    anims[prefix] = requestAnimationFrame(frame);
+  }
+  // stops of a route, each once: { id, name, lon, lat, end } (end: 2 last stop, 1 first stop)
+  const stopCache = new Map();
+  function routeStops(r) {
+    if (stopCache.has(r.id)) return stopCache.get(r.id);
     const seen = new Map();
     for (const p of r.patterns || []) {
       const n = (p.stops || []).length;
@@ -978,23 +1012,126 @@
         if (!st) return;
         const key = st.key + "|" + st.lon, end = i === n - 1 ? 2 : i === 0 ? 1 : 0;
         const f = seen.get(key);
-        if (f) { f.properties.end = Math.max(f.properties.end, end); return; }
-        seen.set(key, { type: "Feature", properties: { id: sid, name: st.name, o: n > 1 ? i / (n - 1) : 0, c: color, end },
-          geometry: { type: "Point", coordinates: [st.lon, st.lat] } });
+        if (f) { f.end = Math.max(f.end, end); return; }
+        seen.set(key, { id: sid, name: st.name, lon: st.lon, lat: st.lat, end });
       });
     }
-    src.setData({ type: "FeatureCollection", features: [...seen.values()] });
-    const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const t0 = performance.now(), DUR = 1100;
-    const frame = (now) => {
-      const T = reduce ? 2 : Math.min(2, ((now - t0) / DUR) * 1.4);
-      map.setPaintProperty("sel-stops", "circle-radius", selStopRadius(T));
-      map.setPaintProperty("sel-stops", "circle-stroke-width", selStopStroke(T));
-      if (T < 2 && (now - t0) < DUR * 1.5) popAnim = requestAnimationFrame(frame);
-      else { map.setPaintProperty("sel-stops", "circle-radius", selStopRadius(2)); map.setPaintProperty("sel-stops", "circle-stroke-width", selStopStroke(2)); }
-    };
-    popAnim = requestAnimationFrame(frame);
+    const list = [...seen.values()];
+    stopCache.set(r.id, list);
+    return list;
   }
+  function stopFeatures(routes, withEnds, bounds) {
+    const color = keyColor(VKEY(routes[0].cat)), seen = new Map();
+    for (const r of routes) {
+      for (const st of routeStops(r)) {
+        const k = st.lon + "," + st.lat;
+        if (seen.has(k) || (bounds && !bounds.contains([st.lon, st.lat]))) continue;
+        seen.set(k, { type: "Feature", properties: { id: st.id, name: st.name, c: color, end: withEnds ? st.end : 0 },
+          geometry: { type: "Point", coordinates: [st.lon, st.lat] } });
+      }
+    }
+    return [...seen.values()];
+  }
+  const fc = (features) => ({ type: "FeatureCollection", features });
+  function showRouteStops(r) {
+    const src = map && map.getSource("selstops");
+    if (!src) return;
+    cancelAnimationFrame(anims.sel);
+    src.setData(fc(r ? stopFeatures([r], true) : []));
+    if (r) popIn("sel");
+  }
+  let hoverStopsKey = "";
+  function showHoverStops(routes) {
+    const src = map && map.getSource("hoverstops");
+    if (!src) return;
+    const key = routes ? routes.map((r) => r.id).join(",") : "";
+    if (key === hoverStopsKey) return;
+    hoverStopsKey = key;
+    if (!routes || !routes.length) { cancelAnimationFrame(anims.hov); src.setData(fc([])); return; }
+    const b = map.getBounds(), pad = 0.3;
+    const dx = (b.getEast() - b.getWest()) * pad, dy = (b.getNorth() - b.getSouth()) * pad;
+    const box = new maplibregl.LngLatBounds([b.getWest() - dx, b.getSouth() - dy], [b.getEast() + dx, b.getNorth() + dy]);
+    src.setData(fc(stopFeatures(routes, routes.length === 1, box)));
+    popIn("hov");
+  }
+  // the stop under the pointer, drawn bigger on top
+  let hlId = "";
+  function highlightStop(f) {
+    const src = map && map.getSource("stophl");
+    if (!src) return;
+    const id = f ? f.properties.id : "";
+    if (id === hlId) return;
+    hlId = id;
+    if (!f) { cancelAnimationFrame(anims.hl); src.setData(fc([])); return; }
+    const s = stopIndex[id], rs = s ? (s.routes || []).map((x) => RBY[x]).filter(Boolean).sort(tagOrder) : [];
+    const c = f.properties.c || f.properties.stroke || (rs[0] ? keyColor(VKEY(rs[0].cat)) : BASE[theme].stopStroke);
+    src.setData(fc([{ type: "Feature", properties: { id, c, end: 0 }, geometry: { type: "Point", coordinates: f.geometry.coordinates } }]));
+    popIn("hl", 1.8);
+  }
+
+  // ---------------------------------------------------------------- next departures at a stop
+  // From the timetable: each pattern lists its stops (s) and when along the trip each is reached
+  // (f, a share of the trip's duration), so a stop's departures are start + f * duration.
+  let DEP = null;
+  function buildDepIndex() {
+    DEP = new Map();
+    SCHED.patterns.forEach((p, pi) => (p.s || []).forEach((sid, i) => {
+      const st = stopIndex[sid], k = st ? st.key : sid;
+      if (!DEP.has(k)) DEP.set(k, []);
+      DEP.get(k).push([pi, i]);
+    }));
+    SCHED.byPat = {};
+    for (const [day, trips] of Object.entries(SCHED.days)) {
+      const m = new Map();
+      for (const [pi, s0, du] of trips) { if (!m.has(pi)) m.set(pi, []); m.get(pi).push([s0, du]); }
+      SCHED.byPat[day] = m;
+    }
+  }
+  function nextDepartures(keys, limit = 4, windowS = 5400) {
+    if (!SCHED || !DEP) return null;
+    const now = pacificNow(), out = [];
+    for (const k of keys) {
+      for (const [pi, i] of DEP.get(k) || []) {
+        const p = SCHED.patterns[pi];
+        if (!p.f || i >= p.f.length - 1) continue; // the end of the line: buses arrive, they don't leave
+        for (const [day, off] of [[now.day, 0], [now.prev, 86400]]) {
+          for (const [s0, du] of (SCHED.byPat[day] && SCHED.byPat[day].get(pi)) || []) {
+            const t = s0 + p.f[i] * du - off - now.secs;
+            if (t < -20 || t > windowS) continue;
+            const r = ROUTES[p.r], to = p.s[p.s.length - 1];
+            out.push({ t, r, to, key: r.id + "|" + placeName(to) });
+          }
+        }
+      }
+    }
+    // the same bus listed twice (overlapping service calendars, twin patterns): keep one
+    out.sort((a, b) => a.t - b.t);
+    const last = new Map(), res = [];
+    for (const d of out) {
+      if (last.has(d.key) && d.t - last.get(d.key) < 150) continue;
+      last.set(d.key, d.t);
+      res.push(d);
+      if (res.length >= limit) break;
+    }
+    return res;
+  }
+  const placeName = (sid) => ((stopIndex[sid] && stopIndex[sid].name) || "").replace(/\s*[-–]\s*Bay\s*\w+$/i, "").replace(/\s+Bay\s+\w+$/i, "");
+  function stopCard(id, end) {
+    const s = stopIndex[id];
+    if (!s) return "";
+    const rs = (s.routes || []).map((x) => RBY[x]).filter((r) => r && LINEIDX[r.id] != null).sort(tagOrder);
+    const keys = [...new Set([s.key, ...((s.stops || []).map((sid) => stopIndex[sid] && stopIndex[sid].key).filter(Boolean))])];
+    const deps = nextDepartures(keys);
+    const kind = s.kind === "stop" ? (s.code ? `Stop ${esc(s.code)}` : "Bus stop") : "Station";
+    let h = `<div class="sc"><div class="sc-name">${esc(s.name)}</div><div class="sc-sub">${kind} · ${rs.length} route${rs.length === 1 ? "" : "s"}${end === 2 ? " · <b>End of the line</b>" : end === 1 ? " · <b>Trips start here</b>" : ""}</div>`;
+    if (rs.length) h += `<div class="sc-badges">${rs.slice(0, 10).map((r) => badgeHTML(r)).join("")}${rs.length > 10 ? `<span class="sc-more">+${rs.length - 10}</span>` : ""}</div>`;
+    if (deps && deps.length) {
+      h += `<div class="sc-next">${deps.map((d) => `<div class="sc-row">${badgeHTML(d.r)}<span class="sc-to">${esc(placeName(d.to))}</span><span class="sc-t">${d.t < 60 ? "now" : Math.round(d.t / 60) + " min"}</span></div>`).join("")}</div>`
+        + `<div class="sc-foot">Next departures, from the timetable</div>`;
+    } else if (deps) h += `<div class="sc-foot">No departures in the next 90 minutes</div>`;
+    return h + "</div>";
+  }
+
   // one-way arrow: a small chevron in the line's color with a white edge
   function drawArrow(id) {
     const color = id.slice(4);
@@ -1019,16 +1156,26 @@
     }
   }
 
+  // Fade the network back (level < 1) so one route stands out; 1 restores it.
+  let netDim = 1;
+  function setNetDim(level) {
+    if (!map || !map.getLayer("line-bus") || level === netDim) return;
+    netDim = level;
+    for (const L of transitLayers(BASE[theme])) {
+      if (L.source !== "net" || L.type !== "line") continue;
+      const base = L.paint["line-opacity"] != null ? L.paint["line-opacity"] : 1;
+      map.setPaintProperty(L.id, "line-opacity", level === 1 ? base : typeof base === "number" ? base * level : ["*", base, level]);
+    }
+    map.setPaintProperty("badges", "icon-opacity", level === 1 ? 1 : Math.max(0.12, level * 0.6));
+  }
   function applySelectionStyle() {
     if (!map || !map.getLayer("line-bus")) return;
     const dim = !!(selected && selected.type === "route");
     for (const g of GROUPS) {
-      for (const id of [`line-${g}`, `dash-${g}`]) map.setPaintProperty(id, "line-opacity", dim ? 0.2 : 1);
       for (const id of [`glass-${g}`, `center-${g}`, `dots-${g}`, `ties-${g}`]) map.setLayoutProperty(id, "visibility", dim ? "none" : "visible");
       for (const id of [`case-${g}`, `shadow-${g}`]) if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", dim ? "none" : "visible");
     }
-    map.setPaintProperty("badges", "icon-opacity", dim ? 0.12 : 1);
-    map.setLayoutProperty("arrows", "visibility", dim ? "none" : "visible");
+    setNetDim(dim ? 0.2 : 1);
   }
   function setHash(h) {
     try { history.replaceState(null, "", h ? "#" + h : location.pathname + location.search); } catch { /* sandboxed */ }
@@ -1474,7 +1621,7 @@
   }
   function setupInteraction() {
     const tip = $("#tip");
-    const hitLayers = () => ["sel-stops", "stations", "stops", "flex"].filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none");
+    const hitLayers = () => ["sel-stops", "hov-stops", "stations", "stops", "flex"].filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none");
     const vehAt = (pt, rad) => (map.getLayer("veh-icon") && map.getLayoutProperty("veh-icon", "visibility") !== "none"
       ? map.queryRenderedFeatures([[pt.x - rad, pt.y - rad], [pt.x + rad, pt.y + rad]], { layers: ["veh-icon"] }) : []);
     map.on("mousemove", (e) => {
@@ -1482,6 +1629,8 @@
       if (vh.length) {
         const r = RBY[vh[0].properties.r];
         map.getCanvas().style.cursor = "pointer";
+        highlightStop(null);
+        tip.classList.remove("tip-card");
         tip.innerHTML = `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><br>${vh[0].properties.est ? "Estimated from the timetable" : "Live position"}</span>`;
         placeTip(e.originalEvent);
         return;
@@ -1491,11 +1640,20 @@
         const p = stopHit[0].properties;
         map.getCanvas().style.cursor = "pointer";
         const lid = stopHit[0].layer.id;
-        const note = lid === "sel-stops" && p.end ? (p.end === 2 ? "<br><b>End of the line</b>" : "<br><b>Trips start here</b>") : "";
-        tip.innerHTML = `<span class="tt">${esc(lid === "flex" ? "Metro Flex · " + p.name : p.name)}${note}</span>`;
+        if (lid === "flex") {
+          highlightStop(null);
+          tip.classList.remove("tip-card");
+          tip.innerHTML = `<span class="tt">${esc("Metro Flex · " + p.name)}</span>`;
+        } else {
+          highlightStop(stopHit[0]);
+          tip.classList.add("tip-card");
+          tip.innerHTML = stopCard(p.id, lid === "sel-stops" ? p.end : 0);
+        }
         placeTip(e.originalEvent);
         return;
       }
+      highlightStop(null);
+      tip.classList.remove("tip-card");
       const rs = routesAt(e.point, 4);
       if (rs.length) {
         map.getCanvas().style.cursor = "pointer";
@@ -1514,7 +1672,7 @@
         setHover(null);
       }
     });
-    map.getCanvas().addEventListener("mouseleave", () => { tip.hidden = true; setHover(null); });
+    map.getCanvas().addEventListener("mouseleave", () => { tip.hidden = true; setHover(null); highlightStop(null); });
     map.on("movestart", () => setHover(null));
     map.on("click", (e) => {
       tip.hidden = true;
@@ -1575,14 +1733,26 @@
   }
   // Hover: a single route thickens along its whole path; a shared corridor line thickens
   // along the stretch of street where it carries that same set of routes.
-  let hoverKey = "";
+  let hoverKey = "", spotTimer = 0;
   function setHover(feat, routes) {
     const key = feat ? `${feat.properties.cat}|${feat.properties.e}|${routes.length}` : "";
     if (key === hoverKey) return;
     hoverKey = key;
     const src = map.getSource("hover");
     if (!src) return;
-    if (!feat) { src.setData({ type: "FeatureCollection", features: [] }); return; }
+    clearTimeout(spotTimer);
+    if (!feat) {
+      src.setData({ type: "FeatureCollection", features: [] });
+      // let go after a moment, so sliding from one line to the next doesn't flicker
+      spotTimer = setTimeout(() => { if (!hoverKey) { showHoverStops(null); if (!(selected && selected.type === "route")) setNetDim(1); } }, 160);
+      return;
+    }
+    spotTimer = setTimeout(() => { if (hoverKey === key && !(selected && selected.type === "route")) setNetDim(0.32); }, 90);
+    // stops of the line actually under the pointer (its service type on this street), not of
+    // every line nearby
+    const E = EDGES[feat.properties.e];
+    const own = routes.length === 1 ? routes : E && E.byKey.get(feat.properties.cat) ? E.byKey.get(feat.properties.cat).map((i) => LINES[i]).sort(tagOrder) : routes;
+    showHoverStops(own);
     const cat = feat.properties.cat, e0 = feat.properties.e;
     const edges = new Set();
     if (routes.length === 1) {
@@ -1698,6 +1868,8 @@
           net: { type: "geojson", data: empty, tolerance: 0.2, buffer: 96, attribution: "Transit data: Puget Sound GTFS, King County GIS" },
           sel: { type: "geojson", data: empty, tolerance: 0.2 },
           selstops: { type: "geojson", data: empty },
+          hoverstops: { type: "geojson", data: empty },
+          stophl: { type: "geojson", data: empty },
           hover: { type: "geojson", data: empty, tolerance: 0.2 },
           netlabels: { type: "geojson", data: empty, tolerance: 0.5 },
           sellabels: { type: "geojson", data: empty, tolerance: 0.5 },

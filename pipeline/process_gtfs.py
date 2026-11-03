@@ -295,6 +295,12 @@ def main():
             elif n >= 0.15 * total and sid not in [c[0] for c in chosen]:
                 chosen.append((sid, n))
         geoms = [shapes[s] for s, _ in chosen if len(shapes[s]) > 1]
+        if r.route_type == "3":
+            # a bus "shape" with a straight jump of kilometers isn't a path, just two stops joined
+            # by a ruler (Kitsap's TA "task" trips); such a route can't be drawn on the streets
+            seg = lambda a, b: math.hypot((b[0] - a[0]) * 75000, (b[1] - a[1]) * 111000)  # noqa: E731
+            geoms = [g for g in geoms if all(seg(a, b) < 2500 for a, b in zip(g, g[1:]))
+                     and sum(seg(a, b) for a, b in zip(g, g[1:])) > 50]  # and not a single point
         if not geoms or not any(LineString(g).intersects(region) for g in geoms):
             continue
 
@@ -540,7 +546,7 @@ def main():
 def export_schedule(trips, st, stops_idx, shapes, day_services, gtfs_to_slug, slug_index, path):
     """Timetable for estimated vehicle positions.
 
-    patterns: one per (shape, stop list): a simplified path, each stop's distance along it
+    patterns: one per (shape, stop list): a simplified path, its stops, each stop's distance along it
               (meters), and the typical share of the trip's running time at each stop.
     days:     per sample day, every trip as [pattern, start second, duration seconds].
     The page places each running trip along its pattern by the time of day.
@@ -589,7 +595,8 @@ def export_schedule(trips, st, stops_idx, shapes, day_services, gtfs_to_slug, sl
                 d.append(last)
             lonlat = [[round(x / KX + LON0, 5), round(y / KY + LAT0, 5)] for x, y in pts]
             pat_index[key] = len(pat_out)
-            pat_out.append({"r": slug_index[gtfs_to_slug[tr.route_id]], "c": lonlat, "d": [round(v, 1) for v in d]})
+            # s: the stops themselves, so the page can list a stop's next departures
+            pat_out.append({"r": slug_index[gtfs_to_slug[tr.route_id]], "c": lonlat, "d": [round(v, 1) for v in d], "s": list(stops_t)})
             pat_d.append(np.array(d))
         pi = pat_index[key]
         if pi is None:
