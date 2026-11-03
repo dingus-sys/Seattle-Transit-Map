@@ -28,9 +28,9 @@
   // treatment (white center for rail, dots for RapidRide, a glassy highlight for buses)
   const CAT = {
     link:      { group: "rail",  w: 3.0,  tier: 0, prio: 0,  inner: "solid" },
-    link1:     { group: "rail",  w: 3.0,  tier: 0, prio: 0,  inner: "solid", base: "link" },
-    link2:     { group: "rail",  w: 3.0,  tier: 0, prio: 0.1, inner: "solid", base: "link" },
-    linkT:     { group: "rail",  w: 3.0,  tier: 0, prio: 0.2, inner: "solid", base: "link" },
+    link1:     { group: "rail",  w: 3.0,  tier: 0, prio: 0,  base: "link" },
+    link2:     { group: "rail",  w: 3.0,  tier: 0, prio: 0.1, base: "link" },
+    linkT:     { group: "rail",  w: 3.0,  tier: 0, prio: 0.2, base: "link" },
     sounder:   { group: "rail",  w: 2.5,  tier: 0, prio: 1,  inner: "ties" },
     streetcar: { group: "rapid", w: 2.2,  tier: 0, prio: 2,  inner: "solid" },
     monorail:  { group: "rapid", w: 2.2,  tier: 0, prio: 3,  inner: "solid" },
@@ -114,7 +114,7 @@
     if (TAG_DENSITY[saved.tags]) settings.tags = saved.tags;
     if (THICK[saved.thickness]) settings.thickness = saved.thickness;
   }
-  const GAP = 0.5; // space between corridor lines, in units
+  const GAP = 0; // lines sharing a street touch, as one ribbon (the white outline goes around the bundle)
 
   // Line unit (px) by zoom, and the widest a set of side-by-side corridors may get (px).
   const UNIT = [[9, 0.8], [10, 0.92], [11, 1.08], [12, 1.3], [13, 1.6], [14, 2.0], [15, 2.4], [16, 2.8], [17, 3.2], [18, 3.6], [19, 4.0]];
@@ -340,16 +340,18 @@
     const L = [];
     const inner = (id, src, filter, paint, layout = {}) => L.push({ id, type: "line", source: src, filter,
       layout: { "line-join": "round", ...layout }, paint });
+    for (const g of ["bus", "rapid", "rail"]) {
+      L.push({ id: `shadow-${g}`, type: "line", source: "net", filter: ["==", ["get", "g"], g], minzoom: 11,
+        layout: { "line-cap": "round", "line-join": "round", "line-sort-key": ["get", "s"] },
+        paint: { "line-color": P.shadow, "line-width": px("cm"), "line-blur": 3, "line-translate": [0, 1.6] } });
+    }
+    for (const g of ["bus", "rapid", "rail"]) {
+      L.push({ id: `case-${g}`, type: "line", source: "net", filter: ["==", ["get", "g"], g],
+        layout: { "line-cap": "round", "line-join": "round", "line-sort-key": ["get", "s"] },
+        paint: { "line-color": P.casing, "line-width": px("cm") } });
+    }
     for (const g of ["water", "bus", "rapid", "rail"]) {
       const f = ["==", ["get", "g"], g];
-      if (g !== "water") {
-        L.push({ id: `shadow-${g}`, type: "line", source: "net", filter: f, minzoom: 11,
-          layout: { "line-cap": "round", "line-join": "round", "line-sort-key": ["get", "s"] },
-          paint: { "line-color": P.shadow, "line-width": px("cm"), "line-blur": 3, "line-translate": [0, 1.6] } });
-        L.push({ id: `case-${g}`, type: "line", source: "net", filter: f,
-          layout: { "line-cap": "round", "line-join": "round", "line-sort-key": ["get", "s"] },
-          paint: { "line-color": P.casing, "line-width": px("cm") } });
-      }
       L.push({ id: `line-${g}`, type: "line", source: "net", filter: ["all", f, ["==", ["get", "d"], 0]],
         layout: { "line-cap": "round", "line-join": "round", "line-sort-key": ["get", "s"] },
         paint: { "line-color": ["get", "c"], "line-width": px("wm"), "line-opacity": LINE_OP } });
@@ -381,12 +383,15 @@
       paint: { "line-color": ["get", "c"], "line-width": px("wm"), "line-dasharray": [2.2, 1.3] } });
     inner("sel-shine", "sel", ["==", ["get", "d"], 0], { "line-color": P.shine, "line-opacity": 0.45, "line-width": px("hm"), "line-blur": 0.6 }, { "line-cap": "round" });
     // one-way arrows: on every one-way stretch when zoomed in, and along the selected route
-    const arrowLayer = (id, src, minzoom, spacing) => L.push({ id, type: "symbol", source: src, minzoom, filter: ["!=", ["get", "ar"], 0],
+    const arrowLayer = (id, src, minzoom, spacing, size) => L.push({ id, type: "symbol", source: src, minzoom, filter: ["!=", ["get", "ar"], 0],
       layout: { "symbol-placement": "line", "symbol-spacing": spacing, "icon-image": ["concat", "arr:", ["get", "c"]],
         "icon-rotate": ["case", ["<", ["get", "ar"], 0], 180, 0], "icon-rotation-alignment": "map", "icon-keep-upright": false,
         "icon-allow-overlap": true, "icon-ignore-placement": true,
-        "icon-size": ["interpolate", ["linear"], ["zoom"], 11, 0.6, 14, 0.8, 17, 1.05] } });
-    // arrows only on the line in focus (hovered or selected): on every line they were noise
+        "icon-size": size || ["interpolate", ["linear"], ["zoom"], 11, 0.6, 14, 0.8, 17, 1.05] } });
+    // One-way stretches (a route that runs on different streets in each direction) always show
+    // which way they go once you're zoomed in; the line in focus shows them from further out.
+    arrowLayer("arrows", "net", 13.2, ["interpolate", ["linear"], ["zoom"], 13.2, 150, 15, 190, 17, 240],
+      ["interpolate", ["linear"], ["zoom"], 13.2, 0.55, 15, 0.72, 17, 0.95]);
     arrowLayer("hover-arrows", "hover", 11, ["interpolate", ["linear"], ["zoom"], 11, 90, 15, 120, 17, 170]);
     arrowLayer("sel-arrows", "sel", 10.5, ["interpolate", ["linear"], ["zoom"], 11, 90, 15, 120, 17, 170]);
     // network lines fade smoothly when another line is in focus
@@ -1366,6 +1371,8 @@
       for (const id of [`case-${g}`, `shadow-${g}`]) if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", dim ? "none" : "visible");
     }
     setNetDim(dim ? 0.2 : 1);
+    // the selected route shows its own arrows; the faded network's would only be noise
+    if (map.getLayer("arrows")) map.setLayoutProperty("arrows", "visibility", dim ? "none" : "visible");
   }
   function setHash(h) {
     try { history.replaceState(null, "", h ? "#" + h : location.pathname + location.search); } catch { /* sandboxed */ }

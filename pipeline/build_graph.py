@@ -43,19 +43,29 @@ LAYERS = {
 }
 
 RES = 4.0      # raster cell size in meters
-R_FWY = 52.0   # merge radius on freeways: both carriageways and the ramps become one line
-R = 15.0       # merge radius: shapes closer than ~2R share a corridor
+R_FWY = 34.0   # merge radius on freeways: both carriageways become one line (ramps stay apart)
+# Routes are matched onto street centerlines first (match_shapes.py), so routes on the same
+# street coincide exactly: a narrow band is enough to merge them, and it keeps junctions on the
+# real intersections. 8 m still merges the two halves of most divided streets (8-16 m apart).
+# (without matched shapes, e.g. in a build without street tiles, the agencies' shapes need the
+# old 15 m band to merge routes on the same street)
+MATCHED = os.path.exists(os.path.join(CACHE, "route_shapes_matched.json"))
+R = 8.0 if MATCHED else 15.0  # merge radius: shapes closer than ~2R share a corridor
 SNAP = R + 7   # distance at which a route is considered to use an edge
+# distance scale of the cleanup steps (stubs, gaps, loose ends): kept from the wide-band days,
+# since agency shapes that couldn't be matched still sit up to ~15 m off their street
+RC = 15.0
 
 fwd = Transformer.from_crs(4326, 32610, always_xy=True)
 inv = Transformer.from_crs(32610, 4326, always_xy=True)
 
 
 FREEWAYS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "freeways.json")
+JUNCTIONS = os.path.join(CACHE, "street_junctions.json")
 
 
 def freeway_lines():
-    """Freeway centerlines (OpenMapTiles "motorway", ramps and short tunnels included) as
+    """Freeway centerlines (OpenMapTiles "motorway" main carriageways, short tunnels included) as
     lon/lat lists, read from the cached z12 base-map tiles. The result is saved to
     pipeline/freeways.json so builds without the tiles (the weekly refresh) can use it too."""
     import mapbox_vector_tile
@@ -80,7 +90,7 @@ def freeway_lines():
                 continue
             ext = tr["extent"]
             for feat in tr["features"]:
-                if feat["properties"].get("class") != "motorway":
+                if feat["properties"].get("class") != "motorway" or feat["properties"].get("ramp") in (1, "1", True):
                     continue
                 geom = feat["geometry"]
                 parts = [geom["coordinates"]] if geom["type"] == "LineString" else geom["coordinates"] if geom["type"] == "MultiLineString" else []
@@ -117,7 +127,7 @@ def freeway_mask():
         lines.append(LineString(list(zip(xs, ys))))
     if not lines:
         return None
-    return unary_union([l.buffer(40, quad_segs=4) for l in lines]).simplify(5)
+    return unary_union([l.buffer(25, quad_segs=4) for l in lines]).simplify(5)
 
 
 def layer_of(cat):
@@ -128,7 +138,9 @@ def layer_of(cat):
 
 
 def load_routes():
-    shapes = json.load(open(os.path.join(CACHE, "route_shapes.json")))
+    # the shapes matched to the street network (match_shapes.py), else the agencies' own
+    matched = os.path.join(CACHE, "route_shapes_matched.json")
+    shapes = json.load(open(matched if os.path.exists(matched) else os.path.join(CACHE, "route_shapes.json")))
     meta = json.load(open(os.path.join(SITE, "data", "routes.json")))
     rank = {r["id"]: i for i, r in enumerate(meta["routes"])}
     region = box(REGION["west"], REGION["south"], REGION["east"], REGION["north"])
@@ -403,7 +415,7 @@ def trim_stubs(g, routes, max_len=140.0, mask=None):
             for n, eids in deg.items():
                 if len(eids) != 1:
                     continue
-                if min(math.dist(g.pos[n], t) for t in ends) < 4 * R:
+                if min(math.dist(g.pos[n], t) for t in ends) < 4 * RC:
                     continue
                 eid = eids[0]
                 other = g.other(eid, n)
@@ -444,14 +456,14 @@ def fill_gaps(g, routes, mask=None, max_span=2500.0):
                 deg[e["a"]] += 1
                 deg[e["b"]] += 1
         ends = [pt for p in rg.geoms for pt in (p.coords[0], p.coords[-1])]
-        loose = [n for n, d in deg.items() if d == 1 and min(math.dist(g.pos[n], t) for t in ends) > 4 * R]
+        loose = [n for n, d in deg.items() if d == 1 and min(math.dist(g.pos[n], t) for t in ends) > 4 * RC]
         if len(loose) < 2:
             continue
         cover = unary_union([LineString(g.edges[k]["c"]).buffer(R_FWY + 10 if on_fwy.get(k) else SNAP + 8) for k in mine])
         for part in rg.geoms:
-            on = sorted((part.project(Point(g.pos[n])), n) for n in loose if part.distance(Point(g.pos[n])) < 4 * R)
+            on = sorted((part.project(Point(g.pos[n])), n) for n in loose if part.distance(Point(g.pos[n])) < 4 * RC)
             for (s1, n1), (s2, n2) in zip(on, on[1:]):
-                if n1 == n2 or not (2 * R < s2 - s1 < max_span):
+                if n1 == n2 or not (2 * RC < s2 - s1 < max_span):
                     continue
                 sub = substring(part, s1, s2)
                 missing = sub.difference(cover).length
@@ -513,7 +525,7 @@ def bridge_loose_ends(g, routes, mask=None, max_span=2500.0, step=10.0):
                 deg[e["a"]] += 1
                 deg[e["b"]] += 1
         ends = [pt for p in rg.geoms for pt in (p.coords[0], p.coords[-1])]
-        loose = [n for n, d in deg.items() if d == 1 and min(math.dist(g.pos[n], t) for t in ends) > 4 * R]
+        loose = [n for n, d in deg.items() if d == 1 and min(math.dist(g.pos[n], t) for t in ends) > 4 * RC]
         if not loose:
             continue
         snap = lambda k: R_FWY + 10 if near_fwy is not None and near_fwy.contains(LineString(g.edges[k]["c"]).interpolate(0.5, normalized=True)) else SNAP + 8  # noqa: E731
@@ -522,7 +534,7 @@ def bridge_loose_ends(g, routes, mask=None, max_span=2500.0, step=10.0):
             P = Point(g.pos[n])
             best = None
             for part in rg.geoms:
-                if part.distance(P) > 4 * R:
+                if part.distance(P) > 4 * RC:
                     continue
                 s0 = part.project(P)
                 for sign in (1, -1):
@@ -686,7 +698,7 @@ def repair_gaps(g, routes, max_gap=700.0):
             if slug in e["lines"]:
                 deg[e["a"]] += 1
                 deg[e["b"]] += 1
-        loose = [n for n, d in deg.items() if d == 1 and min(math.dist(g.pos[n], t) for t in ends) > 4 * R]
+        loose = [n for n, d in deg.items() if d == 1 and min(math.dist(g.pos[n], t) for t in ends) > 4 * RC]
         used = set()
         for a in loose:
             if a in used:
@@ -718,7 +730,7 @@ def repair_gaps(g, routes, max_gap=700.0):
             while n != a:
                 n, eid = prev[n]
                 path.append(eid)
-            if not all(LineString(g.edges[k]["c"]).interpolate(0.5, normalized=True).distance(rg) < 4 * R for k in path):
+            if not all(LineString(g.edges[k]["c"]).interpolate(0.5, normalized=True).distance(rg) < 4 * RC for k in path):
                 continue
             for k in path:
                 g.edges[k]["lines"] = g.edges[k]["lines"] | {slug}
@@ -737,7 +749,13 @@ def refine_geometry(g, routes, rank):
     """
     from shapely.geometry import Point
     from shapely.ops import nearest_points, substring
-    moved = 0
+    moved = pinned = 0
+    street_jn = None
+    if os.path.exists(JUNCTIONS):
+        pts = json.load(open(JUNCTIONS))
+        xs, ys = fwd.transform([q[0] for q in pts], [q[1] for q in pts])
+        geoms = [Point(x, y) for x, y in zip(xs, ys)]
+        street_jn = (geoms, shapely.STRtree(geoms))
     for n, inc in g.adj.items():
         if not inc:
             continue
@@ -746,18 +764,58 @@ def refine_geometry(g, routes, rank):
         near = []
         for l in lines:
             q = nearest_points(routes[l], p)[0]
-            if q.distance(p) < 3 * R:
+            if q.distance(p) < 3 * RC:
                 near.append((q.x, q.y))
         if near:
             xs, ys = sorted(c[0] for c in near), sorted(c[1] for c in near)
             m = len(near) // 2
             new = (xs[m], ys[m]) if len(near) % 2 else ((xs[m - 1] + xs[m]) / 2, (ys[m - 1] + ys[m]) / 2)
+            # the real intersection: the street junction (where the routes' streets meet) that
+            # the routes here pass through, nearest to the traced junction
+            if street_jn is not None and len(inc) >= 2:
+                best = None
+                for k in street_jn[1].query(p, predicate="dwithin", distance=18.0):
+                    q = street_jn[0][k]
+                    through = sum(1 for l in lines if routes[l].distance(q) < 3.0)
+                    if through >= min(2, len(lines)):
+                        dq = q.distance(p) - 4.0 * through  # prefer junctions more routes use
+                        if best is None or dq < best[0]:
+                            best = (dq, (q.x, q.y))
+                if best:
+                    new = best[1]
+                    pinned += 1
             d = Point(new).distance(p)
-            if d > 1.6 * R:  # never move a junction more than ~25 m
-                f = 1.6 * R / d
+            if d > 18.0:  # never move a junction more than 18 m
+                f = 18.0 / d
                 new = (p.x + (new[0] - p.x) * f, p.y + (new[1] - p.y) * f)
             moved += d > 5
             g.pos[n] = new
+    # junctions pinned to the same intersection are one junction
+    merged = 0
+    changed = True
+    while changed:
+        changed = False
+        for eid in list(g.edges):
+            e = g.edges.get(eid)
+            if e is None or e["a"] == e["b"]:
+                continue
+            a, b = e["a"], e["b"]
+            if math.dist(g.pos[a], g.pos[b]) > 1.5:
+                continue
+            g.remove(eid)
+            for other in list(g.adj[b]):
+                oe = g.edges[other]
+                if oe["a"] == b:
+                    oe["a"] = a
+                if oe["b"] == b:
+                    oe["b"] = a
+                g.adj[a].add(other)
+            del g.adj[b]
+            merged += 1
+            changed = True
+    for eid in [k for k, e in g.edges.items() if e["a"] == e["b"] and LineString(e["c"]).length < 60]:
+        g.remove(eid)
+    print(f"    {pinned} junctions pinned to street intersections, {merged} merged", flush=True)
     replaced = 0
     for e in g.edges.values():
         a, b = g.pos[e["a"]], g.pos[e["b"]]
@@ -767,7 +825,7 @@ def refine_geometry(g, routes, rank):
             for l in e["lines"]:
                 for part in routes[l].geoms:
                     da, db = part.project(Point(a)), part.project(Point(b))
-                    if part.interpolate(da).distance(Point(a)) > 2 * R or part.interpolate(db).distance(Point(b)) > 2 * R:
+                    if part.interpolate(da).distance(Point(a)) > 12 or part.interpolate(db).distance(Point(b)) > 12:
                         continue
                     if abs(db - da) < 1:
                         continue
@@ -776,7 +834,7 @@ def refine_geometry(g, routes, rank):
                     if sub.length < 0.75 * old.length or sub.length > 1.2 * old.length + 8:
                         continue
                     h = sub.hausdorff_distance(old)
-                    if h > 1.4 * R:
+                    if h > 2.0 * R + 4:
                         continue
                     key = (round(h / 4), rank.get(l, 0))
                     if best is None or key < best[0]:
@@ -1024,7 +1082,7 @@ def build_layer(routes, rank, name, mask=None):
     for _ in range(3):
         prune_spurs(g, 2.2 * R)
         merge_chains(g)
-    contract_short(g, 2.8 * R)  # junctions closer than ~40 m become one (city blocks are 70 m+)
+    contract_short(g, 22.0)  # junctions closer than ~22 m become one (city blocks are 60 m+)
     merge_chains(g)
     smooth(g)
     assign_lines(g, routes, mask)
@@ -1094,6 +1152,11 @@ def main():
         routes = {k: g for k, (lay, g) in all_routes.items() if lay == name}
         if not routes:
             continue
+        # trains keep their own (unmatched) shapes, whose tracks can sit 10-20 m apart: they need
+        # the wider band; buses on matched shapes use the narrow one
+        global R, SNAP
+        R = 15.0 if (name != "surface" or not MATCHED) else 8.0
+        SNAP = R + 7
         g = water_direct(routes) if name == "water" else build_layer(routes, rank, name, mask if name == "surface" else None)
         for eid, e in g.edges.items():
             lon, lat = inv.transform(*zip(*e["c"]))

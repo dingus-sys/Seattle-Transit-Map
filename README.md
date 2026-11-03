@@ -26,6 +26,7 @@ pipeline/         Python build steps (run in this order by build_all.py)
   build_basemap.py  base map tiles + label fonts from OpenFreeMap, trimmed and packed
   process_gtfs.py   routes, categories, frequencies, hours, stops (Puget Sound GTFS)
   build_areas.py    DART areas, Access area, Metro Flex zones
+  match_shapes.py   snaps every bus and streetcar route onto the real street network
   build_graph.py    the shared-corridor network and ribbon order
   build_site.py     assembles web/ into site/index.html (+ artifact.html)
 web/              page template, styles, app script and geom.js (the line geometry engine)
@@ -79,8 +80,17 @@ than one line per route: every frequent bus on a street shares one green line, e
 all-day bus one blue line, RapidRide is red with white dots, Link is navy with a white
 center. The route numbers ride along as stacked tags, one stack per stretch of street.
 
-`build_graph.py` draws every route as a band about 30 m wide, merges the bands, and thins
-them to a centerline. That becomes a graph of street segments; junctions are then moved
+Agency route shapes are drawn loosely: they cut corners across intersections and wander a
+few meters off the street. `match_shapes.py` first snaps every bus and streetcar route onto
+OpenStreetMap's streets (from the base-map tiles), the way a GPS trace is matched to roads:
+a hidden Markov model scores positions on nearby streets by how close they are to the shape,
+and moves between them by whether the street distance agrees with the shape's, and the best
+path (Viterbi) follows real streets and turns at real intersections. Routes on the same
+street then lie exactly on top of each other, and junctions are pinned to the street
+intersections the routes actually use.
+
+`build_graph.py` draws every route as a band about 16 m wide (about 70 m on freeways, so both
+carriageways become one line), merges the bands, and thins them to a centerline. That becomes a graph of street segments; junctions are then moved
 back onto the agencies' real shapes and each segment is redrawn from the best-matching
 route shape. Each segment learns which routes use it, and the routes are ordered so that
 for any two, the one that turns left ends up on the left, with the same order carried
