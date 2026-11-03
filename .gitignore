@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.cache/
+pipeline/local_secrets.json
+*.zip
+site/artifact.html

@@ -1,0 +1,40 @@
+name: Publish map to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths: ["site/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - name: Add the live-data key (from the OBA_API_KEY repository secret)
+        env:
+          OBA_API_KEY: ${{ secrets.OBA_API_KEY }}
+        run: |
+          if [ -n "$OBA_API_KEY" ]; then
+            sed -i "s/__OBA_API_KEY__/${OBA_API_KEY}/" site/index.html
+          else
+            echo "No OBA_API_KEY secret: the map will show timetable estimates instead of live positions."
+          fi
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4

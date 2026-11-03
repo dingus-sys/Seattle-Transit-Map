@@ -1,0 +1,38 @@
+name: Refresh transit data
+
+# Rebuilds routes, stops, schedules and the bundled network from the latest
+# agency feeds every Monday, and commits the result (which re-publishes the site).
+on:
+  schedule:
+    - cron: "17 11 * * 1"   # Mondays, 4:17 AM Pacific (standard time)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      TRANSIT_CACHE: ${{ github.workspace }}/.cache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python pipeline/build_all.py --no-tiles --fresh
+      - name: Commit updated data
+        run: |
+          git config user.name "transit-data-bot"
+          git config user.email "transit-data-bot@users.noreply.github.com"
+          git add site
+          if git diff --cached --quiet; then echo "No changes"; exit 0; fi
+          git commit -m "Refresh transit data $(date -u +%Y-%m-%d)"
+          git push
+          gh workflow run pages.yml --ref main
+        env:
+          GH_TOKEN: ${{ github.token }}
