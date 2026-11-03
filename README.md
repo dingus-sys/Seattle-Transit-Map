@@ -10,9 +10,10 @@ paratransit area, plus live vehicle positions.
 
 Lines follow the real streets. Where several routes share a street, they're drawn
 side by side as ribbons in a consistent order, so you can tell them apart in busy
-places like the U District or downtown. Hover a line and it turns bold, with its stops and
-arrows where it runs one way only. Point at a single number on a route tag (the "62" in
-"45 | 62 | 75") to see just that route; click it to open it. Hover any stop
+places like the U District or downtown. Hover a line and every route on it lights up end to
+end, with its stops and arrows where it runs one way only. Point at a single number on a
+route tag (the "62" in "45 | 62 | 75") to see just that route; click it to open it. A tag's
+numbers read in the same order as the lines under it, in the same colors. Hover any stop
 for a card with its routes and next departures (from the timetable). Click a line for its
 frequency, hours, schedule at a glance and stop list; click a stop to see every route that
 serves it.
@@ -64,6 +65,9 @@ key from oba_api_key@soundtransit.org:
   holds a placeholder.
 - locally, put `{"oba_api_key": "..."}` in `pipeline/local_secrets.json` (git-ignored) and
   build with `python3 pipeline/build_site.py --with-key` to test live data.
+
+Each vehicle sits on its route's line and shows when it last reported and whether it's on
+time, early or late (OneBusAway's vehicle status, fetched for one agency per update round).
 
 The key does end up in the deployed page, as it must for a browser to call the API directly.
 The claude.ai preview can't reach outside servers, so live vehicles show only on the website.

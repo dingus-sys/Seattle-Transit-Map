@@ -28,6 +28,9 @@
   // treatment (white center for rail, dots for RapidRide, a glassy highlight for buses)
   const CAT = {
     link:      { group: "rail",  w: 3.0,  tier: 0, prio: 0,  inner: "solid" },
+    link1:     { group: "rail",  w: 3.0,  tier: 0, prio: 0,  inner: "solid", base: "link" },
+    link2:     { group: "rail",  w: 3.0,  tier: 0, prio: 0.1, inner: "solid", base: "link" },
+    linkT:     { group: "rail",  w: 3.0,  tier: 0, prio: 0.2, inner: "solid", base: "link" },
     sounder:   { group: "rail",  w: 2.5,  tier: 0, prio: 1,  inner: "ties" },
     streetcar: { group: "rapid", w: 2.2,  tier: 0, prio: 2,  inner: "solid" },
     monorail:  { group: "rapid", w: 2.2,  tier: 0, prio: 3,  inner: "solid" },
@@ -42,6 +45,8 @@
     ferry:     { group: "water", w: 1.9,  tier: 0, prio: 12, dash: true },
   };
   const VKEY = (cat) => (cat === "amtrak" ? "sounder" : cat); // Amtrak shares Sounder's tracks and line
+  // a route's line on the map: its service type, except that each Link line has its own color
+  const dkey = (r) => (r.cat === "link" ? (r.label === "1" ? "link1" : r.label === "T" ? "linkT" : "link2") : VKEY(r.cat));
   const CAT_NAME = {
     link: "Link light rail", sounder: "Sounder train", amtrak: "Amtrak Cascades", streetcar: "Streetcar",
     monorail: "Monorail", rapidride: "RapidRide", swift: "Swift BRT", frequent: "Frequent bus",
@@ -50,23 +55,17 @@
   };
   const LINE = {
     light: {
-      link: "#1d3f86", sounder: "#4b5563", streetcar: "#e8772e", monorail: "#8a8f98", rapidride: "#d0213b",
+      link: "#1d3f86", link1: "#28813f", link2: "#0072a8", linkT: "#e57a00", sounder: "#4b5563", streetcar: "#e8772e", monorail: "#8a8f98", rapidride: "#d0213b",
       swift: "#1f6fe0", frequent: "#0a9b7b", local: "#3f8ee0", peak: "#a9824b", shuttle: "#e3a118",
       dart: "#c0508a", watertaxi: "#1690ad", ferry: "#3d6fa8",
     },
     dark: {
-      link: "#86a8f2", sounder: "#a3acb9", streetcar: "#ff9450", monorail: "#b5bac2", rapidride: "#ff5468",
+      link: "#86a8f2", link1: "#4cc46a", link2: "#4ab3e8", linkT: "#ffa94d", sounder: "#a3acb9", streetcar: "#ff9450", monorail: "#b5bac2", rapidride: "#ff5468",
       swift: "#5b9bff", frequent: "#2fd3a6", local: "#6eaef5", peak: "#d1a86c", shuttle: "#ffc44d",
       dart: "#ea7ab5", watertaxi: "#45c1e3", ferry: "#7aa6dc",
     },
   };
-  // Route-number tags carry their own background, so one palette reads in both themes.
   const FLEX = { light: "#8a3cc0", dark: "#c47ef0" }; // Metro Flex zones
-  const TAG = {
-    link1: "#2e8540", link2: "#0a7cb8", linkT: "#e07b00", sounder: "#4b5563", amtrak: "#4b5563", streetcar: "#e0692a",
-    monorail: "#6b7280", rapidride: "#d0213b", swift: "#1f6fe0", frequent: "#08876b", local: "#2f7fd3",
-    peak: "#94703c", shuttle: "#e3a118", dart: "#b2467c", watertaxi: "#13809b", ferry: "#35639a",
-  };
 
   const LAYER_GROUPS = [
     { title: "Trains", items: [
@@ -141,7 +140,7 @@
       civic: "#ece7f1", industrial: "#ebe9e6", minor: "#ffffff", minorCase: "#e1e0dc", major: "#ffffff",
       majorCase: "#d5d3cf", motorway: "#f7f7f5", motorwayCase: "#c9c8c4", rail: "#cfcfcb", runway: "#e1e1dd",
       label: "#6e6e73", halo: "#f2f2ef", place: "#3a3a3c", mask: "#f2f2ef",
-      stationFill: "#ffffff", stationStroke: "#1d3f86", stopFill: "#ffffff", stopStroke: "#8e8e93",
+      stationFill: "#ffffff", stationStroke: "#3a3a3c", stopFill: "#ffffff", stopStroke: "#8e8e93",
       casing: "#f8f8f6", shadow: "rgba(20, 28, 48, 0.24)", shine: "#ffffff",
     },
     dark: {
@@ -172,8 +171,10 @@
 
   const enabledCat = (cat) => LAYERS.some((l) => l.cats.includes(cat) && enabled.has(l.key));
   const keyColor = (key, th = theme) => LINE[th][key] || LINE[th].local;
-  const tagColor = (r) => (r.cat === "link" ? (r.label === "1" ? TAG.link1 : r.label === "T" ? TAG.linkT : TAG.link2) : TAG[r.cat] || TAG.local);
-  const tagText = (r) => (r.cat === "shuttle" ? "#1d1d1f" : "#ffffff");
+  const tagColor = (r, th = theme) => LINE[th][dkey(r)] || LINE[th].local;
+  const lum = (hex) => { const n = parseInt(hex.slice(1), 16), c = [n >> 16, (n >> 8) & 255, n & 255].map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; };
+  const tagText = (r, th = theme) => (lum(tagColor(r, th)) > 0.36 ? "#1d1d1f" : "#ffffff");
   const isRound = (r) => r.cat === "link";
   const shortLabel = (r) => {
     if (r.cat === "watertaxi") return /Vashon/.test(r.short) ? "Vashon Water Taxi" : "Water Taxi";
@@ -205,7 +206,7 @@
     if (/^\d/.test(r.short)) return `Route ${r.short}`;
     return r.short;
   };
-  const tagOrder = (a, b) => (CAT[VKEY(a.cat)].prio - CAT[VKEY(b.cat)].prio) || (a._rank - b._rank);
+  const tagOrder = (a, b) => (CAT[dkey(a)].prio - CAT[dkey(b)].prio) || (a._rank - b._rank);
 
   // ---------------------------------------------------------------- bundled tile archives
   let MANIFEST = null;
@@ -475,7 +476,7 @@
   // drawing itself is done by the geometry engine (web/geom.js) in a background worker.
   let EDGES = [];
   function prepNetwork() {
-    EDGES = KCTMGeom.prepEdges(NET.edges, LINES.map((r) => ({ cat: r.cat, group: CAT[VKEY(r.cat)].group })));
+    EDGES = KCTMGeom.prepEdges(NET.edges, LINES.map((r) => ({ cat: dkey(r), group: CAT[dkey(r)].group })));
     const bb = LINES.map(() => [180, 90, -180, -90]);
     for (const e of NET.edges) {
       let x0 = 180, y0 = 90, x1 = -180, y1 = -90;
@@ -495,7 +496,7 @@
   let worker = null, engine = null, inFlight = null, queued = null, buildSeq = 0, appliedSeq = 0, lastBuildMs = 0, watchdog = 0;
   const idleWaiters = [];
   function engineInit() {
-    return { edges: NET.edges, lines: LINES.map((r) => ({ cat: r.cat, rank: r._rank })), cat: CAT, gap: GAP };
+    return { edges: NET.edges, lines: LINES.map((r) => ({ cat: dkey(r), rank: r._rank })), cat: CAT, gap: GAP };
   }
   function runHere() {
     if (worker) { worker.terminate(); worker = null; }
@@ -533,17 +534,18 @@
   // one route's path in the current view's lanes (for hover previews), from the engine
   let routeSeq = 0;
   const routeCbs = new Map();
-  function requestRoutePath(idx, cb) {
-    if (!worker) { cb(engine ? engine.routePath(idx) : []); return; }
+  function requestRoutePaths(idxs, center, cb) {
+    if (!worker) { cb(engine ? engine.routePaths(idxs, center) : []); return; }
     const id = ++routeSeq;
     routeCbs.set(id, cb);
-    worker.postMessage({ type: "route", id, idx });
+    worker.postMessage({ type: "route", id, idxs, center });
   }
   function applyBuild(m) {
     if (m.id < appliedSeq || !map || !map.getSource("net")) return;
     appliedSeq = m.id;
     lastFeats = m.feats;
     lastSelFeats = m.selFeats;
+    vehIx = vehIxSel = null;
     lastBuildMs = m.ms || 0;
     map.getSource("net").setData({ type: "FeatureCollection", features: m.feats });
     if (hoverKey) focusOff();
@@ -592,7 +594,7 @@
     const u = interp(UNIT, z) * THICK[settings.thickness];
     const tier = tierFor(zNow);
     const keyOn = {};
-    for (const k of Object.keys(CAT)) keyOn[k] = (k === "sounder" ? enabledCat("sounder") || enabledCat("amtrak") : enabledCat(k)) && CAT[k].tier <= tier;
+    for (const k of Object.keys(CAT)) keyOn[k] = (k === "sounder" ? enabledCat("sounder") || enabledCat("amtrak") : enabledCat(CAT[k].base || k)) && CAT[k].tier <= tier;
     const p = { z, zNow, u, capU: interp(CAP_PX, z) / u, keyOn,
       selIdx: selected && selected.type === "route" ? LINEIDX[selected.id] : -1,
       view: (builtView = viewBox(0.75)), tags: tagSpacing(TAG_DENSITY[settings.tags], zNow), theme: theme[0], colors: LINE[theme],
@@ -624,9 +626,9 @@
     if (rs.length > MAX) { extra = rs.length - (MAX - 1); rs = rs.slice(0, MAX - 1); }
     const groups = [], all = list.split(".").map(Number);
     for (const r of rs) {
-      const c = tagColor(r);
+      const c = tagColor(r, dark ? "dark" : "light");
       let g = groups.find((x) => x.c === c);
-      if (!g) groups.push((g = { c, fg: tagText(r), items: [], refs: [] }));
+      if (!g) groups.push((g = { c, fg: tagText(r, dark ? "dark" : "light"), items: [], refs: [] }));
       g.items.push(shortLabel(r));
       g.refs.push({ r: LINEIDX[r.id] });
     }
@@ -667,7 +669,7 @@
         ctx.fillText(t, tx, halo + h / 2 + 0.5 * dpr);
         tx += g.ws[k];
         if (k < g.items.length - 1) {
-          ctx.fillStyle = g.fg === "#ffffff" ? "rgba(255,255,255,0.42)" : "rgba(0,0,0,0.3)";
+          ctx.fillStyle = g.fg === "#ffffff" ? "rgba(255,255,255,0.42)" : "rgba(0,0,0,0.28)";
           ctx.fillRect(tx + sep / 2 - 0.5 * dpr, halo + h * 0.24, 1 * dpr, h * 0.52);
           tx += sep;
         }
@@ -702,6 +704,9 @@
       if (!major && cats.has("streetcar")) stroke = LINE[theme].streetcar;
       if (!cats.has("link") && (cats.has("ferry") || cats.has("watertaxi"))) stroke = LINE[theme].ferry;
       if (!cats.has("link") && (cats.has("sounder") || cats.has("amtrak"))) stroke = LINE[theme].sounder;
+      // Link stations take their line's color; stations of more than one Link line stay neutral
+      const linkLines = new Set(rs.filter((r) => r.cat === "link").map(dkey));
+      if (linkLines.size === 1) stroke = LINE[theme][[...linkLines][0]];
       const size = cats.has("link") ? (rs.filter((r) => r.cat === "link").length > 1 ? 1.15 : 1) : major ? 0.95 : 0.7;
       const snap = rs.length && rs.every((r) => r.cat === "streetcar") ? "streetcar" : "";
       return { type: "Feature", properties: { id: s.id, name: s.name, major: major ? 1 : 0, size, stroke, snap },
@@ -745,7 +750,9 @@
   // ~30 KB of protobuf). We poll every 15 s while the page is visible, match each vehicle
   // to its route, and glide markers to their new positions.
   const POLL_MS = 20000;
-  const live = { vehicles: new Map(), timer: 0, last: 0, error: false, polling: false, anim: 0, count: 0, pauseUntil: 0 };
+  const live = { vehicles: new Map(), timer: 0, last: 0, error: false, polling: false, anim: 0, count: 0, pauseUntil: 0,
+    status: new Map(), statusTurn: 0 };
+  const plainId = (x) => String(x || "").replace(/^\d+_/, "");
   let RTMAP = new Map();
   function varint(r) { let x = 0, m = 1, b; do { b = r.b[r.p++]; x += (b & 0x7f) * m; m *= 128; } while (b & 0x80); return x; }
   function skipField(r, wt) { if (wt === 0) varint(r); else if (wt === 1) r.p += 8; else if (wt === 2) { const n = varint(r); r.p += n; } else if (wt === 5) r.p += 4; else throw new Error("bad wire type"); }
@@ -811,6 +818,23 @@
       }
       await new Promise((ok) => setTimeout(ok, 250));
     }
+    // on time or late: one agency's vehicle status per round (King County Metro every other round)
+    if (LIVE.status && Date.now() >= live.pauseUntil) {
+      const order = LIVE.agencies.flatMap((a) => (a === "1" ? ["1"] : ["1", a]));
+      const a = order[live.statusTurn++ % order.length];
+      try {
+        const r = await fetch(`${LIVE.status}/${a}.json?key=${encodeURIComponent(LIVE.key)}&includeReferences=false`, { cache: "no-store" });
+        if (r.status === 429) live.pauseUntil = Date.now() + 60000;
+        else if (r.ok) {
+          const d = await r.json();
+          for (const x of (d.data && d.data.list) || []) {
+            const ts = x.tripStatus;
+            if (!ts) continue;
+            live.status.set(a + "_" + plainId(x.vehicleId), { dev: ts.scheduleDeviation, predicted: !!ts.predicted, upd: x.lastUpdateTime, got: Date.now() });
+          }
+        }
+      } catch (e) { /* status is a bonus; positions still work */ }
+    }
     live.polling = false;
     const now = performance.now(), wall = Date.now() / 1000;
     let ok = 0;
@@ -828,9 +852,9 @@
         if (prev) {
           const from = vehPos(prev, now), d = geoDist(from, to);
           const b = v.bearing != null && v.bearing > 0 ? v.bearing : d > 12 ? geoBearing(from, to) : prev.b;
-          Object.assign(prev, { from, to, t0: now, r, b, ts: v.ts, label: v.label || prev.label });
+          Object.assign(prev, { from, to, t0: now, r, b, ts: v.ts, label: v.label || prev.label, vid: v.id });
         } else {
-          live.vehicles.set(id, { id, agency: a, from: to, to, t0: now, r, b: v.bearing > 0 ? v.bearing : -1, ts: v.ts, label: v.label });
+          live.vehicles.set(id, { id, agency: a, from: to, to, t0: now, r, b: v.bearing > 0 ? v.bearing : -1, ts: v.ts, label: v.label, vid: v.id });
         }
       }
       for (const [id, v] of live.vehicles) if (v.agency === a && !seen.has(id)) live.vehicles.delete(id);
@@ -915,17 +939,57 @@
     for (const v of list) {
       const r = v.r;
       if (!r || LINEIDX[r.id] == null) continue;
-      if (sel ? sel !== r.id : (!enabledCat(r.cat) || CAT[VKEY(r.cat)].tier > tier)) continue;
+      if (sel ? sel !== r.id : (!enabledCat(r.cat) || CAT[dkey(r)].tier > tier)) continue;
       const c = tagColor(r);
-      feats.push({ type: "Feature", properties: { id: v.id, r: r.id, c, tc: c, lab: shortLabel(r), b: v.b == null ? -1 : Math.round(v.b),
-        s: 20 - CAT[VKEY(r.cat)].prio, est: v.est ? 1 : 0 }, geometry: { type: "Point", coordinates: v.pos } });
+      const [pos, b] = onLine(r, v.pos, v.b == null ? -1 : v.b);
+      feats.push({ type: "Feature", properties: { id: v.id, r: r.id, c, tc: c, lab: shortLabel(r), b: Math.round(b),
+        s: 20 - CAT[dkey(r)].prio, est: v.est ? 1 : 0 }, geometry: { type: "Point", coordinates: pos } });
     }
     live.count = feats.length;
     map.getSource("vehicles").setData({ type: "FeatureCollection", features: feats });
   }
   const renderLive = renderVehicles;
+  // Live positions are GPS fixes on the street; the map draws lines in lanes and simplified, so a
+  // vehicle is moved onto its own route's line (the nearest point of that line, if it's close)
+  // and turned to follow it.
+  let vehIx = null, vehIxSel = null;
+  function onLine(r, pos, b) {
+    const i = LINEIDX[r.id], key = dkey(r);
+    const sel = selected && selected.type === "route" && selected.id === r.id;
+    const ix = sel ? (vehIxSel = vehIxSel || segIndex(lastSelFeats)) : (vehIx = vehIx || segIndex(lastFeats));
+    const mpp = MPP0 / 2 ** map.getZoom();
+    const hit = nearestOn(ix, toM(pos[0], pos[1]), Math.max(40, 16 * mpp),
+      sel ? null : (pr) => pr.cat === key && EDGES[pr.e] && EDGES[pr.e].l.includes(i));
+    if (!hit) return [pos, b];
+    let hb = (Math.atan2(hit.dir[0], hit.dir[1]) * 180 / Math.PI + 360) % 360;
+    if (b >= 0) { const diff = Math.abs(((hb - b + 540) % 360) - 180); if (diff > 90) hb = (hb + 180) % 360; }
+    return [toLonLat(hit.q), b >= 0 ? hb : b];
+  }
   function animateLive() { /* the steady ticker below keeps vehicles moving */ }
   setInterval(() => { if (map && enabled.has("live") && !document.hidden && !map.isMoving()) renderVehicles(); }, 125);
+
+  // "3 min late" / "On time" / "2 min early" for a live vehicle, when its agency predicts it
+  function vehicleStatus(v) {
+    const st = v && live.status.get(v.agency + "_" + plainId(v.vid));
+    if (!st || !st.predicted || Date.now() - st.got > 10 * 60000) return null;
+    const m = Math.round(Math.abs(st.dev) / 60);
+    if (m === 0) return { text: "On time", cls: "ok" };
+    return st.dev > 0 ? { text: `${m} min late`, cls: m >= 5 ? "late" : "slow" } : { text: `${m} min early`, cls: "early" };
+  }
+  const CLOCK = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", hour: "numeric", minute: "2-digit" });
+  function updatedText(ts) {
+    if (!ts) return "Live position";
+    const age = Math.max(0, Math.round(Date.now() / 1000 - ts));
+    return `Updated ${age < 60 ? age + " s" : Math.round(age / 60) + " min"} ago · ${CLOCK.format(new Date(ts * 1000))}`;
+  }
+  function vehicleLines(id, est) {
+    if (est) return `<span class="vs-note">Estimated from the timetable</span>`;
+    const v = live.vehicles.get(id), st = vehicleStatus(v);
+    // the newest report for this vehicle: its position, or its agency's status report
+    const raw = v && live.status.get(v.agency + "_" + plainId(v.vid));
+    const ts = Math.max((v && v.ts) || 0, raw && raw.upd ? raw.upd / 1000 : 0);
+    return `${st ? `<span class="vs vs-${st.cls}">${st.text}</span>` : ""}<span class="vs-note">${esc(updatedText(ts))}</span>`;
+  }
 
   function liveStatusText() {
     if (!enabled.has("live")) return "Buses, trains and ferries on the move";
@@ -1058,7 +1122,7 @@
     return list;
   }
   function stopFeatures(routes, withEnds) {
-    const color = keyColor(VKEY(routes[0].cat)), seen = new Map();
+    const color = keyColor(dkey(routes[0])), seen = new Map();
     for (const r of routes) {
       for (const st of routeStops(r)) {
         const k = st.lon + "," + st.lat;
@@ -1081,7 +1145,7 @@
       for (const c of [cs[0], cs[cs.length - 1]]) endCount.set(ek(c), (endCount.get(ek(c)) || 0) + 1);
       const P = cs.map(([x, y]) => toM(x, y));
       for (let i = 0; i < P.length - 1; i++) {
-        const a = P[i], b = P[i + 1], n = segs.push([a, b]) - 1;
+        const a = P[i], b = P[i + 1], n = segs.push([a, b, f.properties]) - 1;
         for (let gx = Math.floor(Math.min(a[0], b[0]) / cell); gx <= Math.floor(Math.max(a[0], b[0]) / cell); gx++)
           for (let gy = Math.floor(Math.min(a[1], b[1]) / cell); gy <= Math.floor(Math.max(a[1], b[1]) / cell); gy++) {
             const key = gx + "," + gy;
@@ -1097,20 +1161,22 @@
     }
     return { cell, grid, segs, loose };
   }
-  function nearestOn(ix, p, maxD) {
-    let best = null, bd = maxD;
+  function nearestOn(ix, p, maxD, accept) {
+    let best = null, bd = maxD, dir = null;
     const r = Math.ceil(maxD / ix.cell), gx = Math.floor(p[0] / ix.cell), gy = Math.floor(p[1] / ix.cell), seen = new Set();
     for (let dx = -r; dx <= r; dx++) for (let dy = -r; dy <= r; dy++) {
       for (const n of ix.grid.get((gx + dx) + "," + (gy + dy)) || []) {
         if (seen.has(n)) continue;
         seen.add(n);
-        const [a, b] = ix.segs[n], vx = b[0] - a[0], vy = b[1] - a[1], L2 = vx * vx + vy * vy || 1;
+        const [a, b, props] = ix.segs[n];
+        if (accept && !accept(props)) continue;
+        const vx = b[0] - a[0], vy = b[1] - a[1], L2 = vx * vx + vy * vy || 1;
         const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / L2));
         const q = [a[0] + t * vx, a[1] + t * vy], d = Math.hypot(q[0] - p[0], q[1] - p[1]);
-        if (d < bd) { bd = d; best = q; }
+        if (d < bd) { bd = d; best = q; dir = [vx, vy]; }
       }
     }
-    return best ? { q: best, d: bd } : null;
+    return best ? { q: best, d: bd, dir } : null;
   }
   // Put stops onto the line drawn for their route, and leave out stops the drawn line doesn't
   // reach (beyond a loose end, or away from a highlighted stretch).
@@ -1170,7 +1236,7 @@
     hlId = id;
     if (!f) { cancelAnimationFrame(anims.hl); src.setData(fc([])); return; }
     const s = stopIndex[id], rs = s ? (s.routes || []).map((x) => RBY[x]).filter(Boolean).sort(tagOrder) : [];
-    const c = f.properties.c || f.properties.stroke || (rs[0] ? keyColor(VKEY(rs[0].cat)) : BASE[theme].stopStroke);
+    const c = f.properties.c || f.properties.stroke || (rs[0] ? keyColor(dkey(rs[0])) : BASE[theme].stopStroke);
     src.setData(fc([{ type: "Feature", properties: { id, c, end: 0 }, geometry: { type: "Point", coordinates: f.geometry.coordinates } }]));
     popIn("hl", 1.8);
   }
@@ -1507,7 +1573,7 @@
       return s;
     };
     const one = {
-      link: [P.link, 6, "solid"], rail: [P.sounder, 5, "ties"], streetcar: [P.streetcar, 4.6, "solid"], monorail: [P.monorail, 4.6, "solid"],
+      link: [P.link1, 6, "solid"], rail: [P.sounder, 5, "ties"], streetcar: [P.streetcar, 4.6, "solid"], monorail: [P.monorail, 4.6, "solid"],
       rapid: [P.rapidride, 5.4, "dots"], frequent: [P.frequent, 5, "glass"], local: [P.local, 3.8, "glass"], peak: [P.peak, 2.4, ""],
       water: [P.ferry, 3.2, "dash"], dart: [P.dart, 3, "dash"],
     }[l.key];
@@ -1553,7 +1619,7 @@
     const freq = w && w.mid_n >= 3 ? `${w.mid}<small> min</small>` : w && (w.am_n || w.pm_n) ? "Rush hour" : w ? `${w.trips}<small> trips</small>` : "Weekends";
     const span = !w ? "—" : w.span_h >= 22 ? "24 hours" : `${w.first.replace(" ", " ")} – ${w.last.replace(" ", " ")}`;
     const pats = (r.patterns || []).filter((p) => p.stops && p.stops.length);
-    const color = keyColor(VKEY(r.cat));
+    const color = keyColor(dkey(r));
     let html = `${backBtn}
       <div class="hero">${badgeHTML(r, "xl")}<div><h2>${esc(routeTitle(r))}</h2><p>${esc(r.name || "")}</p></div></div>
       <div class="chips"><span class="chip"><span class="dot" style="background:${color}"></span>${esc(CAT_NAME[r.cat])}</span><span class="chip">${esc(r.agency)}</span><span class="chip live-chip" id="liveChip" hidden><span class="pulse" aria-hidden="true"></span><span class="n"></span></span></div>
@@ -1705,7 +1771,7 @@
   const LINE_LAYERS = GROUPS.flatMap((g) => [`line-${g}`, `dash-${g}`]).concat(["sel-line", "sel-dash"]);
   // Routes under the pointer: a corridor line stands for every visible route of its type on that street.
   function routesAt(point, r = 6) {
-    const feats = map.queryRenderedFeatures([[point.x - r, point.y - r], [point.x + r, point.y + r]], { layers: LINE_LAYERS.filter((l) => map.getLayer(l)) });
+    const feats = qrf([[point.x - r, point.y - r], [point.x + r, point.y + r]], { layers: LINE_LAYERS.filter((l) => map.getLayer(l)) });
     const sel = selected && selected.type === "route" ? LINEIDX[selected.id] : -1;
     const set = new Set();
     for (const f of feats) {
@@ -1737,7 +1803,7 @@
     const tip = $("#tip");
     const hitLayers = () => ["sel-stops", "hov-stops", "stations", "stops", "flex"].filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none");
     const vehAt = (pt, rad) => (map.getLayer("veh-icon") && map.getLayoutProperty("veh-icon", "visibility") !== "none"
-      ? map.queryRenderedFeatures([[pt.x - rad, pt.y - rad], [pt.x + rad, pt.y + rad]], { layers: ["veh-icon"] }) : []);
+      ? qrf([[pt.x - rad, pt.y - rad], [pt.x + rad, pt.y + rad]], { layers: ["veh-icon"] }) : []);
     let tipTimer = 0;
     const hideTip = () => { clearTimeout(tipTimer); tipTimer = setTimeout(() => { tip.hidden = true; }, 120); };
     const showTipAt = (ev) => { clearTimeout(tipTimer); placeTip(ev); };
@@ -1766,11 +1832,11 @@
         map.getCanvas().style.cursor = "pointer";
         highlightStop(null);
         tip.classList.remove("tip-card");
-        tip.innerHTML = `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><br>${vh[0].properties.est ? "Estimated from the timetable" : "Live position"}</span>`;
+        tip.innerHTML = `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><span class="vs-row">${vehicleLines(vh[0].properties.id, vh[0].properties.est)}</span></span>`;
         showTipAt(e.originalEvent);
         return;
       }
-      const stopHit = map.queryRenderedFeatures([[e.point.x - 5, e.point.y - 5], [e.point.x + 5, e.point.y + 5]], { layers: hitLayers() });
+      const stopHit = qrf([[e.point.x - 5, e.point.y - 5], [e.point.x + 5, e.point.y + 5]], { layers: hitLayers() });
       if (stopHit.length) {
         const p = stopHit[0].properties;
         map.getCanvas().style.cursor = "pointer";
@@ -1793,7 +1859,7 @@
       if (rs.length) {
         map.getCanvas().style.cursor = "pointer";
         if (!(selected && selected.type === "route")) {
-          const top = map.queryRenderedFeatures([[e.point.x - 4, e.point.y - 4], [e.point.x + 4, e.point.y + 4]],
+          const top = qrf([[e.point.x - 4, e.point.y - 4], [e.point.x + 4, e.point.y + 4]],
             { layers: LINE_LAYERS.filter((l) => !l.startsWith("sel") && map.getLayer(l)) })[0];
           setHover(top && top.properties.r === -1 ? top : null, rs);
         }
@@ -1833,7 +1899,7 @@
         }
         if (v && r) {
           const age = v.ts ? Math.max(0, Math.round(Date.now() / 1000 - v.ts)) : null;
-          openPopup(vehPos(v, performance.now()), `<div class="pop"><h3>${esc(routeTitle(r))}</h3><p>${esc(r.name)}</p><p>${v.label ? `Vehicle ${esc(v.label)} · ` : ""}${age == null ? "Live position" : age < 60 ? `Position from ${age} s ago` : `Position from ${Math.round(age / 60)} min ago`}</p>${routeRows([r])}</div>`, "280px");
+          openPopup(vh[0].geometry.coordinates, `<div class="pop"><h3>${esc(routeTitle(r))}</h3><p>${esc(r.name)}</p><p class="vs-row">${vehicleLines(v.id, false)}</p>${v.label ? `<p>Vehicle ${esc(v.label)}</p>` : ""}${routeRows([r])}</div>`, "280px");
           return;
         }
       }
@@ -1888,55 +1954,53 @@
     map.getSource("hover").setData(fc([]));
     map.getSource("hoverstops").setData(fc([]));
   }
-  function focusRoute(r) {
-    if (!r || LINEIDX[r.id] == null) return;
+  // Hovering shows whole routes, never just a piece: one route, or every route on the line
+  // under the pointer (until you click one). They're drawn bold in their own lanes, right over
+  // their lines, with their stops when there are only a few routes.
+  function focusRoutes(routes) {
+    routes = (routes || []).filter((r) => r && LINEIDX[r.id] != null);
+    if (!routes.length) return;
     clearTimeout(hoverTimer);
-    const key = "r:" + r.id;
+    const key = "r:" + routes.map((r) => r.id).join(",");
     if (key === hoverKey) return;
     hoverKey = key;
     hoverStretch = null;
-    requestRoutePath(LINEIDX[r.id], (feats) => {
+    requestRoutePaths(routes.map((r) => LINEIDX[r.id]), false, (feats) => {
       if (hoverKey !== key) return;
       const lines = withColor(feats);
       map.getSource("hover").setData(fc(lines));
-      setStops("hov", stopFeatures([r], true), lines, "route", hovStopsKey !== key);
+      if (routes.length <= 4) {
+        // stops of each route snap onto that route's own drawn line
+        const all = [];
+        for (const r of routes) {
+          const own = lines.filter((f) => f.properties.r === LINEIDX[r.id]);
+          all.push(...snapStops(stopFeatures([r], routes.length === 1), own, "route"));
+        }
+        map.getSource("hoverstops").setData(fc(all));
+        if (hovStopsKey !== key) popIn("hov");
+      } else map.getSource("hoverstops").setData(fc([]));
       hovStopsKey = key;
     });
   }
+  const focusRoute = (r) => focusRoutes([r]);
   function setHover(feat, routes) {
     if (!feat) { clearTimeout(hoverTimer); hoverTimer = setTimeout(focusOff, 170); return; }
     clearTimeout(hoverTimer);
-    const cat = feat.properties.cat, e0 = feat.properties.e, E0 = EDGES[e0];
+    const cat = feat.properties.cat, E0 = EDGES[feat.properties.e];
     const own = E0 && E0.byKey.get(cat) ? E0.byKey.get(cat).map((i) => LINES[i]).sort(tagOrder) : routes;
-    if (own.length === 1) { focusRoute(own[0]); return; }
-    const want = (E0.byKey.get(cat) || []).join(".");
-    if (hoverStretch && hoverStretch.cat === cat && hoverStretch.want === want && hoverStretch.edges.has(e0)) return;
-    // the connected stretch carrying exactly these routes
-    const sig = (E) => (E.byKey.get(cat) || []).join("."), edges = new Set(), byNode = new Map();
-    for (const E of EDGES) if (sig(E) === want) for (const n of [E.a, E.b]) { if (!byNode.has(n)) byNode.set(n, []); byNode.get(n).push(E); }
-    const stack = [E0];
-    while (stack.length) {
-      const E = stack.pop();
-      if (edges.has(E.k)) continue;
-      edges.add(E.k);
-      for (const n of [E.a, E.b]) for (const E2 of byNode.get(n) || []) if (!edges.has(E2.k)) stack.push(E2);
-    }
-    const key = "s:" + cat + "|" + want + "|" + Math.min(...edges);
-    hoverKey = key;
-    hoverStretch = { cat, want, edges };
-    const lines = lastFeats.filter((f) => f.properties.cat === cat && edges.has(f.properties.e));
-    map.getSource("hover").setData(fc(lines));
-    setStops("hov", stopFeatures(own, false), lines, "stretch", hovStopsKey !== key);
-    hovStopsKey = key;
+    focusRoutes(own);
   }
 
   // ---------------------------------------------------------------- route tags you can point at
   // Each number on a tag is its own target: hovering it lifts that number (the lens) and shows
   // that route's whole line and stops; clicking it opens the route.
   const BADGE_LAYOUT = new Map();
+  // map lookups during pointer moves can briefly fail while a source is being replaced
+  const qrf = (geom, opts) => { try { return map.queryRenderedFeatures(geom, opts); } catch (e) { return []; } };
   function tagAt(pt) {
     if (!map.getLayer("badges") || map.getLayoutProperty("badges", "visibility") === "none") return null;
-    const hits = map.queryRenderedFeatures([[pt.x - 1, pt.y - 1], [pt.x + 1, pt.y + 1]], { layers: ["badges"] });
+    if (selected && selected.type === "route") return null; // other routes' tags are faded out then
+    const hits = qrf([[pt.x - 1, pt.y - 1], [pt.x + 1, pt.y + 1]], { layers: ["badges"] });
     for (const f of hits) {
       const L = BADGE_LAYOUT.get("b:" + f.properties.k);
       if (!L) continue;

@@ -183,7 +183,7 @@ const KCTMGeom = (() => {
     return [out, newJ];
   }
 
-  function drawPath(key, steps, lay, S, emit, water = false, schematic = 0, center = false) {
+  function drawPath(key, steps, lay, S, emit, water = false, schematic = 0, center = false, rmin = 0) {
     let pts = [], seg = [], joints = [];
     for (let k = 0; k < steps.length; k++) {
       const { E, fwd } = steps[k], Lo = lay[E.k];
@@ -205,7 +205,7 @@ const KCTMGeom = (() => {
       const dIn = unitVec(A, P), dOut = unitVec(P, B);
       const cos = dIn[0] * dOut[0] + dIn[1] * dOut[1];
       const hw = isJ ? Math.max(seg[jk].hw, seg[jk + 1].hw) : seg[jk].hw;
-      const r = Math.min(1.5 * hw + 5, 0.48 * Math.hypot(P[0] - A[0], P[1] - A[1]), 0.48 * Math.hypot(B[0] - P[0], B[1] - P[1]));
+      const r = Math.min(Math.max(1.5 * hw + 5, rmin), 0.48 * Math.hypot(P[0] - A[0], P[1] - A[1]), 0.48 * Math.hypot(B[0] - P[0], B[1] - P[1]));
       if (cos > 0.9995 || r < 0.4) {
         line.push(P);
         if (isJ) { jointAt.push(line.length - 1); jk++; }
@@ -316,15 +316,15 @@ const KCTMGeom = (() => {
       let cur = [];
       for (const st of steps) {
         const Lo = lay[st.E.k];
-        if (Lo && Lo.pos.has(key)) cur.push(st);
+        if (Lo && Lo.pos.has(key)) { if (!Lo.collapsed) cur.push(st); }
         else if (cur.length) { out.push(cur); cur = []; }
       }
       if (cur.length) out.push(cur);
       return out;
     };
     // physical lane point of corridor `v` on edge F at its end node n (meters)
-    const lanePoint = (lay, F, n, v, S, ahead = 0) => {
-      const Lo = lay[F.k], q = atAOrder(Lo.simp, F.a === n);
+    const lanePoint = (lay, F, atA, v, S, ahead = 0) => {
+      const Lo = lay[F.k], q = atAOrder(Lo.simp, atA);
       // walk `ahead` meters into F from node n
       let i = 0, left = ahead, p = q[0];
       while (i < q.length - 1) {
@@ -334,18 +334,55 @@ const KCTMGeom = (() => {
       }
       const a = q[Math.min(i, q.length - 2)], b = q[Math.min(i, q.length - 2) + 1];
       let dx = b[0] - a[0], dy = b[1] - a[1];
-      if (F.a !== n) { dx = -dx; dy = -dy; } // the normal is taken in F's own a->b direction
+      if (!atA) { dx = -dx; dy = -dy; } // the normal is taken in F's own a->b direction
       const L = Math.hypot(dx, dy) || 1, off = (Lo.pos.get(v) + Lo.shift) * S;
       return [p[0] + (dy / L) * off, p[1] + (-dx / L) * off];
     };
     const atAOrder = (q, atA) => (atA ? q : q.slice().reverse());
-    const away = (lay, F, n) => { // unit direction leaving node n along F
-      const q = lay[F.k].simp, atA = F.a === n;
+    const away = (lay, F, atA) => { // unit direction leaving F's a end (or b end) into F
+      const q = lay[F.k].simp;
       const p0 = atA ? q[0] : q[q.length - 1], p1 = atA ? q[Math.min(2, q.length - 1)] : q[Math.max(0, q.length - 3)];
       const dx = p1[0] - p0[0], dy = p1[1] - p0[1], L = Math.hypot(dx, dy) || 1;
       return [dx / L, dy / L];
     };
     let last = null; // the last view's layout, for routePath
+    // Junction clusters. Where streets meet at odd angles the network has short connecting
+    // segments; a few pixels long at the current zoom they only draw as jogs. Junctions joined
+    // by a segment shorter than ~11 px merge into one point (their centroid), as long as the
+    // merged cluster stays small. Every line uses the same points, so lanes stay parallel.
+    const degree = new Map(), nodeXY = new Map();
+    for (const E of EDGES) {
+      degree.set(E.a, (degree.get(E.a) || 0) + 1);
+      degree.set(E.b, (degree.get(E.b) || 0) + 1);
+      nodeXY.set(E.a, E.pts[0]);
+      nodeXY.set(E.b, E.pts[E.pts.length - 1]);
+    }
+    const clusterCache = new Map();
+    function clustersAt(z) {
+      if (clusterCache.has(z)) return clusterCache.get(z);
+      const mpp = MPP0 / 2 ** z, Lmin = 11 * mpp, maxSpan = 1.6 * Lmin;
+      const parent = new Map(), info = new Map();
+      const find = (x) => { let r = x; while (parent.has(r) && parent.get(r) !== r) r = parent.get(r); while (parent.has(x) && parent.get(x) !== r) { const nx = parent.get(x); parent.set(x, r); x = nx; } return r; };
+      const infoOf = (r) => info.get(r) || (() => { const [x, y] = nodeXY.get(r); return { x0: x, y0: y, x1: x, y1: y, sx: x, sy: y, n: 1 }; })();
+      const short = EDGES.filter((E) => E.layer !== "w" && E.a !== E.b && E.len < Lmin && degree.get(E.a) >= 3 && degree.get(E.b) >= 3)
+        .sort((a, b) => a.len - b.len);
+      for (const E of short) {
+        const ra = find(E.a), rb = find(E.b);
+        if (ra === rb) continue;
+        const A = infoOf(ra), B = infoOf(rb);
+        const m = { x0: Math.min(A.x0, B.x0), y0: Math.min(A.y0, B.y0), x1: Math.max(A.x1, B.x1), y1: Math.max(A.y1, B.y1),
+          sx: A.sx + B.sx, sy: A.sy + B.sy, n: A.n + B.n };
+        if (Math.hypot(m.x1 - m.x0, m.y1 - m.y0) > maxSpan) continue;
+        parent.set(ra, ra); parent.set(rb, ra); info.set(ra, m);
+      }
+      const over = new Map();
+      for (const n of parent.keys()) { const r = find(n), m = info.get(r); if (m && m.n > 1) over.set(n, [m.sx / m.n, m.sy / m.n]); }
+      const collapsed = new Set();
+      for (const E of EDGES) if (E.a !== E.b && over.has(E.a) && over.has(E.b) && find(E.a) === find(E.b)) collapsed.add(E.k);
+      const res = { over, collapsed, root: (n) => (parent.has(n) ? find(n) : n) };
+      clusterCache.set(z, res);
+      return res;
+    }
     const tagOrder = (a, b) => (CAT[VKEY(LINES[a].cat)].prio - CAT[VKEY(LINES[b].cat)].prio) || (LINES[a].rank - LINES[b].rank);
     const HMODE = { glass: 1, solid: 2, dots: 3, ties: 4 };
     // one-way arrows: +1 points along the drawn line, -1 against it, 0 none (two-way)
@@ -366,6 +403,7 @@ const KCTMGeom = (() => {
       // 1. each segment in (or near) view: which corridors show, their lanes and squeeze
       const V = p.view;
       const lay = new Array(EDGES.length);
+      const mpp = MPP0 / 2 ** z, CL = clustersAt(z);
       for (const E of EDGES) {
         if (E.bb[2] < V[0] || E.bb[0] > V[2] || E.bb[3] < V[1] || E.bb[1] > V[3]) { lay[E.k] = null; continue; }
         const keys = E.order.filter((v) => keyOn[v] || (v === selKey && E.l.includes(selIdx)));
@@ -378,13 +416,21 @@ const KCTMGeom = (() => {
         // boats: no side-by-side lanes; ferry routes only meet at the docks, where shifting
         // lanes would put little kinks into otherwise straight crossings
         for (const v of keys) { pos.set(v, E.layer === "w" ? 0 : (x + W(v) / 2) * s); x += W(v) + GAP; }
-        const tol = Math.min(0.25 * S + 0.1 * T * s * S, Math.max(9, 1.6 * MPP0 / 2 ** z));
+        // wiggles under ~2 px are straightened out
+        const tol = Math.max(Math.min(0.25 * S + 0.1 * T * s * S, Math.max(9, 1.6 * mpp)), 2.2 * mpp);
         const ck = `${z}|${tol.toFixed(1)}`;
         let simp = E.simp.get(ck);
-        if (!simp) { simp = simplify(E.pts, tol); E.simp.set(ck, simp); }
-        lay[E.k] = { keys, s, T: T * s, pos, shift: 0, simp };
+        if (!simp) {
+          let pts = E.pts;
+          const oa = CL.over.get(E.a), ob = CL.over.get(E.b);
+          if (oa || ob) { pts = pts.slice(); if (oa) pts[0] = oa; if (ob) pts[pts.length - 1] = ob; }
+          simp = CL.collapsed.has(E.k) ? [pts[0], pts[pts.length - 1]] : simplify(pts, tol);
+          E.simp.set(ck, simp);
+        }
+        lay[E.k] = { keys, s, T: T * s, pos, shift: 0, simp, collapsed: CL.collapsed.has(E.k) };
       }
       const runs = (steps, key) => runsIn(lay, steps, key);
+      const rmin = 7 * mpp; // corners round off over at least ~7 px
 
       // 2. slide whole bundles sideways so corridors keep their lane through junctions
       const cons = [], byEdge = new Map();
@@ -430,38 +476,37 @@ const KCTMGeom = (() => {
       const nodeEdges = new Map();
       for (const E of EDGES) {
         const Lo = lay[E.k];
-        if (!Lo) continue;
-        for (const v of Lo.keys) for (const n of [E.a, E.b]) {
-          const key = v + "|" + n;
+        if (!Lo || Lo.collapsed || E.a === E.b) continue;
+        for (const v of Lo.keys) for (const atA of [true, false]) {
+          const key = v + "|" + CL.root(atA ? E.a : E.b);
           if (!nodeEdges.has(key)) nodeEdges.set(key, []);
-          nodeEdges.get(key).push(E);
+          nodeEdges.get(key).push({ F: E, atA });
         }
       }
-      const joinPoint = (v, E, n) => {
+      const joinPoint = (v, E, atA) => {
         if (CAT[v].group === "water") return null;
-        const others = (nodeEdges.get(v + "|" + n) || []).filter((F) => F !== E && F.a !== F.b);
+        const others = (nodeEdges.get(v + "|" + CL.root(atA ? E.a : E.b)) || []).filter((o) => o.F !== E);
         if (!others.length) return null;
-        const d0 = away(lay, E, n);
+        const d0 = away(lay, E, atA);
         let best = null, bd = 0.7; // no joining back on itself (hairpin)
-        for (const F of others) {
-          const d1 = away(lay, F, n), dot = d0[0] * d1[0] + d0[1] * d1[1];
-          if (dot < bd) { bd = dot; best = F; }
+        for (const o of others) {
+          const d1 = away(lay, o.F, o.atA), dot = d0[0] * d1[0] + d0[1] * d1[1];
+          if (dot < bd) { bd = dot; best = o; }
         }
         if (!best) return null;
-        const Lo = lay[best.k], ahead = Math.min(0.35 * best.len, Math.max(12, 1.2 * Lo.T * S));
-        return lanePoint(lay, best, n, v, S, ahead);
+        const Lo = lay[best.F.k], ahead = Math.min(0.35 * best.F.len, Math.max(12, 1.2 * Lo.T * S));
+        return lanePoint(lay, best.F, best.atA, v, S, ahead);
       };
       for (const [v, chains] of KEY_CHAINS) {
         for (const ch of chains) {
           for (const run of runs(ch, v)) {
             const pieces = [];
-            drawPath(v, run, lay, S, (k, coords) => { if (coords.length >= 2) pieces.push([k, coords]); }, CAT[v].group === "water");
+            drawPath(v, run, lay, S, (k, coords) => { if (coords.length >= 2) pieces.push([k, coords]); }, CAT[v].group === "water", 0, false, rmin);
             if (!pieces.length) continue;
             const first = run[0], lastSt = run[run.length - 1];
-            const n0 = first.fwd ? first.E.a : first.E.b, n1 = lastSt.fwd ? lastSt.E.b : lastSt.E.a;
-            if (pieces[0][0] === 0) { const j = joinPoint(v, first.E, n0); if (j) pieces[0][1].unshift(j); }
+            if (pieces[0][0] === 0) { const j = joinPoint(v, first.E, first.fwd); if (j) pieces[0][1].unshift(j); }
             const lp = pieces[pieces.length - 1];
-            if (lp[0] === run.length - 1) { const j = joinPoint(v, lastSt.E, n1); if (j) lp[1].push(j); }
+            if (lp[0] === run.length - 1) { const j = joinPoint(v, lastSt.E, !lastSt.fwd); if (j) lp[1].push(j); }
             for (const [k, coords] of pieces) {
               const pr = props(v, lay[run[k].E.k], run[k].E.k);
               pr.ar = CAT[v].group === "water" ? 0 : arrow(run[k].E.kdir.get(v), run[k].fwd);
@@ -479,11 +524,11 @@ const KCTMGeom = (() => {
               selFeats.push({ type: "Feature", properties: { r: selIdx, cat: selKey, e: run[k].E.k, c: col, d: c.dash ? 1 : 0, ar: c.group === "water" ? 0 : arrow(run[k].E.dirOf(selIdx), run[k].fwd),
                 wm: (c.w + 0.9) * S, cm: (c.w + 2.6) * S, gm: (c.w + 7) * S, hm: (c.w + 0.9) * 0.3 * S },
               geometry: { type: "LineString", coordinates: coords.map(toLL) } });
-            }, c.group === "water", schem, true);
+            }, c.group === "water", schem, true, rmin);
           }
         }
       }
-      last = { lay, S, z, schem };
+      last = { lay, S, z, schem, rmin };
 
       // 4. route-number tags. Connected blocks carrying the same routes form one stretch; a
       //    stretch gets one tag (on its longest block), plus repeats along long blocks, and the
@@ -494,12 +539,12 @@ const KCTMGeom = (() => {
       const tagKey = new Map();
       for (const E of EDGES) {
         const Lo = lay[E.k];
-        if (!Lo) continue;
+        if (!Lo || Lo.collapsed) continue;
         const rs = [];
         for (const v of Lo.keys) if (labelKey(v) && keyOn[v]) for (const i of E.byKey.get(v)) rs.push(i);
         if (!rs.length) continue;
         rs.sort(tagOrder);
-        tagKey.set(E.k, { k: `${p.theme}:${rs.join(".")}`, p: CAT[VKEY(LINES[rs[0]].cat)].prio });
+        tagKey.set(E.k, { k: `${p.theme}:${rs.join(".")}`, p: CAT[VKEY(LINES[rs[0]].cat)].prio, rs });
       }
       const parent = new Map();
       const find = (x) => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
@@ -513,7 +558,7 @@ const KCTMGeom = (() => {
       }
       const best = new Map();
       for (const e of tagKey.keys()) { const root = find(e); if (!best.has(root) || EDGES[e].len > EDGES[best.get(root)].len) best.set(root, e); }
-      const mpp = MPP0 / 2 ** z, minGap = TD.gap * mpp, every = TD.every * mpp;
+      const minGap = TD.gap * mpp, every = TD.every * mpp;
       const anyGap = (TD.any || 0) * mpp, cell = Math.max(anyGap, 1), grid = new Map();
       const crowded = (q) => {
         if (!anyGap) return false;
@@ -536,11 +581,19 @@ const KCTMGeom = (() => {
         const n = Math.max(1, Math.floor(E.len / every));
         const order = [...Array(n).keys()].sort((i, j) => Math.abs(i - (n - 1) / 2) - Math.abs(j - (n - 1) / 2));
         for (const i of order) {
-          const q = pointAt(E.pts, cum, E.len * (i + 0.5) / n);
+          const d = E.len * (i + 0.5) / n, q = pointAt(E.pts, cum, d);
           if (near.some((o) => Math.hypot(o[0] - q[0], o[1] - q[1]) < minGap) || crowded(q)) continue;
           near.push(q);
           remember(q);
-          labels.push({ type: "Feature", properties: { k: t.k, p: t.p }, geometry: { type: "Point", coordinates: toLL(q) } });
+          // the numbers read in the same order as the lines they sit on: left to right across
+          // a north-south street, top to bottom across an east-west one
+          const q1 = pointAt(E.pts, cum, Math.max(0, d - 10)), q2 = pointAt(E.pts, cum, Math.min(E.len, d + 10));
+          const dx = q2[0] - q1[0], dy = q2[1] - q1[1], L = Math.hypot(dx, dy) || 1, nx = dy / L, ny = -dx / L;
+          const Lo = lay[e], vertical = Math.abs(dy) >= Math.abs(dx);
+          const side = (v) => { const o = Lo.pos.has(v) ? Lo.pos.get(v) : 0; return vertical ? nx * o : -ny * o; };
+          const keyOf = (i) => VKEY(LINES[i].cat);
+          const ordered = t.rs.slice().sort((a, b) => (side(keyOf(a)) - side(keyOf(b))) || tagOrder(a, b));
+          labels.push({ type: "Feature", properties: { k: `${p.theme}:${ordered.join(".")}`, p: t.p }, geometry: { type: "Point", coordinates: toLL(q) } });
         }
       }
       // the selected route's own tag: along its whole path about every 550 px, never two within ~380 px
@@ -559,23 +612,30 @@ const KCTMGeom = (() => {
       }
       return { feats, selFeats, labels, selLabels, selIdx };
     }
-    function routePath(idx) {
-      if (!last || !LINES[idx]) return [];
-      const { lay, S, schem } = last, v = VKEY(LINES[idx].cat), c = CAT[v], out = [];
-      for (const ch of ROUTE_CHAINS[idx]) {
-        for (const run of runsIn(lay, ch, v)) {
-          drawPath(v, run, lay, S, (k, coords) => {
-            if (coords.length < 2) return;
-            const w = c.w;
-            out.push({ type: "Feature", properties: { r: idx, cat: v, e: run[k].E.k, d: c.dash ? 1 : 0,
-              ar: c.group === "water" ? 0 : arrow(run[k].E.dirOf(idx), run[k].fwd), wm: w * S, cm: (w + GAP * 1.4) * S },
-            geometry: { type: "LineString", coordinates: coords.map(toLL) } });
-          }, c.group === "water", schem, true);
+    // Paths of routes in the last view: in their lanes, exactly over their corridor lines (for
+    // hover previews), or centered and simplified like a selected route.
+    function routePaths(idxs, center = false) {
+      if (!last) return [];
+      const { lay, S, schem, rmin } = last, out = [];
+      for (const idx of idxs) {
+        if (!LINES[idx]) continue;
+        const v = VKEY(LINES[idx].cat), c = CAT[v];
+        for (const ch of ROUTE_CHAINS[idx]) {
+          for (const run of runsIn(lay, ch, v)) {
+            drawPath(v, run, lay, S, (k, coords) => {
+              if (coords.length < 2) return;
+              out.push({ type: "Feature", properties: { r: idx, cat: v, e: run[k].E.k, d: c.dash ? 1 : 0,
+                ar: c.group === "water" ? 0 : arrow(run[k].E.dirOf(idx), run[k].fwd), wm: c.w * (center ? 1 : lay[run[k].E.k].s) * S,
+                cm: (c.w + GAP * 1.4) * (center ? 1 : lay[run[k].E.k].s) * S },
+              geometry: { type: "LineString", coordinates: coords.map(toLL) } });
+            }, c.group === "water", center ? schem : 0, center, rmin);
+          }
         }
       }
       return out;
     }
-    return { build, routePath };
+    const routePath = (idx) => routePaths([idx], true);
+    return { build, routePath, routePaths };
   }
 
   return { LAT0, LON0, KX, KY, MPP0, toM, toLL, VKEY, cumLen, prepEdges, createEngine };
@@ -590,7 +650,7 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
       engine = KCTMGeom.createEngine(m.init);
       self.postMessage({ type: "ready" });
     } else if (m.type === "route" && engine) {
-      self.postMessage({ type: "route", id: m.id, idx: m.idx, feats: engine.routePath(m.idx) });
+      self.postMessage({ type: "route", id: m.id, feats: engine.routePaths(m.idxs, m.center) });
     } else if (m.type === "build" && engine) {
       const t = Date.now();
       const out = engine.build(m.p);

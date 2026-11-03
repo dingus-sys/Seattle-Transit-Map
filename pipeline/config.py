@@ -64,6 +64,8 @@ FEEDS = [
 # ends up in the published page, as it must for a browser to call the API directly.
 OBA_BASE = "https://api.pugetsound.onebusaway.org/api/gtfs_realtime/vehicle-positions-for-agency"
 OBA_AGENCIES = ["1", "40", "29", "23", "3", "97", "95", "20"]  # the Monorail publishes no positions
+# Vehicle status (schedule deviation: on time / late / early), polled one agency at a time
+OBA_STATUS = "https://api.pugetsound.onebusaway.org/api/where/vehicles-for-agency"
 # Agencies whose live positions aren't on OneBusAway but on their own open feed (no key needed).
 # "agency" is the id their routes carry in routes.json ("rt": "19_<route id>").
 LIVE_FEEDS = [
