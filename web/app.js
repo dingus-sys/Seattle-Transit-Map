@@ -100,8 +100,8 @@
   //   tags       how many route-number tags: gap between repeats, spacing along long streets, and the zoom
   //              where bus tags start
   //   thickness  line width multiplier
-  const SETTINGS_DEFAULT = { busDetail: "normal", tags: "normal", thickness: "normal" };
-  const BUS_TIERS = { less: [0, 10.2, 12.0], normal: [0, 0, 9.5], more: [0, 0, 0] };
+  const SETTINGS_DEFAULT = { busDetail: "more", tags: "normal", thickness: "normal" };
+  const BUS_TIERS = { less: [0, 10.2, 12.0], normal: [0, 0, 10.0], more: [0, 0, 0] };
   const TAG_DENSITY = { fewer: { gap: 420, every: 900, busZ: 12 }, normal: { gap: 260, every: 560, busZ: 10.6 }, more: { gap: 170, every: 360, busZ: 9.6 } };
   const THICK = { thin: 0.8, normal: 1, bold: 1.25 };
   const settings = { ...SETTINGS_DEFAULT };
@@ -114,7 +114,7 @@
   const GAP = 0.5; // space between corridor lines, in units
 
   // Line unit (px) by zoom, and the widest a set of side-by-side corridors may get (px).
-  const UNIT = [[9, 0.55], [10, 0.72], [11, 0.95], [12, 1.25], [13, 1.6], [14, 2.0], [15, 2.4], [16, 2.8], [17, 3.2], [18, 3.6], [19, 4.0]];
+  const UNIT = [[9, 0.8], [10, 0.92], [11, 1.08], [12, 1.3], [13, 1.6], [14, 2.0], [15, 2.4], [16, 2.8], [17, 3.2], [18, 3.6], [19, 4.0]];
   const CAP_PX = [[9, 8], [10, 9], [11, 12], [12, 15], [13, 19], [14, 25], [15, 32], [16, 42], [17, 54], [18, 70], [19, 90]];
   const interp = (tbl, z) => {
     if (z <= tbl[0][0]) return tbl[0][1];
@@ -376,6 +376,14 @@
     L.push({ id: "sel-dash", type: "line", source: "sel", filter: ["==", ["get", "d"], 1], layout: { "line-join": "round" },
       paint: { "line-color": ["get", "c"], "line-width": px("wm"), "line-dasharray": [2.2, 1.3] } });
     inner("sel-shine", "sel", ["==", ["get", "d"], 0], { "line-color": P.shine, "line-opacity": 0.45, "line-width": px("hm"), "line-blur": 0.6 }, { "line-cap": "round" });
+    // one-way arrows: on every one-way stretch when zoomed in, and along the selected route
+    const arrowLayer = (id, src, minzoom, spacing) => L.push({ id, type: "symbol", source: src, minzoom, filter: ["!=", ["get", "ar"], 0],
+      layout: { "symbol-placement": "line", "symbol-spacing": spacing, "icon-image": ["concat", "arr:", ["get", "c"]],
+        "icon-rotate": ["case", ["<", ["get", "ar"], 0], 180, 0], "icon-rotation-alignment": "map", "icon-keep-upright": false,
+        "icon-allow-overlap": true, "icon-ignore-placement": true,
+        "icon-size": ["interpolate", ["linear"], ["zoom"], 11, 0.6, 14, 0.8, 17, 1.05] } });
+    arrowLayer("arrows", "net", 14, ["interpolate", ["linear"], ["zoom"], 14, 160, 17, 220]);
+    arrowLayer("sel-arrows", "sel", 10.5, ["interpolate", ["linear"], ["zoom"], 11, 90, 15, 120, 17, 170]);
     return L;
   }
   function areaLayers(P) {
@@ -404,12 +412,14 @@
     ];
   }
   function stopLayers(P) {
+    const k = THICK[settings.thickness]; // stops grow and shrink with the lines
+    const zr = (stops) => ["interpolate", ["linear"], ["zoom"], ...stops.flatMap(([z, v]) => [z, typeof v === "number" ? v * k : ["*", v, k]])];
     return [
       { id: "stops", type: "circle", source: "stops", minzoom: 14.6,
         paint: {
-          "circle-radius": ["interpolate", ["linear"], ["zoom"], 14.6, 2, 16, 3.4, 18, 5.5],
+          "circle-radius": zr([[14.6, 2], [16, 3.4], [18, 5.5]]),
           "circle-color": P.stopFill, "circle-stroke-color": P.stopStroke,
-          "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 14.6, 1, 17, 1.6],
+          "circle-stroke-width": zr([[14.6, 1], [17, 1.6]]),
         } },
       { id: "stop-name", type: "symbol", source: "stops", minzoom: 17.2,
         layout: { "text-field": ["get", "name"], "text-font": F_REG, "text-size": 11, "text-variable-anchor": ["left", "right"],
@@ -418,9 +428,9 @@
       { id: "stations", type: "circle", source: "stations",
         filter: ["any", ["==", ["get", "major"], 1], [">=", ["zoom"], 12.5]],
         paint: {
-          "circle-radius": ["interpolate", ["linear"], ["zoom"], 9, ["*", ["get", "size"], 2.4], 12, ["*", ["get", "size"], 4.2], 16, ["*", ["get", "size"], 7.5]],
+          "circle-radius": zr([[9, ["*", ["get", "size"], 2.4]], [12, ["*", ["get", "size"], 4.2]], [16, ["*", ["get", "size"], 7.5]]]),
           "circle-color": P.stationFill, "circle-stroke-color": ["get", "stroke"],
-          "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 9, 1.5, 14, 2.8],
+          "circle-stroke-width": zr([[9, 1.5], [14, 2.8]]),
         } },
       { id: "station-name", type: "symbol", source: "stations",
         filter: ["any", ["all", ["==", ["get", "major"], 1], [">=", ["zoom"], 11]], [">=", ["zoom"], 14.3]],
@@ -433,10 +443,19 @@
         layout: { "text-field": ["concat", "Metro Flex\n", ["get", "name"]], "text-font": F_BOLD,
           "text-size": ["interpolate", ["linear"], ["zoom"], 10, 10.5, 14, 12.5], "text-max-width": 10, "text-padding": 4 },
         paint: { "text-color": theme === "dark" ? "#e3b4ff" : "#6a2593", "text-halo-color": P.halo, "text-halo-width": 1.8 } },
+      { id: "sel-stops", type: "circle", source: "selstops",
+        paint: { "circle-radius": selStopRadius(1), "circle-color": P.stopFill, "circle-stroke-color": ["get", "c"],
+          "circle-stroke-width": selStopStroke(1), "circle-pitch-alignment": "map" } },
       { id: "badges", type: "symbol", source: "netlabels", minzoom: 9,
         layout: { "icon-image": ["concat", "b:", ["get", "k"]], "icon-padding": 4, "symbol-sort-key": ["get", "p"] } },
       { id: "sel-badges", type: "symbol", source: "sellabels",
         layout: { "icon-image": ["concat", "b:", ["get", "k"]], "icon-padding": 2 } },
+      { id: "sel-ends", type: "symbol", source: "selstops", minzoom: 10.5, filter: [">", ["get", "end"], 0],
+        layout: { "text-field": ["format", ["case", ["==", ["get", "end"], 2], "End of the line", "Starts here"], { "font-scale": 0.82 },
+            "\n", {}, ["get", "name"], {}],
+          "text-font": F_BOLD, "text-size": ["interpolate", ["linear"], ["zoom"], 11, 11, 15, 12.5], "text-max-width": 11,
+          "text-variable-anchor": ["left", "right", "top", "bottom"], "text-radial-offset": 1.1, "text-justify": "auto", "text-padding": 2 },
+        paint: { "text-color": P.label, "text-halo-color": P.halo, "text-halo-width": 2 } },
     ];
   }
 
@@ -728,10 +747,13 @@
     // One agency at a time, spaced out, so we stay well inside the API's rate limits;
     // if the server says "too many requests", stop and wait a minute.
     const res = [];
-    for (const a of LIVE.agencies) {
+    // OneBusAway agencies, then agencies with their own open feed (Intercity Transit)
+    const sources = LIVE.agencies.map((a) => [a, `${LIVE.base}/${a}.pb?key=${encodeURIComponent(LIVE.key)}`, true])
+      .concat((LIVE.feeds || []).map((f) => [f.agency, f.url, false]));
+    for (const [a, url, oba] of sources) {
       try {
-        const r = await fetch(`${LIVE.base}/${a}.pb?key=${encodeURIComponent(LIVE.key)}`, { cache: "no-store" });
-        if (r.status === 429) { live.pauseUntil = Date.now() + 60000; break; }
+        const r = await fetch(url, { cache: "no-store" });
+        if (r.status === 429 && oba) { live.pauseUntil = Date.now() + 60000; break; }
         if (!r.ok) throw new Error(String(r.status));
         res.push({ status: "fulfilled", value: [a, parseVehicles(new Uint8Array(await r.arrayBuffer()))] });
       } catch (e) {
@@ -919,15 +941,83 @@
 
   // ---------------------------------------------------------------- selection
   const GROUPS = ["water", "bus", "rapid", "rail"];
+  // ---------------------------------------------------------------- selected route's stops
+  // F: how far each stop has "popped" (0 hidden .. 1 full size). During the animation it is an
+  // expression of the stop's place along the route (o, 0..1) and the animation clock T, with a
+  // small overshoot, so the stops pop out one after another from one end of the route.
+  const popF = (T) => (T >= 2 ? 1 : ["interpolate", ["linear"], ["max", 0, ["min", 1, ["/", ["-", T, ["*", ["get", "o"], 1.1]], 0.28]]],
+    0, 0, 0.62, 1.32, 0.82, 0.92, 1, 1]);
+  const selStopRadius = (T) => { const k = THICK[settings.thickness], F = ["*", popF(T), ["case", [">", ["get", "end"], 0], 1.55, 1]];
+    return ["interpolate", ["linear"], ["zoom"], 9, ["*", 1.6 * k, F], 12, ["*", 3 * k, F], 15, ["*", 4.6 * k, F], 18, ["*", 7 * k, F]]; };
+  const selStopStroke = (T) => { const k = THICK[settings.thickness], F = popF(T);
+    return ["interpolate", ["linear"], ["zoom"], 9, ["*", 1.2 * k, F], 14, ["*", 2.2 * k, F], 18, ["*", 3 * k, F]]; };
+  let popAnim = 0;
+  function showRouteStops(r) {
+    cancelAnimationFrame(popAnim);
+    const src = map && map.getSource("selstops");
+    if (!src) return;
+    if (!r) { src.setData({ type: "FeatureCollection", features: [] }); return; }
+    const color = keyColor(VKEY(r.cat));
+    // end: 2 = a trip ends here (end of the line), 1 = trips only start here, 0 = a stop on the way
+    const seen = new Map();
+    for (const p of r.patterns || []) {
+      const n = (p.stops || []).length;
+      (p.stops || []).forEach((sid, i) => {
+        const st = stopIndex[sid];
+        if (!st) return;
+        const key = st.key + "|" + st.lon, end = i === n - 1 ? 2 : i === 0 ? 1 : 0;
+        const f = seen.get(key);
+        if (f) { f.properties.end = Math.max(f.properties.end, end); return; }
+        seen.set(key, { type: "Feature", properties: { id: sid, name: st.name, o: n > 1 ? i / (n - 1) : 0, c: color, end },
+          geometry: { type: "Point", coordinates: [st.lon, st.lat] } });
+      });
+    }
+    src.setData({ type: "FeatureCollection", features: [...seen.values()] });
+    const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const t0 = performance.now(), DUR = 1100;
+    const frame = (now) => {
+      const T = reduce ? 2 : Math.min(2, ((now - t0) / DUR) * 1.4);
+      map.setPaintProperty("sel-stops", "circle-radius", selStopRadius(T));
+      map.setPaintProperty("sel-stops", "circle-stroke-width", selStopStroke(T));
+      if (T < 2 && (now - t0) < DUR * 1.5) popAnim = requestAnimationFrame(frame);
+      else { map.setPaintProperty("sel-stops", "circle-radius", selStopRadius(2)); map.setPaintProperty("sel-stops", "circle-stroke-width", selStopStroke(2)); }
+    };
+    popAnim = requestAnimationFrame(frame);
+  }
+  // one-way arrow: a small chevron in the line's color with a white edge
+  function drawArrow(id) {
+    const color = id.slice(4);
+    const dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+    const w = 14 * dpr, h = 12 * dpr, cv = document.createElement("canvas");
+    cv.width = w; cv.height = h;
+    const ctx = cv.getContext("2d");
+    ctx.lineJoin = "round"; ctx.lineCap = "round";
+    const path = () => { ctx.beginPath(); ctx.moveTo(3 * dpr, 2.5 * dpr); ctx.lineTo(10.5 * dpr, 6 * dpr); ctx.lineTo(3 * dpr, 9.5 * dpr); };
+    path(); ctx.strokeStyle = "#fff"; ctx.lineWidth = 4.2 * dpr; ctx.stroke();
+    path(); ctx.strokeStyle = color; ctx.lineWidth = 2.2 * dpr; ctx.stroke();
+    const d = ctx.getImageData(0, 0, w, h);
+    if (!map.hasImage(id)) map.addImage(id, { width: w, height: h, data: d.data }, { pixelRatio: dpr });
+  }
+
+  // after a display setting changes: stops and stations follow the line thickness too
+  function restyleStops() {
+    if (!map) return;
+    for (const L of stopLayers(BASE[theme])) {
+      if (!map.getLayer(L.id) || L.type !== "circle") continue;
+      for (const [k, v] of Object.entries(L.paint || {})) map.setPaintProperty(L.id, k, v);
+    }
+  }
+
   function applySelectionStyle() {
     if (!map || !map.getLayer("line-bus")) return;
     const dim = !!(selected && selected.type === "route");
     for (const g of GROUPS) {
-      for (const id of [`line-${g}`, `dash-${g}`]) map.setPaintProperty(id, "line-opacity", dim ? 0.14 : 1);
+      for (const id of [`line-${g}`, `dash-${g}`]) map.setPaintProperty(id, "line-opacity", dim ? 0.2 : 1);
       for (const id of [`glass-${g}`, `center-${g}`, `dots-${g}`, `ties-${g}`]) map.setLayoutProperty(id, "visibility", dim ? "none" : "visible");
       for (const id of [`case-${g}`, `shadow-${g}`]) if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", dim ? "none" : "visible");
     }
     map.setPaintProperty("badges", "icon-opacity", dim ? 0.12 : 1);
+    map.setLayoutProperty("arrows", "visibility", dim ? "none" : "visible");
   }
   function setHash(h) {
     try { history.replaceState(null, "", h ? "#" + h : location.pathname + location.search); } catch { /* sandboxed */ }
@@ -939,6 +1029,7 @@
     setHash("route-" + id);
     rebuild();
     applySelectionStyle();
+    showRouteStops(r);
     showRoute(r);
     renderLive();
     if (fit && r.bbox && r.bbox[0] < 180) map.fitBounds([[r.bbox[0], r.bbox[1]], [r.bbox[2], r.bbox[3]]], { padding: fitPadding(), maxZoom: 15, duration: 800 });
@@ -950,6 +1041,7 @@
     setHash((s.kind === "stop" ? "stop-" : "station-") + id);
     rebuild();
     applySelectionStyle();
+    showRouteStops(null);
     showStop(s);
     if (fly) map.flyTo({ center: [s.lon, s.lat], zoom: Math.max(map.getZoom(), s.kind === "stop" ? 16 : 14.5), padding: fitPadding(), duration: 800 });
   }
@@ -959,6 +1051,7 @@
     closePopup();
     rebuild();
     applySelectionStyle();
+    showRouteStops(null);
     showHome();
     renderLive();
   }
@@ -1019,7 +1112,7 @@
   const isDefaultLayers = () => LAYERS.every((l) => enabled.has(l.key) === l.on)
     && Object.keys(SETTINGS_DEFAULT).every((k) => settings[k] === SETTINGS_DEFAULT[k]);
   const SETTING_ROWS = [
-    { key: "busDetail", name: "Bus lines when zoomed out", opts: [["less", "Fewer"], ["normal", "Normal"], ["more", "All"]] },
+    { key: "busDetail", name: "Bus lines when zoomed out", opts: [["less", "Fewer"], ["normal", "Some"], ["more", "All"]] },
     { key: "tags", name: "Route numbers", opts: [["fewer", "Fewer"], ["normal", "Normal"], ["more", "More"]] },
     { key: "thickness", name: "Line thickness", opts: [["thin", "Thin"], ["normal", "Normal"], ["bold", "Bold"]] },
     { key: "theme", name: "Appearance", opts: [["", "Auto"], ["light", "Light"], ["dark", "Dark"]] },
@@ -1064,6 +1157,7 @@
       enabled.clear();
       for (const l of LAYERS) if (l.on) enabled.add(l.key);
       Object.assign(settings, SETTINGS_DEFAULT);
+      restyleStops();
       store.set("layers2", [...enabled]);
       store.set("settings", settings);
       applyLayerToggles();
@@ -1115,6 +1209,7 @@
         settings[key] = b.dataset.v;
         store.set("settings", settings);
         rebuild();
+        restyleStops();
         renderLive();
         body().querySelector(".view-head").innerHTML = layersHead();
         bindReset();
@@ -1367,7 +1462,7 @@
   }
   function setupInteraction() {
     const tip = $("#tip");
-    const hitLayers = () => ["stations", "stops", "flex"].filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none");
+    const hitLayers = () => ["sel-stops", "stations", "stops", "flex"].filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none");
     const vehAt = (pt, rad) => (map.getLayer("veh-icon") && map.getLayoutProperty("veh-icon", "visibility") !== "none"
       ? map.queryRenderedFeatures([[pt.x - rad, pt.y - rad], [pt.x + rad, pt.y + rad]], { layers: ["veh-icon"] }) : []);
     map.on("mousemove", (e) => {
@@ -1383,7 +1478,9 @@
       if (stopHit.length) {
         const p = stopHit[0].properties;
         map.getCanvas().style.cursor = "pointer";
-        tip.innerHTML = `<span class="tt">${esc(stopHit[0].layer.id === "flex" ? "Metro Flex · " + p.name : p.name)}</span>`;
+        const lid = stopHit[0].layer.id;
+        const note = lid === "sel-stops" && p.end ? (p.end === 2 ? "<br><b>End of the line</b>" : "<br><b>Trips start here</b>") : "";
+        tip.innerHTML = `<span class="tt">${esc(lid === "flex" ? "Metro Flex · " + p.name : p.name)}${note}</span>`;
         placeTip(e.originalEvent);
         return;
       }
@@ -1410,6 +1507,10 @@
     map.on("click", (e) => {
       tip.hidden = true;
       closePopup();
+      // a tap right on a station's circle opens the station, even with a train or bus on top of it
+      const onStation = map.getLayer("stations") && map.getLayoutProperty("stations", "visibility") !== "none"
+        ? map.queryRenderedFeatures([[e.point.x - 4, e.point.y - 4], [e.point.x + 4, e.point.y + 4]], { layers: ["stations"] }) : [];
+      if (onStation.length) { selectStop(onStation[0].properties.id, { fly: false }); return; }
       const vh = vehAt(e.point, isNarrow() ? 12 : 8);
       if (vh.length) {
         const v = live.vehicles.get(vh[0].properties.id), r = RBY[vh[0].properties.r];
@@ -1584,6 +1685,7 @@
           base: baseSource,
           net: { type: "geojson", data: empty, tolerance: 0.2, buffer: 96, attribution: "Transit data: Puget Sound GTFS, King County GIS" },
           sel: { type: "geojson", data: empty, tolerance: 0.2 },
+          selstops: { type: "geojson", data: empty },
           hover: { type: "geojson", data: empty, tolerance: 0.2 },
           netlabels: { type: "geojson", data: empty, tolerance: 0.5 },
           sellabels: { type: "geojson", data: empty, tolerance: 0.5 },
@@ -1615,6 +1717,7 @@
     map.on("styleimagemissing", (e) => {
       if (e.id.startsWith("veh:")) drawVehicle(e.id);
       else if (e.id.startsWith("b:")) drawBadge(e.id);
+      else if (e.id.startsWith("arr:")) drawArrow(e.id);
     });
     map.on("load", () => {
       map.getSource("stations").setData(stationsGeoJSON());

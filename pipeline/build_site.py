@@ -12,7 +12,7 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(__file__))
 import json  # noqa: E402
 
-from config import CACHE, OBA_AGENCIES, OBA_BASE, ROOT, SITE, oba_key  # noqa: E402
+from config import CACHE, LIVE_FEEDS, OBA_AGENCIES, OBA_BASE, ROOT, SITE, oba_key  # noqa: E402
 
 MAPLIBRE_CSS_URL = "https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.css"
 KEY_PLACEHOLDER = "__OBA_API_KEY__"
@@ -43,7 +43,7 @@ def main():
     # GitHub Pages workflow replaces with the OBA_API_KEY secret at deploy time. For local
     # testing, `build_site.py --with-key` writes the key from pipeline/local_secrets.json.
     key = oba_key() if "--with-key" in sys.argv else KEY_PLACEHOLDER
-    live = " window.ATLAS_LIVE = " + json.dumps({"key": key, "base": OBA_BASE, "agencies": OBA_AGENCIES}) + ";"
+    live = " window.ATLAS_LIVE = " + json.dumps({"key": key, "base": OBA_BASE, "agencies": OBA_AGENCIES, "feeds": LIVE_FEEDS}) + ";"
     body = body.replace("/*LIVE*/", live)
     full = ("<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
             "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\">\n"

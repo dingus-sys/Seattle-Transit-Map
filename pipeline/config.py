@@ -10,19 +10,19 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SITE = os.path.join(ROOT, "site")
 CACHE = os.environ.get("TRANSIT_CACHE", "/root/build")
 
-# Detailed map area: Everett, Mukilteo and Marysville in the north; Tacoma, Lakewood,
-# Puyallup and Spanaway in the south; Kitsap (Bremerton, Bainbridge, Port Orchard, Gig Harbor)
-# in the west; the Eastside out to Monroe and North Bend.
+# Detailed map area: Everett, Mukilteo and Marysville in the north; Tacoma, Lakewood, Puyallup
+# and Spanaway, and on to Olympia, Lacey and Tumwater in the south; Kitsap (Bremerton,
+# Bainbridge, Port Orchard, Gig Harbor) in the west; the Eastside out to Monroe and North Bend.
 REGION = {
     "name": "Puget Sound",
-    "west": -122.75,
-    "south": 47.10,
+    "west": -123.00,
+    "south": 46.95,
     "east": -121.70,
     "north": 48.08,
 }
 
 # Wider, low-detail context ring for the zoomed-out view.
-CONTEXT = {"west": -123.30, "south": 46.85, "east": -121.20, "north": 48.40}
+CONTEXT = {"west": -123.40, "south": 46.75, "east": -121.20, "north": 48.40}
 
 # Base-map zoom levels: context ring up to CONTEXT_MAXZOOM, detail area up to DETAIL_MAXZOOM.
 CONTEXT_MAXZOOM = 10
@@ -50,6 +50,9 @@ FEEDS = [
     {"key": "kt", "url": "https://pride.kitsaptransit.com/gtfs/google_transit.zip",
      "fallback": "https://gtfs.sound.obaweb.org/prod/20_gtfs.zip",
      "agency": {"20": "20"}, "default": "20"},
+    {"key": "it", "url": "https://its.rideralerts.com/InfoPoint/gtfs-zip.ashx",
+     "fallback": "https://gtfs.sound.obaweb.org/prod/19_gtfs.zip",
+     "agency": {"0": "19", "19": "19"}, "default": "19"},
     {"key": "mono", "url": "https://gtfs.sound.obaweb.org/prod/96_gtfs.zip",
      "agency": {"96": "96"}, "default": "96"},
     {"key": "amtrak", "url": "https://content.amtrak.com/content/gtfs/GTFS.zip",
@@ -61,6 +64,11 @@ FEEDS = [
 # ends up in the published page, as it must for a browser to call the API directly.
 OBA_BASE = "https://api.pugetsound.onebusaway.org/api/gtfs_realtime/vehicle-positions-for-agency"
 OBA_AGENCIES = ["1", "40", "29", "23", "3", "97", "95", "20"]  # the Monorail publishes no positions
+# Agencies whose live positions aren't on OneBusAway but on their own open feed (no key needed).
+# "agency" is the id their routes carry in routes.json ("rt": "19_<route id>").
+LIVE_FEEDS = [
+    {"agency": "19", "url": "https://its.rideralerts.com/InfoPoint/GTFS-Realtime.ashx?Type=VehiclePosition"},  # Intercity Transit
+]
 
 TILEJSON_URL = "https://tiles.openfreemap.org/planet"
 FONTS_URL = "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf"

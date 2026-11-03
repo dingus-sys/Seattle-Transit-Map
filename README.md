@@ -1,17 +1,19 @@
 # King County Transit Map
 
 An interactive, zoomable map of Puget Sound public transit from Everett and Marysville to
-Tacoma, Lakewood and Puyallup, across to Bremerton, Bainbridge, Port Orchard, Gig Harbor
-and Vashon, and east to Monroe and North Bend: Link light rail (1, 2 and T Lines), Sounder,
+Tacoma, Lakewood, Puyallup and on to Olympia, Lacey and Tumwater, across to Bremerton,
+Bainbridge, Port Orchard, Gig Harbor and Vashon, and east to Monroe and North Bend: Link light rail (1, 2 and T Lines), Sounder,
 Amtrak, the streetcars, the Monorail, RapidRide, Swift, every King County Metro, Community
-Transit, Pierce Transit, Everett Transit, Kitsap Transit and ST Express bus, the Water Taxi,
+Transit, Pierce Transit, Everett Transit, Kitsap Transit, Intercity Transit and ST Express bus, the Water Taxi,
 state and Kitsap ferries, Dial-a-Ride (DART) areas, Metro Flex zones and the Access
 paratransit area, plus live vehicle positions.
 
 Lines follow the real streets. Where several routes share a street, they're drawn
 side by side as ribbons in a consistent order, so you can tell them apart in busy
-places like the U District or downtown. Click any line for its frequency, hours,
-schedule at a glance and stop list; click a stop to see every route that serves it.
+places like the U District or downtown. Arrows mark stretches a route runs in one direction
+only (one-way streets and loops). Click any line for its frequency, hours, schedule at a
+glance and stop list; its stops pop out along the line, and hovering one shows its name.
+Click a stop to see every route that serves it.
 
 ## What's in here
 
@@ -50,7 +52,8 @@ listed at https://mobilitydatabase.org.
 
 ## Live vehicles
 
-Positions come from OneBusAway Puget Sound's GTFS-realtime feeds, polled every 20 seconds
+Positions come from OneBusAway Puget Sound's GTFS-realtime feeds (and Intercity Transit's
+own open feed, which needs no key; see `LIVE_FEEDS` in `pipeline/config.py`), polled every 20 seconds
 while the page is open (about 60 KB per update for the whole region). It needs a free API
 key from oba_api_key@soundtransit.org:
 
@@ -91,8 +94,8 @@ the finished lines to the map); where workers aren't allowed it runs on the page
 ## Data and credits
 
 - Routes, stops and schedules: each agency's GTFS feed (King County Metro, Sound Transit,
-  Community Transit, Pierce Transit, Everett Transit, City of Seattle, Washington State
-  Ferries, Kitsap Transit, Seattle Center Monorail, Amtrak).
+  Community Transit, Pierce Transit, Everett Transit, Intercity Transit, City of Seattle,
+  Washington State Ferries, Kitsap Transit, Seattle Center Monorail, Amtrak).
 - Live vehicle positions: OneBusAway Puget Sound. When live data isn't available the map
   shows positions estimated from the timetable.
 - DART service areas: King County GIS (ArcGIS Online).

@@ -236,7 +236,12 @@ const KCTMGeom = (() => {
         sum.set(v, sum.get(v) + idx);
       });
       const order = [...byKey.keys()].sort((a, b) => sum.get(a) / byKey.get(a).length - sum.get(b) / byKey.get(b).length);
-      return { k, layer, c: e.c, l: e.l, byKey, order, a: key(e.c[0]), b: key(e.c[e.c.length - 1]) };
+      // direction of travel: per line (1 along c, 2 against, 0 both ways), and per service type
+      // when every route of that type on the segment goes the same single way
+      const dirOf = (i) => (e.d ? e.d[e.l.indexOf(i)] || 0 : 0);
+      const kdir = new Map();
+      for (const [v, list] of byKey) { const d0 = dirOf(list[0]); kdir.set(v, d0 && list.every((i) => dirOf(i) === d0) ? d0 : 0); }
+      return { k, layer, c: e.c, l: e.l, byKey, order, kdir, dirOf, a: key(e.c[0]), b: key(e.c[e.c.length - 1]) };
     });
   }
 
@@ -263,6 +268,8 @@ const KCTMGeom = (() => {
     const ROUTE_CHAINS = byLine.map((edges) => chainsFor(edges));
     const tagOrder = (a, b) => (CAT[VKEY(LINES[a].cat)].prio - CAT[VKEY(LINES[b].cat)].prio) || (LINES[a].rank - LINES[b].rank);
     const HMODE = { glass: 1, solid: 2, dots: 3, ties: 4 };
+    // one-way arrows: +1 points along the drawn line, -1 against it, 0 none (two-way)
+    const arrow = (dir, fwd) => (!dir ? 0 : (dir === 1) === fwd ? 1 : -1);
 
     // One view. p: { z (zoom step), zNow, u (px per line unit), capU, keyOn {key: bool}, selIdx,
     //   view [x0, y0, x1, y1] in meters, tags { gap, every, busZ }, theme ("l"/"d"), colors {key: css} }
@@ -345,7 +352,9 @@ const KCTMGeom = (() => {
           for (const run of runs(ch, v)) {
             drawPath(v, run, lay, S, (k, coords) => {
               if (coords.length < 2) return;
-              feats.push({ type: "Feature", properties: props(v, lay[run[k].E.k], run[k].E.k), geometry: { type: "LineString", coordinates: coords.map(toLL) } });
+              const pr = props(v, lay[run[k].E.k], run[k].E.k);
+              pr.ar = arrow(run[k].E.kdir.get(v), run[k].fwd);
+              feats.push({ type: "Feature", properties: pr, geometry: { type: "LineString", coordinates: coords.map(toLL) } });
             });
           }
         }
@@ -356,7 +365,7 @@ const KCTMGeom = (() => {
           for (const run of runs(ch, selKey)) {
             drawPath(selKey, run, lay, S, (k, coords) => {
               if (coords.length < 2) return;
-              selFeats.push({ type: "Feature", properties: { r: selIdx, cat: selKey, e: run[k].E.k, c: col, d: c.dash ? 1 : 0,
+              selFeats.push({ type: "Feature", properties: { r: selIdx, cat: selKey, e: run[k].E.k, c: col, d: c.dash ? 1 : 0, ar: arrow(run[k].E.dirOf(selIdx), run[k].fwd),
                 wm: (c.w + 0.9) * S, cm: (c.w + 2.6) * S, gm: (c.w + 7) * S, hm: (c.w + 0.9) * 0.3 * S },
               geometry: { type: "LineString", coordinates: coords.map(toLL) } });
             });
@@ -412,7 +421,7 @@ const KCTMGeom = (() => {
       }
       // the selected route's own tag: along its whole path about every 550 px, never two within ~380 px
       if (selIdx >= 0) {
-        const gap = 380 * mpp, step = 550 * mpp, pts = [];
+        const gap = Math.max(380, TD.gap * 1.3) * mpp, step = Math.max(450, TD.every) * mpp, pts = [];
         for (const E of EDGES.filter((x) => x.l.includes(selIdx)).sort((a, b) => b.len - a.len)) {
           const cum = E.cum || (E.cum = cumLen(E.pts));
           const n = Math.max(1, Math.floor(E.len / step));

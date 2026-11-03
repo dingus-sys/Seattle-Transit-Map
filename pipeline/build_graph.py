@@ -468,6 +468,138 @@ def fill_gaps(g, routes, mask=None, max_span=2500.0):
     return filled
 
 
+def split_edge(g, eid, pt):
+    """Cut a segment at the point nearest `pt`; returns the node there (an existing end node
+    when the point is within 8 m of it)."""
+    from shapely.geometry import Point
+    from shapely.ops import substring
+    e = g.edges[eid]
+    ls = LineString(e["c"])
+    d = ls.project(Point(pt))
+    if d < 8:
+        return e["a"]
+    if d > ls.length - 8:
+        return e["b"]
+    c1, c2 = substring(ls, 0, d), substring(ls, d, ls.length)
+    nid = max(g.pos) + 1
+    g.pos[nid] = c1.coords[-1]
+    lines = e["lines"]
+    g.remove(eid)
+    g.add(e["a"], nid, list(c1.coords), lines)
+    g.add(nid, e["b"], list(c2.coords), lines)
+    return nid
+
+
+def bridge_loose_ends(g, routes, mask=None, max_span=2500.0, step=10.0):
+    """Reconnect a route that breaks off on one side only.
+
+    fill_gaps joins two loose ends. Often only one side is loose: the route's line stops short
+    (say, partway down a one-way street) while the other side of the hole is in the middle of
+    a segment the route does use. From the loose end, walk along the route's own shape away
+    from what is drawn until the shape is covered again, and draw that stretch, splitting the
+    segment where it lands if no junction is there."""
+    from shapely.geometry import Point
+    from shapely.ops import substring, unary_union
+    near_fwy = mask.buffer(60) if mask is not None else None
+    added = 0
+    for slug, rg in routes.items():
+        mine = [k for k, e in g.edges.items() if slug in e["lines"]]
+        if not mine:
+            continue
+        deg = defaultdict(int)
+        for k in mine:
+            e = g.edges[k]
+            if e["a"] != e["b"]:
+                deg[e["a"]] += 1
+                deg[e["b"]] += 1
+        ends = [pt for p in rg.geoms for pt in (p.coords[0], p.coords[-1])]
+        loose = [n for n, d in deg.items() if d == 1 and min(math.dist(g.pos[n], t) for t in ends) > 4 * R]
+        if not loose:
+            continue
+        snap = lambda k: R_FWY + 10 if near_fwy is not None and near_fwy.contains(LineString(g.edges[k]["c"]).interpolate(0.5, normalized=True)) else SNAP + 8  # noqa: E731
+        cover = unary_union([LineString(g.edges[k]["c"]).buffer(snap(k)) for k in mine])
+        for n in loose:
+            P = Point(g.pos[n])
+            best = None
+            for part in rg.geoms:
+                if part.distance(P) > 4 * R:
+                    continue
+                s0 = part.project(P)
+                for sign in (1, -1):
+                    # leave the drawn part within ~80 m, then find where the shape is drawn again
+                    s, out_at, back_at = s0, None, None
+                    while abs(s - s0) < max_span:
+                        s += sign * step
+                        if s < 0 or s > part.length:
+                            break
+                        covered = cover.contains(part.interpolate(s))
+                        if out_at is None:
+                            if not covered:
+                                out_at = s
+                            elif abs(s - s0) > 80:
+                                break
+                        elif covered:
+                            back_at = s
+                            break
+                    if out_at is None or back_at is None or abs(back_at - out_at) < 40:
+                        continue
+                    if best is None or abs(back_at - s0) < abs(best[2] - best[1]):
+                        best = (part, s0, back_at)
+            if best is None:
+                continue
+            part, s0, s1 = best
+            land = part.interpolate(s1)
+            near = [k for k in g.edges if slug in g.edges[k]["lines"] and LineString(g.edges[k]["c"]).distance(land) < SNAP + 8]
+            if not near:
+                continue
+            k = min(near, key=lambda k: LineString(g.edges[k]["c"]).distance(land))
+            m = split_edge(g, k, land.coords[0])
+            if m == n:
+                continue
+            sub = substring(part, min(s0, s1), max(s0, s1))
+            mid = list(sub.coords)[1:-1]
+            if s1 < s0:
+                mid = mid[::-1]
+            g.add(n, m, [g.pos[n]] + mid + [g.pos[m]], frozenset({slug}))
+            added += 1
+    return added
+
+
+def edge_directions(g, routes, mask=None):
+    """Which way each route travels along each segment: 0 both ways (or unknown), 1 only a->b,
+    2 only b->a. Read from the agencies' shapes, which run in the direction of travel: every
+    piece of a route's shape passing the middle of the segment votes with its direction."""
+    near_fwy = mask.buffer(60) if mask is not None else None
+    parts = {slug: [np.asarray(p.coords) for p in rg.geoms if len(p.coords) > 1] for slug, rg in routes.items()}
+    for e in g.edges.values():
+        ls = LineString(e["c"])
+        L = ls.length
+        dirs = {}
+        if e["a"] == e["b"] or L < 30:
+            e["dirs"] = {}
+            continue
+        m = np.asarray(ls.interpolate(0.5, normalized=True).coords[0])
+        p1 = np.asarray(ls.interpolate(max(0, L / 2 - 15)).coords[0])
+        p2 = np.asarray(ls.interpolate(min(L, L / 2 + 15)).coords[0])
+        t = (p2 - p1) / (np.linalg.norm(p2 - p1) or 1)
+        snap = R_FWY + 10 if near_fwy is not None and near_fwy.contains(LineString([m, m + 0.01])) else SNAP + 8
+        for slug in e["lines"]:
+            fwd = back = False
+            for c in parts[slug]:
+                a, b = c[:-1], c[1:]
+                ab = b - a
+                l2 = (ab ** 2).sum(1)
+                tt = np.clip(((m - a) * ab).sum(1) / np.maximum(l2, 1e-9), 0, 1)
+                dist = np.hypot(*(a + ab * tt[:, None] - m).T)
+                cos = (ab @ t) / np.sqrt(np.maximum(l2, 1e-9))
+                near = (dist < snap) & (np.abs(cos) > 0.6)
+                fwd |= bool((cos[near] > 0).any())
+                back |= bool((cos[near] < 0).any())
+            dirs[slug] = 1 if fwd and not back else 2 if back and not fwd else 0
+        e["dirs"] = dirs
+    return sum(1 for e in g.edges.values() for v in e["dirs"].values() if v)
+
+
 def collapse_bubbles(g, mask=None):
     """Fold side-by-side detours into one line.
 
@@ -905,14 +1037,16 @@ def build_layer(routes, rank, name, mask=None):
     folded = collapse_bubbles(g, mask)
     trimmed += trim_stubs(g, routes, mask=mask)  # folding a ramp loop leaves its two sides as stubs
     fixed += fill_gaps(g, routes, mask)
+    fixed += bridge_loose_ends(g, routes, mask)
     merge_chains(g, same=lambda e1, e2: e1["lines"] == e2["lines"])
     moved, replaced = refine_geometry(g, routes, rank)
     hooks = unhook(g, mask)
     smoothed = straighten_freeways(g, mask)
     order_lines(g, rank)
+    oneway = edge_directions(g, routes, mask)
     print(f"  {name}: {len(routes)} routes -> {len(g.edges)} edges, {fixed} gap segments filled, "
           f"{trimmed} stubs trimmed, {folded} detours folded, {hooks} ramp hooks straightened, "
-          f"{smoothed} freeway stretches smoothed, "
+          f"{smoothed} freeway stretches smoothed, {oneway} one-way route segments, "
           f"{moved} junctions moved, "
           f"{replaced} segments on real shapes ({time.time() - t0:.0f}s)", flush=True)
     return g
@@ -937,7 +1071,12 @@ def main():
             dedup = [coords[0]] + [c for p, c in zip(coords, coords[1:]) if c != p]
             if len(dedup) < 2:
                 continue
-            out_edges.append({"c": dedup, "l": [li[s] for s in e["order"]]})
+            rec = {"c": dedup, "l": [li[s] for s in e["order"]]}
+            # direction of travel per route (same order as "l"): 1 = along c, 2 = against, 0 = both ways
+            d = [e.get("dirs", {}).get(s, 0) for s in e["order"]]
+            if any(d):
+                rec["d"] = d
+            out_edges.append(rec)
     out = {"lines": lines, "edges": out_edges}
     path = os.path.join(SITE, "data", "network.json")
     json.dump(out, open(path, "w"), separators=(",", ":"))
