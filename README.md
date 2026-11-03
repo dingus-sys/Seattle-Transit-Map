@@ -8,10 +8,12 @@ Transit, Pierce Transit, Everett Transit, Kitsap Transit, Intercity Transit and 
 state and Kitsap ferries, Dial-a-Ride (DART) areas, Metro Flex zones and the Access
 paratransit area, plus live vehicle positions.
 
-Lines follow the real streets. Where several routes share a street, they're drawn
-side by side as ribbons in a consistent order, so you can tell them apart in busy
-places like the U District or downtown. Hover a line and every route on it lights up end to
-end, with its stops and arrows where it runs one way only. Point at a single number on a
+Lines follow the real streets, in the manner of the printed Seattle Transit Map: a street
+carrying one route is one line, a street carrying two is a line twice as wide, and busier
+streets wider still. Each route is its own strand of that line, so where a route turns off,
+its strand peels away on its own. The 1 and 2 Lines, which share track, are one line, green
+on one half and blue on the other. Hover a wide line and the route whose strand is under the
+pointer lights up end to end, with its stops and arrows where it runs one way only. Point at a single number on a
 route tag (the "62" in "45 | 62 | 75") to see just that route; click it to open it. A tag's
 numbers read in the same order as the lines under it, in the same colors. Hover any stop
 for a card with its routes and next departures (from the timetable). Click a line for its
@@ -100,9 +102,12 @@ in tunnels aren't bundled with the buses above them.
 Where a route's own shape cuts across a big interchange and the traced streets don't follow
 it, the missing stretch is drawn from the route's shape, so no route breaks off mid-way.
 
-In the browser, `web/geom.js` lays out each view: every service line is one continuous path,
-corners are rounded, lines keep their lane through junctions (bundles slide sideways to make
-that possible), and when a line must change sides it eases across over a short distance. That
+In the browser, `web/geom.js` lays out each view: every route is one continuous strand,
+corners are rounded, each route keeps its place across the street through junctions (whole
+bundles slide sideways to make that possible), and when a strand must change sides it eases
+across, all strands at a junction over the same distance so they stay side by side. Line
+widths are in line units that the map turns into pixels continuously, so lines don't jump in
+thickness while you zoom. That
 work runs in a background worker so panning and zooming stay smooth (`web/app.js` only hands
 the finished lines to the map); where workers aren't allowed it runs on the page instead. Add
 `?noworker` to the address to force that.

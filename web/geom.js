@@ -18,7 +18,8 @@ const KCTMGeom = (() => {
   // Local flat coordinates in meters around Seattle (plenty accurate at city scale)
   const LAT0 = 47.61, LON0 = -122.33;
   const KX = 111320 * Math.cos(LAT0 * Math.PI / 180), KY = 110574;
-  const MPP0 = 156543.03392 * Math.cos(LAT0 * Math.PI / 180); // meters per pixel at zoom 0
+  // meters per pixel at zoom 0 (MapLibre's world is 512 pixels wide at zoom 0)
+  const MPP0 = 78271.51696 * Math.cos(LAT0 * Math.PI / 180);
   const toM = (lon, lat) => [(lon - LON0) * KX, (lat - LAT0) * KY];
   const toLL = (p) => [Math.round((LON0 + p[0] / KX) * 1e6) / 1e6, Math.round((LAT0 + p[1] / KY) * 1e6) / 1e6];
   const VKEY = (cat) => (cat === "amtrak" ? "sounder" : cat); // Amtrak shares Sounder's tracks and line
@@ -142,17 +143,21 @@ const KCTMGeom = (() => {
     return out;
   }
 
-  // One continuous path along `steps`, sitting in lane `key` of each segment. Corners are
-  // rounded to suit the bundle width; lane changes are eased steps that may overlap, so a
-  // line crossing a busy street glides across instead of jogging. Calls emit(stepIndex, coords).
-  function drawPath(key, steps, lay, S, emit, water = false) {
+  // One continuous path along `steps`, in the lane laneOf(Lo, step) = [center, half width] (line
+  // units, before shifting) of each segment. Corners are rounded to suit the bundle width; lane
+  // changes are eased steps that may overlap, so a line crossing a busy street glides across
+  // instead of jogging. With `fit`, where a corridor gets wider or narrower (routes joining or
+  // leaving) the narrower piece starts right inside the wider one with no slant, so a thick line
+  // splits cleanly into its routes. Calls emit(stepIndex, coords).
+  function drawPath(laneOf, steps, lay, S, emit, water = false, fit = false, easeAt = null) {
     const pts = [], seg = [], joints = [];
     for (let k = 0; k < steps.length; k++) {
       const { E, fwd } = steps[k], Lo = lay[E.k];
       let g = fwd ? Lo.simp : Lo.simp.slice().reverse();
       if (k > 0) { joints.push(pts.length - 1); g = g.slice(1); }
       for (const q of g) pts.push(q);
-      seg.push({ o: (fwd ? 1 : -1) * (Lo.pos.get(key) + Lo.shift) * S, hw: (Lo.T / 2 + Math.abs(Lo.shift)) * S });
+      const [c, h] = laneOf(Lo, steps[k]);
+      seg.push({ o: (fwd ? 1 : -1) * (c + Lo.shift) * S, h: h * S, hw: (Lo.T / 2 + Math.abs(Lo.shift)) * S });
     }
     if (pts.length < 2) return;
 
@@ -183,11 +188,20 @@ const KCTMGeom = (() => {
 
     const c = cumLen(line), total = c[c.length - 1];
     const D = jointAt.map((j) => c[j]);
+    // a width change: the part of the step that keeps the narrower piece inside the wider one
+    // happens right at the joint
+    const jumps = D.map((d, k) => {
+      if (!fit) return 0;
+      const a = seg[k], b = seg[k + 1], room = Math.abs(a.h - b.h);
+      return Math.max(-room, Math.min(room, b.o - a.o));
+    });
     const moves = D.map((d, k) => {
-      const delta = seg[k + 1].o - seg[k].o;
+      const delta = seg[k + 1].o - seg[k].o - jumps[k];
       // on the water, where ferry routes fan out from a dock, ease across slowly: a quick step
       // reads as a kink in a long straight crossing
-      const L = water ? Math.max(220, 40 * Math.abs(delta), 30 * S) : Math.max(14, 3.4 * Math.abs(delta), 6 * S);
+      let L = water ? Math.max(220, 40 * Math.abs(delta), 30 * S) : Math.max(14, 3.4 * Math.abs(delta), 6 * S);
+      // strands passing the same junction ease over the same length, so they stay side by side
+      if (easeAt) L = Math.max(L, easeAt(steps[k].E.k, steps[k + 1].E.k));
       return { d, delta, L };
     }).filter((m) => Math.abs(m.delta) > 0.02);
     const ds = c.slice();
@@ -199,22 +213,27 @@ const KCTMGeom = (() => {
     if (dd.length < 2 || total < 0.5) return; // nothing left to draw (a tiny loop, simplified away)
     const P = sampleAt(line, c, dd);
     const mt = miters(P);
-    const Q = dd.map((d, j) => {
+    const off = (d) => {
       let o = seg[0].o;
       for (const m of moves) {
         const t = (d - (m.d - m.L)) / (2 * m.L);
         if (t >= 1) o += m.delta;
         else if (t > 0) o += m.delta * t * t * (3 - 2 * t);
       }
-      return [P[j][0] + mt[j][0] * o, P[j][1] + mt[j][1] * o];
-    });
+      for (let k = 0; k < D.length; k++) if (jumps[k] && d > D[k] + 0.01) o += jumps[k];
+      return o;
+    };
+    const Q = dd.map((d, j) => { const o = off(d); return [P[j][0] + mt[j][0] * o, P[j][1] + mt[j][1] * o]; });
 
     let from = 0;
     const cuts = D.map((d) => { let b = from; while (b < dd.length - 1 && dd[b] < d - 0.01) b++; from = b; return b; });
     cuts.push(dd.length - 1);
     let start = 0;
     cuts.forEach((end, s) => {
-      const piece = [Q[start]];
+      // a piece after a width change starts already inside its new lane
+      let q0 = Q[start];
+      if (s > 0 && jumps[s - 1]) { const o = off(dd[start]) + jumps[s - 1]; q0 = [P[start][0] + mt[start][0] * o, P[start][1] + mt[start][1] * o]; }
+      const piece = [q0];
       for (let j = start + 1; j <= end; j++) {
         const a = piece[piece.length - 1];
         const fwd = (Q[j][0] - a[0]) * (P[j][0] - P[j - 1][0]) + (Q[j][1] - a[1]) * (P[j][1] - P[j - 1][1]);
@@ -270,45 +289,31 @@ const KCTMGeom = (() => {
     const byLine = LINES.map(() => []);
     for (const E of EDGES) for (const i of E.l) byLine[i].push(E);
     const ROUTE_CHAINS = byLine.map((edges) => chainsFor(edges));
+    // where each route passes from one street segment to the next (for keeping its lane)
+    const ROUTE_PAIRS = [];
+    ROUTE_CHAINS.forEach((chains, i) => {
+      for (const ch of chains) for (let k = 0; k + 1 < ch.length; k++) {
+        if (ch[k].E !== ch[k + 1].E) ROUTE_PAIRS.push([i, ch[k].E.k, ch[k].fwd ? 1 : -1, ch[k + 1].E.k, ch[k + 1].fwd ? 1 : -1]);
+      }
+    });
     const runsIn = (lay, steps, key) => {
       const out = [];
       let cur = [];
       for (const st of steps) {
         const Lo = lay[st.E.k];
-        if (Lo && Lo.pos.has(key)) cur.push(st);
+        if (Lo && (typeof key === "number" ? Lo.sp.has(key) : Lo.pos.has(key))) cur.push(st);
         else if (cur.length) { out.push(cur); cur = []; }
       }
       if (cur.length) out.push(cur);
       return out;
-    };
-    // physical lane point of corridor `v` on edge F at its end node n (meters)
-    const lanePoint = (lay, F, atA, v, S, ahead = 0) => {
-      const Lo = lay[F.k], q = atAOrder(Lo.simp, atA);
-      // walk `ahead` meters into F from node n
-      let i = 0, left = ahead, p = q[0];
-      while (i < q.length - 1) {
-        const d = Math.hypot(q[i + 1][0] - q[i][0], q[i + 1][1] - q[i][1]);
-        if (d >= left) { const t = d ? left / d : 0; p = [q[i][0] + t * (q[i + 1][0] - q[i][0]), q[i][1] + t * (q[i + 1][1] - q[i][1])]; break; }
-        left -= d; i++; p = q[i];
-      }
-      const a = q[Math.min(i, q.length - 2)], b = q[Math.min(i, q.length - 2) + 1];
-      let dx = b[0] - a[0], dy = b[1] - a[1];
-      if (!atA) { dx = -dx; dy = -dy; } // the normal is taken in F's own a->b direction
-      const L = Math.hypot(dx, dy) || 1, off = (Lo.pos.get(v) + Lo.shift) * S;
-      return [p[0] + (dy / L) * off, p[1] + (-dx / L) * off];
-    };
-    const atAOrder = (q, atA) => (atA ? q : q.slice().reverse());
-    const away = (lay, F, atA) => { // unit direction leaving F's a end (or b end) into F
-      const q = lay[F.k].simp;
-      const p0 = atA ? q[0] : q[q.length - 1], p1 = atA ? q[Math.min(2, q.length - 1)] : q[Math.max(0, q.length - 3)];
-      const dx = p1[0] - p0[0], dy = p1[1] - p0[1], L = Math.hypot(dx, dy) || 1;
-      return [dx / L, dy / L];
     };
     let last = null; // the last view's layout, for routePath
     const tagOrder = (a, b) => (CAT[VKEY(LINES[a].cat)].prio - CAT[VKEY(LINES[b].cat)].prio) || (LINES[a].rank - LINES[b].rank);
     const HMODE = { glass: 1, solid: 2, dots: 3, ties: 4 };
     // one-way arrows: +1 points along the drawn line, -1 against it, 0 none (two-way)
     const arrow = (dir, fwd) => (!dir ? 0 : (dir === 1) === fwd ? 1 : -1);
+    // width of a street line carrying n routes, in single-route widths: 1, 2, then gently more
+    const GROW = (n) => (n <= 2 ? Math.max(1, n) : Math.min(5, 2 + 0.9 * Math.log2(n / 2)));
 
     // One view. p: { z (zoom step), zNow, u (px per line unit), capU, keyOn {key: bool}, selIdx,
     //   view [x0, y0, x1, y1] in meters, tags { gap, every, busZ }, theme ("l"/"d"), colors {key: css} }
@@ -328,87 +333,149 @@ const KCTMGeom = (() => {
         if (E.bb[2] < V[0] || E.bb[0] > V[2] || E.bb[3] < V[1] || E.bb[1] > V[3]) { lay[E.k] = null; continue; }
         const keys = E.order.filter((v) => keyOn[v] || (v === selKey && E.l.includes(selIdx)));
         if (!keys.length) { lay[E.k] = null; continue; }
+        // routes of each corridor here, in lane order (only the selected one when its type is hidden)
+        const rl = new Map(keys.map((v) => [v, keyOn[v] ? E.byKey.get(v) : [selIdx]]));
+        // how wide each corridor is: a street line grows with the number of routes on it (two
+        // routes, twice as wide; then more slowly), each route a strand of it. Trains sharing
+        // track are one line split lengthwise (1 Line green on one half, 2 Line blue on the other).
+        const nLink = keys.filter((v) => CAT[v].base === "link").length;
+        const wk = new Map(keys.map((v) => {
+          const c = CAT[v];
+          // (the shared line is a little bolder than one Link line, so both halves read)
+          if (c.base === "link") return [v, nLink > 1 ? W(v) * 1.3 / nLink : W(v)];
+          return [v, c.group === "bus" || c.group === "rapid" ? W(v) * GROW(rl.get(v).length) : W(v)];
+        }));
         let T = -GAP;
-        for (const v of keys) T += W(v) + GAP;
+        for (const v of keys) T += wk.get(v) + GAP;
         const s = Math.min(1, capU / T);
-        const pos = new Map();
+        const pos = new Map(), sp = new Map(), sw = new Map();
         let x = -T / 2;
         // boats: no side-by-side lanes; ferry routes only meet at the docks, where shifting
         // lanes would put little kinks into otherwise straight crossings
-        for (const v of keys) { pos.set(v, E.layer === "w" ? 0 : (x + W(v) / 2) * s); x += W(v) + GAP; }
-        const tol = 0.6 * mpp;
+        for (const v of keys) {
+          const w = wk.get(v), list = rl.get(v), n = list.length;
+          pos.set(v, E.layer === "w" ? 0 : (x + w / 2) * s);
+          // each route's strand inside its corridor (Link lines: the whole half that is theirs)
+          const own = CAT[v].base === "link" ? 1 : n;
+          list.forEach((i, j) => { sp.set(i, E.layer === "w" ? 0 : (x + (own === 1 ? w / 2 : (j + 0.5) * w / n)) * s); sw.set(i, (own === 1 ? w : w / n) * s); });
+          x += w + GAP;
+        }
+        const tol = 1.0 * mpp;
         const ck = `${z}`;
         let simp = E.simp.get(ck);
         if (!simp) { simp = simplify(E.pts, tol); E.simp.set(ck, simp); }
-        lay[E.k] = { keys, s, T: T * s, pos, shift: 0, simp };
+        lay[E.k] = { keys, s, T: T * s, pos, shift: 0, simp, wk, rl, sp, sw };
       }
       const runs = (steps, key) => runsIn(lay, steps, key);
 
-      // 2. slide whole bundles sideways so corridors keep their lane through junctions
+      // 2. slide whole bundles sideways so every route keeps its place through junctions: a
+      //    corridor carries on in line, and where it splits each branch carries on from its own
+      //    side of the wider line
       const cons = [], byEdge = new Map();
-      for (const [v, chains] of KEY_CHAINS) {
-        for (const ch of chains) {
-          for (const run of runs(ch, v)) {
-            for (let k = 0; k + 1 < run.length; k++) {
-              const A = run[k], B = run[k + 1];
-              if (A.E === B.E) continue;
-              const n = cons.push([v, A.E.k, A.fwd ? 1 : -1, B.E.k, B.fwd ? 1 : -1]) - 1;
-              for (const e of [A.E.k, B.E.k]) { if (!byEdge.has(e)) byEdge.set(e, []); byEdge.get(e).push(n); }
-            }
-          }
-        }
+      for (const [i, e1, s1, e2, s2] of ROUTE_PAIRS) {
+        const A = lay[e1], B = lay[e2];
+        if (!A || !B || !A.sp.has(i) || !B.sp.has(i)) continue;
+        const v = VKEY(LINES[i].cat);
+        const w = 1 / Math.min(A.rl.get(v).length, B.rl.get(v).length);
+        const n = cons.push([i, e1, s1, e2, s2, w]) - 1;
+        for (const e of [e1, e2]) { if (!byEdge.has(e)) byEdge.set(e, []); byEdge.get(e).push(n); }
       }
       for (let it = 0; it < 30; it++) {
         for (const [e, list] of byEdge) {
           const Le = lay[e];
           let num = 0, den = 0.35 * Le.keys.length;
           for (const n of list) {
-            const [v, e1, s1, e2, s2] = cons[n];
+            const [i, e1, s1, e2, s2, w] = cons[n];
             const [o, so, se] = e1 === e ? [e2, s2, s1] : [e1, s1, s2];
-            num += se * so * (lay[o].pos.get(v) + lay[o].shift) - Le.pos.get(v);
-            den += 1;
+            num += w * (se * so * (lay[o].sp.get(i) + lay[o].shift) - Le.sp.get(i));
+            den += w;
           }
           const lim = 0.3 * Le.T + 0.5;
           Le.shift = EDGES[e].layer === "w" ? 0 : Math.max(-lim, Math.min(lim, num / den));
         }
       }
 
+      // one ease length per junction: long enough for the biggest lane change of any route there
+      const easeLen = new Map();
+      const ek = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+      for (const [i, e1, s1, e2, s2] of cons) {
+        const d = Math.abs(s2 * (lay[e2].sp.get(i) + lay[e2].shift) - s1 * (lay[e1].sp.get(i) + lay[e1].shift)) * S;
+        const key = ek(e1, e2), L = Math.max(14, 3.4 * d, 6 * S);
+        if (!(easeLen.get(key) >= L)) easeLen.set(key, L);
+      }
+      const easeAt = (a, b) => easeLen.get(ek(a, b)) || 0;
+
       // 3. draw corridors, and the selected route on top
       const feats = [], selFeats = [];
-      const props = (key, Lo, e) => {
-        const c = CAT[key], s = Lo.s;
-        const hr = c.inner === "glass" ? 0.34 : c.inner === "solid" ? 0.3 : c.inner === "dots" ? 0.32 : c.inner === "ties" ? 0.62 : 0;
-        const w = W(key);
-        return { r: -1, cat: key, e, wm: (w + 0.14) * s * S, cm: (w + 0.55) * s * S, hm: w * hr * s * S,
-          g: c.group, c: color(key), s: 20 - c.prio, d: c.dash ? 1 : 0, h: HMODE[c.inner] || 0 };
-      };
+      // Widths are in line units (the page turns them into pixels smoothly as you zoom).
+      // Street and train lines are drawn one route at a time: each route is a continuous strand
+      // in its own lane, and the strands of a street touch, so a street carrying three routes
+      // reads as one line three strands wide, and where a route turns off, its strand peels away
+      // on its own. Boats share one line per crossing.
+      const hrOf = (c) => (c.inner === "glass" ? 0.34 : c.inner === "solid" ? 0.3 : c.inner === "dots" ? 0.32 : c.inner === "ties" ? 0.62 : 0);
+      const keyLane = (v) => (Lo) => [Lo.pos.get(v), Lo.wk.get(v) * Lo.s / 2];
       for (const [v, chains] of KEY_CHAINS) {
+        const c = CAT[v];
+        if (c.group !== "water" || !keyOn[v]) continue;
         for (const ch of chains) {
           for (const run of runs(ch, v)) {
-            const pieces = [];
-            drawPath(v, run, lay, S, (k, coords) => { if (coords.length >= 2) pieces.push([k, coords]); }, CAT[v].group === "water");
-            for (const [k, coords] of pieces) {
-              const pr = props(v, lay[run[k].E.k], run[k].E.k);
-              pr.ar = CAT[v].group === "water" ? 0 : arrow(run[k].E.kdir.get(v), run[k].fwd);
-              feats.push({ type: "Feature", properties: pr, geometry: { type: "LineString", coordinates: coords.map(toLL) } });
-            }
+            drawPath(keyLane(v), run, lay, S, (k, coords) => {
+              if (coords.length < 2) return;
+              const Lo = lay[run[k].E.k], w = Lo.wk.get(v);
+              feats.push({ type: "Feature", properties: { r: -1, cat: v, e: run[k].E.k, wm: w + 0.14, cm: w + 0.55, hm: 0, sh: 0, ws: w * S, n: Lo.rl.get(v).length,
+                g: c.group, c: color(v), s: 20 - c.prio, d: c.dash ? 1 : 0, h: 0, ar: 0 }, geometry: { type: "LineString", coordinates: coords.map(toLL) } });
+            }, true);
           }
         }
       }
+      for (let i = 0; i < LINES.length; i++) {
+        const v = VKEY(LINES[i].cat), c = CAT[v];
+        if (!keyOn[v] || c.group === "water") continue;
+        const hr = hrOf(c);
+        for (const ch of ROUTE_CHAINS[i]) {
+          for (const run of runs(ch, i)) {
+            let prev = null;
+            drawPath((Lo) => [Lo.sp.get(i), Lo.sw.get(i) / 2], run, lay, S, (k, coords) => {
+              if (coords.length < 2) return;
+              const st = run[k], Lo = lay[st.E.k], list = Lo.rl.get(v), n = list.length, j = list.indexOf(i);
+              const w = Lo.sw.get(i), s = Lo.s;
+              // one strand per street carries the corridor's soft shadow and its one-way arrows,
+              // so they show once however many routes share it
+              const rep = j === Math.floor((n - 1) / 2);
+              const pr = { r: i, cat: v, e: st.E.k, wm: w + 0.14 * s, cm: w + 0.55 * s,
+                // the glass highlight only on a line of one route: a wide street line is one solid color
+                hm: n === 1 || c.base === "link" ? w * hr : 0, sh: rep ? (Lo.wk.get(v) + 0.55) * s : 0, ws: w * S, n: c.base === "link" ? 1 : n,
+                g: c.group, c: color(v), s: 20 - c.prio, d: c.dash ? 1 : 0, h: HMODE[c.inner] || 0,
+                ar: rep ? arrow(st.E.kdir.get(v), st.fwd) : 0 };
+              // pieces in a row that look the same are one line (no seams where streets meet)
+              if (prev && prev.coords[prev.coords.length - 1][0] === coords[0][0] && prev.coords[prev.coords.length - 1][1] === coords[0][1] &&
+                prev.pr.wm === pr.wm && prev.pr.hm === pr.hm && prev.pr.sh === pr.sh && prev.pr.ar === pr.ar && prev.pr.n === pr.n) {
+                for (let q = 1; q < coords.length; q++) prev.coords.push(coords[q]);
+                return;
+              }
+              prev = { pr, coords: coords.slice() };
+              feats.push({ type: "Feature", properties: pr, geometry: { type: "LineString", coordinates: prev.coords } });
+            }, false, false, easeAt);
+          }
+        }
+      }
+      for (const f of feats) if (f.properties.r >= 0) f.geometry.coordinates = f.geometry.coordinates.map(toLL);
+      // one route, in its own strand
+      const strand = (i) => (Lo) => [Lo.sp.get(i), Lo.sw.get(i) / 2];
       if (selIdx >= 0) {
         const c = CAT[selKey], col = color(selKey);
         for (const ch of ROUTE_CHAINS[selIdx]) {
-          for (const run of runs(ch, selKey)) {
-            drawPath(selKey, run, lay, S, (k, coords) => {
+          for (const run of runs(ch, selIdx)) {
+            drawPath(strand(selIdx), run, lay, S, (k, coords) => {
               if (coords.length < 2) return;
               selFeats.push({ type: "Feature", properties: { r: selIdx, cat: selKey, e: run[k].E.k, c: col, d: c.dash ? 1 : 0, ar: c.group === "water" ? 0 : arrow(run[k].E.dirOf(selIdx), run[k].fwd),
-                wm: (c.w + 0.9) * S, cm: (c.w + 2.6) * S, gm: (c.w + 7) * S, hm: (c.w + 0.9) * 0.3 * S },
+                wm: c.w + 0.9, cm: c.w + 2.6, gm: c.w + 7, hm: (c.w + 0.9) * 0.3 },
               geometry: { type: "LineString", coordinates: coords.map(toLL) } });
-            }, c.group === "water");
+            }, c.group === "water", false, easeAt);
           }
         }
       }
-      last = { lay, S, z };
+      last = { lay, S, z, W, easeAt };
 
       // 4. route-number tags. Connected blocks carrying the same routes form one stretch; a
       //    stretch gets one tag (on its longest block), plus repeats along long blocks, and the
@@ -470,15 +537,14 @@ const KCTMGeom = (() => {
           const q1 = pointAt(E.pts, cum, Math.max(0, d - 10)), q2 = pointAt(E.pts, cum, Math.min(E.len, d + 10));
           const dx = q2[0] - q1[0], dy = q2[1] - q1[1], L = Math.hypot(dx, dy) || 1, nx = dy / L, ny = -dx / L;
           const Lo = lay[e], vertical = Math.abs(dy) >= Math.abs(dx);
-          const side = (v) => { const o = Lo.pos.has(v) ? Lo.pos.get(v) : 0; return vertical ? nx * o : -ny * o; };
-          const keyOf = (i) => VKEY(LINES[i].cat);
-          const ordered = t.rs.slice().sort((a, b) => (side(keyOf(a)) - side(keyOf(b))) || tagOrder(a, b));
+          const side = (i) => { const o = Lo.sp.has(i) ? Lo.sp.get(i) : 0; return vertical ? nx * o : -ny * o; };
+          const ordered = t.rs.slice().sort((a, b) => (side(a) - side(b)) || tagOrder(a, b));
           labels.push({ type: "Feature", properties: { k: `${p.theme}:${ordered.join(".")}`, p: t.p }, geometry: { type: "Point", coordinates: toLL(q) } });
         }
       }
       // the selected route's own tag: along its whole path about every 550 px, never two within ~380 px
       if (selIdx >= 0) {
-        const gap = Math.max(380, TD.gap * 1.3) * mpp, step = Math.max(450, TD.every) * mpp, pts = [];
+        const gap = Math.max(760, TD.gap * 1.3) * mpp, step = Math.max(900, TD.every) * mpp, pts = [];
         for (const E of EDGES.filter((x) => x.l.includes(selIdx)).sort((a, b) => b.len - a.len)) {
           const cum = E.cum || (E.cum = cumLen(E.pts));
           const n = Math.max(1, Math.floor(E.len / step));
@@ -496,19 +562,21 @@ const KCTMGeom = (() => {
     // hover previews).
     function routePaths(idxs) {
       if (!last) return [];
-      const { lay, S } = last, out = [];
+      const { lay, S, W, easeAt } = last, out = [];
       for (const idx of idxs) {
         if (!LINES[idx]) continue;
         const v = VKEY(LINES[idx].cat), c = CAT[v];
+        // drawn as one line of its type would be, centered on its own strand
+        const wide = c.group === "bus" || c.group === "rapid";
         for (const ch of ROUTE_CHAINS[idx]) {
-          for (const run of runsIn(lay, ch, v)) {
-            drawPath(v, run, lay, S, (k, coords) => {
+          for (const run of runsIn(lay, ch, idx)) {
+            drawPath((Lo) => [Lo.sp.get(idx), Lo.sw.get(idx) / 2], run, lay, S, (k, coords) => {
               if (coords.length < 2) return;
+              const Lo = lay[run[k].E.k], w = wide ? Math.min(Lo.wk.get(v), W(v)) * Lo.s : Lo.sw.get(idx);
               out.push({ type: "Feature", properties: { r: idx, cat: v, e: run[k].E.k, d: c.dash ? 1 : 0,
-                ar: c.group === "water" ? 0 : arrow(run[k].E.dirOf(idx), run[k].fwd), wm: (c.w + 0.14) * lay[run[k].E.k].s * S,
-                cm: (c.w + 0.55) * lay[run[k].E.k].s * S },
+                ar: c.group === "water" ? 0 : arrow(run[k].E.dirOf(idx), run[k].fwd), wm: w + 0.14, cm: w + 0.55 },
               geometry: { type: "LineString", coordinates: coords.map(toLL) } });
-            }, c.group === "water");
+            }, c.group === "water", false, easeAt);
           }
         }
       }

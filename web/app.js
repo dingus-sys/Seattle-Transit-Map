@@ -103,8 +103,8 @@
   const BUS_TIERS = { less: [0, 10.2, 12.0], normal: [0, 0, 10.0], more: [0, 0, 0] };
   // gap: same tag repeating; every: spacing along long streets; any: between any two tags (px,
   // grows when zoomed out, see tagSpacing); busZ: zoom where bus tags start
-  const TAG_DENSITY = { fewer: { gap: 420, every: 900, any: 70, busZ: 11.5 }, normal: { gap: 280, every: 600, any: 44, busZ: 10.0 },
-    more: { gap: 180, every: 380, any: 26, busZ: 9.4 } };
+  const TAG_DENSITY = { fewer: { gap: 840, every: 1800, any: 140, busZ: 11.5 }, normal: { gap: 560, every: 1200, any: 88, busZ: 10.0 },
+    more: { gap: 360, every: 760, any: 52, busZ: 9.4 } };
   const tagSpacing = (td, z) => ({ ...td, any: td.any * (z < 11 ? 1.25 : 1) });
   const THICK = { thin: 0.8, normal: 1, bold: 1.25 };
   const settings = { ...SETTINGS_DEFAULT };
@@ -129,9 +129,10 @@
 
   // Local flat coordinates in meters around Seattle, shared with the geometry engine (web/geom.js)
   const { LAT0, LON0, KX, KY, MPP0, toM, cumLen } = KCTMGeom;
-  // meters (feature property) -> pixels at the current zoom, exactly (times k)
-  const px = (prop, k = 1) => ["interpolate", ["exponential", 2], ["zoom"],
-    9, ["*", ["get", prop], k * 2 ** 9 / MPP0], 20, ["*", ["get", prop], k * 2 ** 20 / MPP0]];
+  // line units (feature property) -> pixels, following the zoom continuously (times k). The
+  // lanes are laid out at quarter-zoom steps, but the widths never jump between them.
+  const px = (prop, k = 1) => ["interpolate", ["linear"], ["zoom"],
+    ...UNIT.flatMap(([z, u]) => [z, ["*", ["get", prop], k * u * THICK[settings.thickness]]])];
 
   // ---------------------------------------------------------------- base map palette
   const BASE = {
@@ -335,43 +336,61 @@
   // white rail center, RapidRide dots or railroad ties).
   // Visual hierarchy: rush-hour lines recede, all-day lines are a touch softer, so the frequent
   // network, RapidRide and trains read first in busy places like downtown.
-  const LINE_OP = ["match", ["get", "cat"], "peak", 0.6, "local", 0.88, "dart", 0.85, 1];
+  const LINE_OP = 1;
+  const SOFT = { peak: 0.6, local: 0.88, dart: 0.85 };
+  const mixHex = (a, b, t) => { // a toward b by (1 - t)
+    const pa = [1, 3, 5].map((i) => parseInt(a.slice(i, i + 2), 16)), pb = [1, 3, 5].map((i) => parseInt(b.slice(i, i + 2), 16));
+    return "#" + pa.map((v, i) => Math.round(v * t + pb[i] * (1 - t)).toString(16).padStart(2, "0")).join("");
+  };
+  const netColors = (th) => Object.fromEntries(Object.entries(LINE[th]).map(([k, c]) =>
+    [k, SOFT[k] && /^#[0-9a-f]{6}$/i.test(c) ? mixHex(c, BASE[th].land, SOFT[k]) : c]));
+  const HOVER_SLOTS = ["hover", "hover2"];
   function transitLayers(P) {
     const L = [];
     const inner = (id, src, filter, paint, layout = {}) => L.push({ id, type: "line", source: src, filter,
       layout: { "line-join": "round", ...layout }, paint });
-    for (const g of ["bus", "rapid", "rail"]) {
-      L.push({ id: `shadow-${g}`, type: "line", source: "net", filter: ["==", ["get", "g"], g], minzoom: 11,
-        layout: { "line-cap": "round", "line-join": "round", "line-sort-key": ["get", "s"] },
-        paint: { "line-color": P.shadow, "line-width": px("cm"), "line-blur": 3, "line-translate": [0, 1.6] } });
+    // Street lines (buses, RapidRide, streetcars) are one stack and trains another on top of it,
+    // each with its own casing, so a train line running over a street line (Link under 3rd
+    // Avenue) stays a clean line of its own.
+    for (const stack of [["water", "bus", "rapid"], ["rail"]]) {
+      for (const g of stack) {
+        if (g === "water") continue;
+        L.push({ id: `shadow-${g}`, type: "line", source: "net", filter: ["all", ["==", ["get", "g"], g], [">", ["get", "sh"], 0]], minzoom: 11,
+          layout: { "line-cap": "round", "line-join": "round", "line-sort-key": ["get", "s"] },
+          paint: { "line-color": P.shadow, "line-width": px("sh"), "line-blur": 3, "line-translate": [0, 1.6] } });
+      }
+      for (const g of stack) {
+        if (g === "water") continue;
+        L.push({ id: `case-${g}`, type: "line", source: "net", filter: ["==", ["get", "g"], g],
+          layout: { "line-cap": "round", "line-join": "round", "line-sort-key": ["get", "s"] },
+          paint: { "line-color": P.casing, "line-width": px("cm") } });
+      }
+      for (const g of stack) {
+        const f = ["==", ["get", "g"], g];
+        L.push({ id: `line-${g}`, type: "line", source: "net", filter: ["all", f, ["==", ["get", "d"], 0]],
+          layout: { "line-cap": "round", "line-join": "round", "line-sort-key": ["get", "s"] },
+          paint: { "line-color": ["get", "c"], "line-width": px("wm"), "line-opacity": LINE_OP } });
+        L.push({ id: `dash-${g}`, type: "line", source: "net", filter: ["all", f, ["==", ["get", "d"], 1]],
+          layout: { "line-join": "round" },
+          paint: { "line-color": ["get", "c"], "line-width": px("wm"), "line-dasharray": [2.2, 1.3], "line-opacity": LINE_OP } });
+        inner(`glass-${g}`, "net", ["all", f, ["==", ["get", "h"], 1]],
+          { "line-color": P.shine, "line-opacity": 0.38, "line-width": px("hm"), "line-blur": 0.6 }, { "line-cap": "round" });
+        inner(`center-${g}`, "net", ["all", f, ["==", ["get", "h"], 2]],
+          { "line-color": P.shine, "line-opacity": 0.92, "line-width": px("hm") }, { "line-cap": "round" });
+        inner(`dots-${g}`, "net", ["all", f, ["==", ["get", "h"], 3]],
+          { "line-color": P.shine, "line-opacity": 0.95, "line-width": px("hm"), "line-dasharray": [0.2, 2.4] }, { "line-cap": "round" });
+        inner(`ties-${g}`, "net", ["all", f, ["==", ["get", "h"], 4]],
+          { "line-color": P.casing, "line-width": px("hm"), "line-dasharray": [1.2, 1.6] });
+      }
     }
-    for (const g of ["bus", "rapid", "rail"]) {
-      L.push({ id: `case-${g}`, type: "line", source: "net", filter: ["==", ["get", "g"], g],
-        layout: { "line-cap": "round", "line-join": "round", "line-sort-key": ["get", "s"] },
-        paint: { "line-color": P.casing, "line-width": px("cm") } });
+    // hovered line: drawn again, bolder, on top; nothing else changes. Two of them, so one route
+    // can fade out while the next one swells in.
+    for (const sl of HOVER_SLOTS) {
+      L.push({ id: `${sl}-case`, type: "line", source: sl, layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": P.casing, "line-width": px("cm", 1.6), "line-opacity": 0 } });
+      L.push({ id: `${sl}-line`, type: "line", source: sl, layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": ["get", "c"], "line-width": px("wm", 1.65), "line-opacity": 0 } });
     }
-    for (const g of ["water", "bus", "rapid", "rail"]) {
-      const f = ["==", ["get", "g"], g];
-      L.push({ id: `line-${g}`, type: "line", source: "net", filter: ["all", f, ["==", ["get", "d"], 0]],
-        layout: { "line-cap": "round", "line-join": "round", "line-sort-key": ["get", "s"] },
-        paint: { "line-color": ["get", "c"], "line-width": px("wm"), "line-opacity": LINE_OP } });
-      L.push({ id: `dash-${g}`, type: "line", source: "net", filter: ["all", f, ["==", ["get", "d"], 1]],
-        layout: { "line-join": "round" },
-        paint: { "line-color": ["get", "c"], "line-width": px("wm"), "line-dasharray": [2.2, 1.3], "line-opacity": LINE_OP } });
-      inner(`glass-${g}`, "net", ["all", f, ["==", ["get", "h"], 1]],
-        { "line-color": P.shine, "line-opacity": 0.38, "line-width": px("hm"), "line-blur": 0.6 }, { "line-cap": "round" });
-      inner(`center-${g}`, "net", ["all", f, ["==", ["get", "h"], 2]],
-        { "line-color": P.shine, "line-opacity": 0.92, "line-width": px("hm") }, { "line-cap": "round" });
-      inner(`dots-${g}`, "net", ["all", f, ["==", ["get", "h"], 3]],
-        { "line-color": P.shine, "line-opacity": 0.95, "line-width": px("hm"), "line-dasharray": [0.2, 2.4] }, { "line-cap": "round" });
-      inner(`ties-${g}`, "net", ["all", f, ["==", ["get", "h"], 4]],
-        { "line-color": P.casing, "line-width": px("hm"), "line-dasharray": [1.2, 1.6] });
-    }
-    // hovered line: drawn again, bolder, on top; nothing else changes
-    L.push({ id: "hover-case", type: "line", source: "hover", layout: { "line-cap": "round", "line-join": "round" },
-      paint: { "line-color": P.casing, "line-width": px("cm", 1.6) } });
-    L.push({ id: "hover-line", type: "line", source: "hover", layout: { "line-cap": "round", "line-join": "round" },
-      paint: { "line-color": ["get", "c"], "line-width": px("wm", 1.65) } });
     // selected route, drawn again on top
     L.push({ id: "sel-glow", type: "line", source: "sel", layout: { "line-cap": "round", "line-join": "round" },
       paint: { "line-color": ["get", "c"], "line-opacity": 0.28, "line-blur": 4, "line-width": px("gm") } });
@@ -392,7 +411,7 @@
     // which way they go once you're zoomed in; the line in focus shows them from further out.
     arrowLayer("arrows", "net", 13.2, ["interpolate", ["linear"], ["zoom"], 13.2, 150, 15, 190, 17, 240],
       ["interpolate", ["linear"], ["zoom"], 13.2, 0.55, 15, 0.72, 17, 0.95]);
-    arrowLayer("hover-arrows", "hover", 11, ["interpolate", ["linear"], ["zoom"], 11, 90, 15, 120, 17, 170]);
+    for (const sl of HOVER_SLOTS) arrowLayer(`${sl}-arrows`, sl, 11, ["interpolate", ["linear"], ["zoom"], 11, 90, 15, 120, 17, 170]);
     arrowLayer("sel-arrows", "sel", 10.5, ["interpolate", ["linear"], ["zoom"], 11, 90, 15, 120, 17, 170]);
     // network lines fade smoothly when another line is in focus
     for (const l of L) if (l.source === "net" && l.type === "line") l.paint["line-opacity-transition"] = { duration: 260 };
@@ -498,6 +517,7 @@
   // Laying out a view (lanes, bundle shifts, rounded paths, tags) takes 100-250 ms on a phone,
   // so it runs in a worker made from the geometry script on this page; the page only hands the
   // finished lines to the map. Where workers aren't allowed the same engine runs here instead.
+  let lastParams = null;
   let worker = null, engine = null, inFlight = null, queued = null, buildSeq = 0, appliedSeq = 0, lastBuildMs = 0, watchdog = 0;
   const idleWaiters = [];
   function engineInit() {
@@ -553,7 +573,7 @@
     vehIx = vehIxSel = null;
     lastBuildMs = m.ms || 0;
     map.getSource("net").setData({ type: "FeatureCollection", features: m.feats });
-    if (hoverKey) focusOff();
+    if (hoverKey) focusRoutes(hoverRoutes, true);
     map.getSource("sel").setData({ type: "FeatureCollection", features: m.selFeats });
     map.getSource("netlabels").setData({ type: "FeatureCollection", features: m.labels });
     map.getSource("sellabels").setData({ type: "FeatureCollection", features: m.selLabels });
@@ -602,8 +622,9 @@
     for (const k of Object.keys(CAT)) keyOn[k] = (k === "sounder" ? enabledCat("sounder") || enabledCat("amtrak") : enabledCat(CAT[k].base || k)) && CAT[k].tier <= tier;
     const p = { z, zNow, u, capU: interp(CAP_PX, z) / u, keyOn,
       selIdx: selected && selected.type === "route" ? LINEIDX[selected.id] : -1,
-      view: (builtView = viewBox(0.75)), tags: tagSpacing(TAG_DENSITY[settings.tags], zNow), theme: theme[0], colors: LINE[theme],
+      view: (builtView = viewBox(0.75)), tags: tagSpacing(TAG_DENSITY[settings.tags], zNow), theme: theme[0], colors: netColors(theme),
       wscale: minorScale(zNow) };
+    lastParams = p;
     const msg = { id: ++buildSeq, p };
     if (!worker) {
       const t = performance.now();
@@ -963,8 +984,8 @@
     const sel = selected && selected.type === "route" && selected.id === r.id;
     const ix = sel ? (vehIxSel = vehIxSel || segIndex(lastSelFeats)) : (vehIx = vehIx || segIndex(lastFeats));
     const mpp = MPP0 / 2 ** map.getZoom();
-    const hit = nearestOn(ix, toM(pos[0], pos[1]), Math.max(40, 16 * mpp),
-      sel ? null : (pr) => pr.cat === key && EDGES[pr.e] && EDGES[pr.e].l.includes(i));
+    const hit = nearestOn(ix, toM(pos[0], pos[1]), Math.max(40, 26 * mpp),
+      sel ? null : (pr) => (pr.r >= 0 ? pr.r === i : pr.cat === key && EDGES[pr.e] && EDGES[pr.e].l.includes(i)));
     if (!hit) return [pos, b];
     let hb = (Math.atan2(hit.dir[0], hit.dir[1]) * 180 / Math.PI + 360) % 360;
     if (b >= 0) { const diff = Math.abs(((hb - b + 540) % 360) - 180); if (diff > 90) hb = (hb + 180) % 360; }
@@ -1106,6 +1127,20 @@
     set(0.38, 0);
     anims[prefix] = requestAnimationFrame(frame);
   }
+  function popOut(prefix, done) {
+    cancelAnimationFrame(anims[prefix]);
+    if (!map.getLayer(`${prefix}-stops`)) { done(); return; }
+    const halo = prefix === "hl" ? 0.3 : 0.2, t0 = performance.now(), DUR = 160;
+    const frame = (now) => {
+      const t = Math.max(0, Math.min(1, (now - t0) / DUR)), op = 1 - t * t;
+      map.setPaintProperty(`${prefix}-stops`, "circle-opacity", op);
+      map.setPaintProperty(`${prefix}-stops`, "circle-stroke-opacity", op);
+      map.setPaintProperty(`${prefix}-stops-halo`, "circle-opacity", halo * op);
+      if (t < 1) anims[prefix] = requestAnimationFrame(frame);
+      else done();
+    };
+    anims[prefix] = requestAnimationFrame(frame);
+  }
   // stops of a route, each once: { id, name, lon, lat, end } (end: 2 last stop, 1 first stop)
   const stopCache = new Map();
   function routeStops(r) {
@@ -1142,6 +1177,21 @@
   const toLonLat = (q) => [LON0 + q[0] / KX, LAT0 + q[1] / KY];
   // The drawn lines (lon/lat) as segments in meters, in a grid for quick nearest-point lookups.
   // Loose ends: line ends that no other piece continues from (where the drawing stops).
+  // how far point p (meters) is from line feature f's center (meters)
+  function distTo(f, p) {
+    const g = f.geometry, parts = g.type === "MultiLineString" ? g.coordinates : [g.coordinates];
+    let best = Infinity;
+    for (const cs of parts) {
+      for (let k = 0; k + 1 < cs.length; k++) {
+        const a = toM(cs[k][0], cs[k][1]), b = toM(cs[k + 1][0], cs[k + 1][1]);
+        const vx = b[0] - a[0], vy = b[1] - a[1], L2 = vx * vx + vy * vy;
+        if (!L2) continue;
+        const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / L2));
+        best = Math.min(best, Math.hypot(p[0] - a[0] - t * vx, p[1] - a[1] - t * vy));
+      }
+    }
+    return best;
+  }
   function segIndex(feats) {
     const cell = 160, grid = new Map(), segs = [], endCount = new Map();
     const ek = (c) => c[0].toFixed(6) + "," + c[1].toFixed(6);
@@ -1167,7 +1217,7 @@
     return { cell, grid, segs, loose };
   }
   function nearestOn(ix, p, maxD, accept) {
-    let best = null, bd = maxD, dir = null;
+    let best = null, bd = maxD, dir = null, bp = null;
     const r = Math.ceil(maxD / ix.cell), gx = Math.floor(p[0] / ix.cell), gy = Math.floor(p[1] / ix.cell), seen = new Set();
     for (let dx = -r; dx <= r; dx++) for (let dy = -r; dy <= r; dy++) {
       for (const n of ix.grid.get((gx + dx) + "," + (gy + dy)) || []) {
@@ -1178,18 +1228,18 @@
         const vx = b[0] - a[0], vy = b[1] - a[1], L2 = vx * vx + vy * vy || 1;
         const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / L2));
         const q = [a[0] + t * vx, a[1] + t * vy], d = Math.hypot(q[0] - p[0], q[1] - p[1]);
-        if (d < bd) { bd = d; best = q; dir = [vx, vy]; }
+        if (d < bd) { bd = d; best = q; dir = [vx, vy]; bp = props; }
       }
     }
-    return best ? { q: best, d: bd, dir } : null;
+    return best ? { q: best, d: bd, dir, props: bp } : null;
   }
   // Put stops onto the line drawn for their route, and leave out stops the drawn line doesn't
   // reach (beyond a loose end, or away from a highlighted stretch).
   function snapStops(stopFeats, lineFeats, mode) {
     if (!lineFeats || !lineFeats.length) return [];
     const ix = segIndex(lineFeats), mpp = MPP0 / 2 ** map.getZoom();
-    const maxD = mode === "route" ? Math.max(45, 16 * mpp) : Math.max(30, 9 * mpp);
-    const endTol = Math.max(20, 6 * mpp);
+    const maxD = mode === "route" ? Math.max(45, 24 * mpp) : Math.max(30, 13 * mpp);
+    const endTol = Math.max(20, 10 * mpp);
     const out = [];
     for (const f of stopFeats) {
       const p = toM(...f.geometry.coordinates);
@@ -1204,9 +1254,9 @@
   let selStopsFor = null, hovStopsKey = "";
   // A stop usually comes as a pair, one on each side of the street (one per direction). On the
   // single line the map draws they land close together and read as double dots, so stops
-  // within ~15 px (and 40 m) of each other along the line become one dot that stands for both.
+  // within ~24 px (and 40 m) of each other along the line become one dot that stands for both.
   function mergeStops(feats) {
-    const mpp = MPP0 / 2 ** map.getZoom(), d = Math.max(40, 15 * mpp), out = [];
+    const mpp = MPP0 / 2 ** map.getZoom(), d = Math.max(40, 24 * mpp), out = [];
     for (const f of feats) {
       const p = toM(...f.geometry.coordinates);
       const g = out.find((o) => Math.hypot(o.m[0] - p[0], o.m[1] - p[1]) < d);
@@ -1238,7 +1288,7 @@
     const selCar = selected && selected.type === "route" && RBY[selected.id] && RBY[selected.id].cat === "streetcar";
     const lines = (selCar ? lastSelFeats : lastFeats).filter((f) => f.properties.cat === "streetcar");
     if (lines.length) {
-      const ix = segIndex(lines), maxD = Math.max(45, 16 * MPP0 / 2 ** map.getZoom());
+      const ix = segIndex(lines), maxD = Math.max(45, 24 * MPP0 / 2 ** map.getZoom());
       for (const f of data.features) {
         if (f.properties.snap !== "streetcar") continue;
         const hit = nearestOn(ix, toM(...f.geometry.coordinates), maxD);
@@ -1345,6 +1395,10 @@
   // after a display setting changes: stops and stations follow the line thickness too
   function restyleStops() {
     if (!map) return;
+    for (const L of transitLayers(BASE[theme])) {
+      if (L.type !== "line" || !map.getLayer(L.id) || !L.paint["line-width"]) continue;
+      map.setPaintProperty(L.id, "line-width", L.paint["line-width"]);
+    }
     for (const L of stopLayers(BASE[theme])) {
       if (!map.getLayer(L.id) || L.type !== "circle") continue;
       for (const [k, v] of Object.entries(L.paint || {})) map.setPaintProperty(L.id, k, v);
@@ -1825,13 +1879,64 @@
     });
   }
   function setupInteraction() {
-    const tip = $("#tip");
     const hitLayers = () => ["sel-stops", "hov-stops", "stations", "stops", "flex"].filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none");
     const vehAt = (pt, rad) => (map.getLayer("veh-icon") && map.getLayoutProperty("veh-icon", "visibility") !== "none"
       ? qrf([[pt.x - rad, pt.y - rad], [pt.x + rad, pt.y + rad]], { layers: ["veh-icon"] }) : []);
-    let tipTimer = 0;
-    const hideTip = () => { clearTimeout(tipTimer); tipTimer = setTimeout(() => { tip.hidden = true; }, 120); };
-    const showTipAt = (ev) => { clearTimeout(tipTimer); placeTip(ev); };
+    // What the pointer is on: one target at a time, and a little sticky, so a pointer resting
+    // near a stop, a bus and a line doesn't flicker between them. A new target takes over only
+    // when the pointer is well onto it; the current one holds until the pointer is well off it.
+    let cur = null; // { kind, id }
+    const nearest = (feats, pt) => {
+      let best = null;
+      for (const f of feats) {
+        const c = map.project(f.geometry.coordinates), d = Math.hypot(c.x - pt.x, c.y - pt.y);
+        if (!best || d < best.d) best = { f, d };
+      }
+      return best;
+    };
+    const pickVehicle = (pt) => {
+      const h = nearest(vehAt(pt, 12), pt);
+      if (!h) return null;
+      const held = cur && cur.kind === "veh" && cur.id === h.f.properties.id;
+      return h.d <= (held ? 12 : 7) ? h.f : null;
+    };
+    const pickStop = (pt) => {
+      const h = nearest(qrf([[pt.x - 11, pt.y - 11], [pt.x + 11, pt.y + 11]], { layers: hitLayers() }), pt);
+      if (!h) return null;
+      const held = cur && cur.kind === "stop" && cur.id === h.f.properties.id;
+      // a stop that popped out along the line in focus needs a deliberate move onto it
+      const enter = h.f.layer.id === "hov-stops" && cur && cur.kind === "line" ? 3.5 : 5.5;
+      return h.d <= (held ? 8 : enter) ? h.f : null;
+    };
+    // the route strand under the pointer: every route is its own strand of the street line, so
+    // the strand the pointer is most inside of is the route
+    const pickLine = (pt) => {
+      const rad = 5;
+      const feats = qrf([[pt.x - rad, pt.y - rad], [pt.x + rad, pt.y + rad]], { layers: LINE_LAYERS.filter((l) => map.getLayer(l)) });
+      if (!feats.length) return null;
+      const ll = map.unproject(pt), p = toM(ll.lng, ll.lat), mpp = MPP0 / 2 ** map.getZoom();
+      const sel = selected && selected.type === "route" ? LINEIDX[selected.id] : -1;
+      let best = null, held = null;
+      for (const f of feats) {
+        const d = distTo(f, p);
+        if (!isFinite(d)) continue;
+        const half = (f.properties.ws || 0) / 2;
+        const out = Math.max(0, d - half) / mpp; // pixels outside the strand
+        const score = out + (half ? d / half : 1) * 0.01 - (f.properties.r === sel && sel >= 0 ? 2 : 0);
+        const h = { f, out, score };
+        if (!best || score < best.score) best = h;
+        if (cur && cur.kind === "line" && f.properties.r === cur.id && (!held || out < held.out)) held = h;
+      }
+      // the route in focus holds while the pointer is still on (or right at the edge of) its strand
+      if (held && held.out <= 1.5) best = held;
+      if (!best || best.out > (cur && cur.kind === "line" ? 6 : 4)) return null;
+      const f = best.f, pr = f.properties;
+      // boats: every route of the crossing (they share one line)
+      const E0 = EDGES[pr.e];
+      const all = pr.r < 0 && E0 && E0.byKey.get(pr.cat) ? E0.byKey.get(pr.cat) : [pr.r];
+      return { f, r: pr.r < 0 ? all[0] : pr.r, routes: all.map((i) => LINES[i]).filter(Boolean).sort(tagOrder), n: pr.n || 1 };
+    };
+    const ev = (e, dy = 0) => ({ clientX: e.originalEvent.clientX, clientY: e.originalEvent.clientY + dy });
     map.on("mousemove", (e) => {
       // a number on a route tag
       const tg = tagAt(e.point);
@@ -1839,69 +1944,64 @@
       if (tg) {
         map.getCanvas().style.cursor = "pointer";
         highlightStop(null);
-        tip.classList.remove("tip-card");
         if (tg.item.r != null) {
           const r = LINES[tg.item.r];
+          cur = { kind: "tag", id: tg.item.r };
           if (!(selected && selected.type === "route")) focusRoute(r);
-          tip.innerHTML = `<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}</span>`;
+          tipShow("tag:" + tg.item.r, `<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}</span>`, "", ev(e, 14));
         } else {
+          cur = { kind: "tag", id: "more" };
           setHover(null);
-          tip.innerHTML = `<span class="tip-badges">${tg.item.more.slice(0, 12).map((i) => badgeHTML(LINES[i])).join("")}</span>`;
+          tipShow("more:" + tg.item.more.join("."), `<span class="tip-badges">${tg.item.more.slice(0, 12).map((i) => badgeHTML(LINES[i])).join("")}</span>`, "", ev(e, 14));
         }
-        showTipAt({ clientX: e.originalEvent.clientX, clientY: e.originalEvent.clientY + 14 });
         return;
       }
-      const vh = vehAt(e.point, 6);
-      if (vh.length) {
-        const r = RBY[vh[0].properties.r];
+      const vh = pickVehicle(e.point);
+      if (vh) {
+        const r = RBY[vh.properties.r];
+        cur = { kind: "veh", id: vh.properties.id };
         map.getCanvas().style.cursor = "pointer";
         highlightStop(null);
-        tip.classList.remove("tip-card");
-        tip.innerHTML = `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><span class="vs-row">${vehicleLines(vh[0].properties.id, vh[0].properties.est)}</span></span>`;
-        showTipAt(e.originalEvent);
+        tipShow("veh:" + vh.properties.id, `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><span class="vs-row">${vehicleLines(vh.properties.id, vh.properties.est)}</span></span>`, "", ev(e));
         return;
       }
-      const stopHit = qrf([[e.point.x - 5, e.point.y - 5], [e.point.x + 5, e.point.y + 5]], { layers: hitLayers() });
-      if (stopHit.length) {
-        const p = stopHit[0].properties;
+      const st = pickStop(e.point);
+      if (st) {
+        const p = st.properties, lid = st.layer.id;
+        cur = { kind: "stop", id: p.id };
         map.getCanvas().style.cursor = "pointer";
-        const lid = stopHit[0].layer.id;
         if (lid === "flex") {
           highlightStop(null);
-          tip.classList.remove("tip-card");
-          tip.innerHTML = `<span class="tt">${esc("Metro Flex · " + p.name)}</span>`;
+          tipShow("flex:" + p.name, `<span class="tt">${esc("Metro Flex · " + p.name)}</span>`, "", ev(e));
         } else {
-          highlightStop(stopHit[0]);
-          tip.classList.add("tip-card");
-          tip.innerHTML = stopCard(p.id, lid === "sel-stops" || lid === "hov-stops" ? p.end : 0, p.ids);
+          highlightStop(st);
+          const end = lid === "sel-stops" || lid === "hov-stops" ? p.end : 0;
+          tipShow(`stop:${p.id}:${end}`, stopCard(p.id, end, p.ids), "tip-card", ev(e));
         }
-        showTipAt(e.originalEvent);
         return;
       }
       highlightStop(null);
-      tip.classList.remove("tip-card");
-      const rs = routesAt(e.point, 4);
-      if (rs.length) {
+      const ln = pickLine(e.point);
+      if (ln) {
+        cur = { kind: "line", id: ln.r };
         map.getCanvas().style.cursor = "pointer";
-        if (!(selected && selected.type === "route")) {
-          const top = qrf([[e.point.x - 4, e.point.y - 4], [e.point.x + 4, e.point.y + 4]],
-            { layers: LINE_LAYERS.filter((l) => !l.startsWith("sel") && map.getLayer(l)) })[0];
-          setHover(top && top.properties.r === -1 ? top : null, rs);
-        }
-        const r = rs[0];
-        tip.innerHTML = rs.length === 1 ? `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}</span>`
-          : `<span class="tip-badges">${rs.slice(0, 8).map((x) => badgeHTML(x)).join("")}</span>${rs.length > 8 ? `<span class="tt">+${rs.length - 8}</span>` : ""}`;
-        showTipAt(e.originalEvent);
-      } else {
-        map.getCanvas().style.cursor = "";
-        hideTip();
-        setHover(null);
+        if (!(selected && selected.type === "route")) focusRoutes(ln.routes);
+        const rs = ln.routes, r = rs[0];
+        const more = ln.n > 1 ? `<span class="tt-more">${ln.n} routes share this street</span>` : "";
+        tipShow("line:" + rs.map((x) => x.id).join(","), rs.length === 1
+          ? `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}${more}</span>`
+          : `<span class="tip-badges">${rs.slice(0, 8).map((x) => badgeHTML(x)).join("")}</span>${rs.length > 8 ? `<span class="tt">+${rs.length - 8}</span>` : ""}`, "", ev(e));
+        return;
       }
+      cur = null;
+      map.getCanvas().style.cursor = "";
+      tipHide();
+      setHover(null);
     });
-    map.getCanvas().addEventListener("mouseleave", () => { tip.hidden = true; setHover(null); highlightStop(null); showLens(null); });
+    map.getCanvas().addEventListener("mouseleave", () => { cur = null; tipHide(true); setHover(null); highlightStop(null); showLens(null); });
     map.on("movestart", () => { showLens(null); });
     map.on("click", (e) => {
-      tip.hidden = true;
+      tipHide(true);
       closePopup();
       // a number on a route tag opens that route; "+3" lists the rest
       const tg = tagAt(e.point);
@@ -1938,6 +2038,8 @@
         selectStop(f.properties.id, { fly: false });
         return;
       }
+      const ln = !isNarrow() && pickLine(e.point);
+      if (ln && ln.routes.length === 1) { selectRoute(ln.routes[0].id, { fit: false }); return; }
       const rs = routesAt(e.point, isNarrow() ? 10 : 6);
       if (rs.length === 1) { selectRoute(rs[0].id, { fit: false }); return; }
       if (rs.length > 1) {
@@ -1968,32 +2070,66 @@
   // Hover. A line carrying one route: that route's whole path, drawn bold on top, with its stops.
   // A line carrying several: the stretch of street they share, bold, with the stops along it.
   // Nothing else on the map changes. Stops pop in once per line, not on every mouse move.
-  let hoverKey = "", hoverTimer = 0, hoverStretch = null;
+  let hoverKey = "", hoverTimer = 0, hoverRoutes = [];
   const withColor = (feats) => feats.map((f) => ({ ...f, properties: { ...f.properties, c: keyColor(f.properties.cat) } }));
+  // each hover slot eases between hidden (0) and shown (1); shown lines are a little bolder
+  // than their lines, and swell to that from their own width as they appear
+  let hSlot = 0;
+  const hAnim = HOVER_SLOTS.map(() => ({ v: 0, from: 0, to: 0, t0: 0, dur: 1, raf: 0 }));
+  function hoverPaint(i) {
+    const sl = HOVER_SLOTS[i], v = hAnim[i].v, k = 1.2 + 0.45 * v;
+    if (!map.getLayer(`${sl}-line`)) return;
+    map.setPaintProperty(`${sl}-case`, "line-opacity", v);
+    map.setPaintProperty(`${sl}-line`, "line-opacity", Math.min(1, v * 1.4));
+    map.setPaintProperty(`${sl}-case`, "line-width", px("cm", k * 0.97));
+    map.setPaintProperty(`${sl}-line`, "line-width", px("wm", k));
+    map.setPaintProperty(`${sl}-arrows`, "icon-opacity", v);
+  }
+  function hoverFade(i, to, dur) {
+    const A = hAnim[i];
+    cancelAnimationFrame(A.raf);
+    if (calm()) dur = 1;
+    Object.assign(A, { from: A.v, to, t0: performance.now(), dur });
+    const frame = (now) => {
+      const t = Math.max(0, Math.min(1, (now - A.t0) / A.dur));
+      A.v = A.from + (A.to - A.from) * (1 - Math.pow(1 - t, 3));
+      hoverPaint(i);
+      if (t < 1) A.raf = requestAnimationFrame(frame);
+      else if (A.to === 0 && map.getSource(HOVER_SLOTS[i])) map.getSource(HOVER_SLOTS[i]).setData(fc([]));
+    };
+    A.raf = requestAnimationFrame(frame);
+  }
   function focusOff() {
     clearTimeout(hoverTimer);
     hoverKey = "";
-    hoverStretch = null;
+    hoverRoutes = [];
     hovStopsKey = "";
     if (!map || !map.getSource("hover")) return;
-    map.getSource("hover").setData(fc([]));
-    map.getSource("hoverstops").setData(fc([]));
+    hoverFade(hSlot, 0, 190);
+    popOut("hov", () => { if (!hoverKey) map.getSource("hoverstops").setData(fc([])); });
   }
-  // Hovering shows whole routes, never just a piece: one route, or every route on the line
-  // under the pointer (until you click one). They're drawn bold in their own lanes, right over
-  // their lines, with their stops when there are only a few routes.
-  function focusRoutes(routes) {
+  // Hovering shows whole routes, never just a piece: the route whose strand is under the
+  // pointer (or every boat on a crossing). It's drawn bold in its own lane, right over its line,
+  // with its stops when there are only a few routes.
+  function focusRoutes(routes, again = false) {
     routes = (routes || []).filter((r) => r && LINEIDX[r.id] != null);
     if (!routes.length) return;
     clearTimeout(hoverTimer);
     const key = "r:" + routes.map((r) => r.id).join(",");
-    if (key === hoverKey) return;
+    if (key === hoverKey && !again) return;
     hoverKey = key;
-    hoverStretch = null;
+    hoverRoutes = routes;
     requestRoutePaths(routes.map((r) => LINEIDX[r.id]), false, (feats) => {
       if (hoverKey !== key) return;
       const lines = withColor(feats);
-      map.getSource("hover").setData(fc(lines));
+      if (again) map.getSource(HOVER_SLOTS[hSlot]).setData(fc(lines)); // the same route, relaid for a new view
+      else {
+        const next = 1 - hSlot;
+        map.getSource(HOVER_SLOTS[next]).setData(fc(lines));
+        hoverFade(hSlot, 0, 170);
+        hoverFade(next, 1, 240);
+        hSlot = next;
+      }
       if (routes.length <= 4) {
         // stops of each route snap onto that route's own drawn line
         const all = [];
@@ -2008,12 +2144,11 @@
     });
   }
   const focusRoute = (r) => focusRoutes([r]);
-  function setHover(feat, routes) {
-    if (!feat) { clearTimeout(hoverTimer); hoverTimer = setTimeout(focusOff, 170); return; }
+  // pointer off every line: let go after a moment (crossing a gap between lines doesn't blink)
+  function setHover(feat) {
+    if (feat) return;
     clearTimeout(hoverTimer);
-    const cat = feat.properties.cat, E0 = EDGES[feat.properties.e];
-    const own = E0 && E0.byKey.get(cat) ? E0.byKey.get(cat).map((i) => LINES[i]).sort(tagOrder) : routes;
-    focusRoutes(own);
+    if (hoverKey) hoverTimer = setTimeout(focusOff, 200);
   }
 
   // ---------------------------------------------------------------- route tags you can point at
@@ -2052,12 +2187,69 @@
     lens.hidden = false;
   }
 
-  function placeTip(ev) {
+  // The pointer's tooltip. It glides after the pointer, changes shape smoothly from one card to
+  // the next (a route, a stop's departures, a bus), and fades in and out instead of popping.
+  let tipKey = "", tipOut = 0, tipRAF = 0, tipMorph = 0;
+  const tipPos = { x: 0, y: 0, tx: 0, ty: 0, on: false };
+  const calm = () => window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function tipAim(ev) {
     const tip = $("#tip");
-    tip.hidden = false;
-    const x = Math.min(ev.clientX + 16, window.innerWidth - tip.offsetWidth - 8);
-    const y = Math.min(ev.clientY + 16, window.innerHeight - tip.offsetHeight - 8);
-    tip.style.left = x + "px"; tip.style.top = y + "px";
+    tipPos.tx = Math.max(8, Math.min(ev.clientX + 16, window.innerWidth - tip.offsetWidth - 8));
+    tipPos.ty = Math.max(8, Math.min(ev.clientY + 16, window.innerHeight - tip.offsetHeight - 8));
+    if (!tipPos.on || calm()) { tipPos.x = tipPos.tx; tipPos.y = tipPos.ty; }
+    tipPos.on = true;
+    if (!tipRAF) tipRAF = requestAnimationFrame(tipStep);
+  }
+  function tipStep() {
+    const tip = $("#tip");
+    tipPos.x += (tipPos.tx - tipPos.x) * 0.38;
+    tipPos.y += (tipPos.ty - tipPos.y) * 0.38;
+    tip.style.transform = `translate3d(${tipPos.x.toFixed(1)}px, ${tipPos.y.toFixed(1)}px, 0)`;
+    tipRAF = Math.abs(tipPos.tx - tipPos.x) + Math.abs(tipPos.ty - tipPos.y) > 0.3 ? requestAnimationFrame(tipStep) : 0;
+  }
+  function tipShow(key, html, cls, ev) {
+    const tip = $("#tip");
+    clearTimeout(tipOut);
+    tip.classList.remove("tip-leaving");
+    if (key === tipKey && !tip.hidden) { tipAim(ev); return; }
+    const was = !tip.hidden && tipKey;
+    tipKey = key;
+    if (!was) {
+      tip.className = "tip glass" + (cls ? " " + cls : "");
+      tip.innerHTML = `<div class="tip-in">${html}</div>`;
+      tip.hidden = false;
+      tipPos.on = false;
+      tipAim(ev);
+      tip.classList.remove("tip-enter"); void tip.offsetWidth; tip.classList.add("tip-enter");
+      return;
+    }
+    // one card to the next: keep the old size, swap the contents in with a soft fade, and let
+    // the glass grow or shrink to the new size
+    const r0 = tip.getBoundingClientRect();
+    tip.style.width = tip.style.height = "";
+    tip.className = "tip glass" + (cls ? " " + cls : "");
+    tip.innerHTML = `<div class="tip-in tip-swap">${html}</div>`;
+    const r1 = tip.getBoundingClientRect();
+    tipAim(ev);
+    if (calm() || (Math.abs(r1.width - r0.width) < 2 && Math.abs(r1.height - r0.height) < 2)) return;
+    clearTimeout(tipMorph);
+    tip.classList.add("tip-morph");
+    tip.style.width = r0.width + "px"; tip.style.height = r0.height + "px";
+    void tip.offsetWidth;
+    tip.style.width = r1.width + "px"; tip.style.height = r1.height + "px";
+    tipMorph = setTimeout(() => { tip.classList.remove("tip-morph"); tip.style.width = tip.style.height = ""; }, 280);
+  }
+  function tipHide(now) {
+    const tip = $("#tip");
+    clearTimeout(tipOut);
+    if (tip.hidden) return;
+    const gone = () => { tip.hidden = true; tipKey = ""; tip.classList.remove("tip-leaving"); };
+    if (now) { gone(); return; }
+    // a short grace, so crossing the gap between two lines doesn't blink the card
+    tipOut = setTimeout(() => {
+      tip.classList.add("tip-leaving");
+      tipOut = setTimeout(gone, 170);
+    }, 160);
   }
 
   // ---------------------------------------------------------------- phone sheet (peek / half / full)
@@ -2143,6 +2335,7 @@
           hoverstops: { type: "geojson", data: empty },
           stophl: { type: "geojson", data: empty },
           hover: { type: "geojson", data: empty, tolerance: 0.2 },
+          hover2: { type: "geojson", data: empty, tolerance: 0.2 },
           netlabels: { type: "geojson", data: empty, tolerance: 0.5 },
           sellabels: { type: "geojson", data: empty, tolerance: 0.5 },
           stations: { type: "geojson", data: empty },
@@ -2165,7 +2358,7 @@
     window.__map = map; // handy for debugging from the console
     window.__atlas = {
       rebuild, timeRebuild: () => { const t = performance.now(); rebuild(); return performance.now() - t; },
-      inWorker: () => !!worker, lastBuildMs: () => lastBuildMs,
+      inWorker: () => !!worker, lastBuildMs: () => lastBuildMs, engineInit, lastParams: () => lastParams, lastFeats: () => lastFeats,
       idle: () => new Promise((res) => { if (!inFlight && !queued) res(); else idleWaiters.push(res); }),
     };
     map.touchZoomRotate.disableRotation();
