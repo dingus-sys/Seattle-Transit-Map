@@ -2428,10 +2428,26 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
     return out;
   }
   let selStopsFor = null, hovStopsKey = "";
+  // A stop usually comes as a pair, one on each side of the street (one per direction). On the
+  // single line the map draws they land close together and read as double dots, so stops
+  // within ~15 px (and 40 m) of each other along the line become one dot that stands for both.
+  function mergeStops(feats) {
+    const mpp = MPP0 / 2 ** map.getZoom(), d = Math.max(40, 15 * mpp), out = [];
+    for (const f of feats) {
+      const p = toM(...f.geometry.coordinates);
+      const g = out.find((o) => Math.hypot(o.m[0] - p[0], o.m[1] - p[1]) < d);
+      if (!g) { out.push({ m: p, n: 1, f: { ...f, properties: { ...f.properties, ids: f.properties.id } } }); continue; }
+      g.m = [(g.m[0] * g.n + p[0]) / (g.n + 1), (g.m[1] * g.n + p[1]) / (g.n + 1)];
+      g.n++;
+      g.f.properties.ids += "," + f.properties.id;
+      g.f.properties.end = Math.max(g.f.properties.end || 0, f.properties.end || 0);
+    }
+    return out.map((g) => ({ ...g.f, geometry: { type: "Point", coordinates: toLonLat(g.m) } }));
+  }
   function setStops(prefix, stopFeats, lineFeats, mode, animate) {
     const src = map && map.getSource(prefix === "sel" ? "selstops" : "hoverstops");
     if (!src) return;
-    src.setData(fc(lineFeats ? snapStops(stopFeats, lineFeats, mode) : []));
+    src.setData(fc(lineFeats ? mergeStops(snapStops(stopFeats, lineFeats, mode)) : []));
     if (animate) popIn(prefix);
   }
   function showRouteStops(r) {
@@ -2519,13 +2535,15 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
     return res;
   }
   const placeName = (sid) => ((stopIndex[sid] && stopIndex[sid].name) || "").replace(/\s*[-–]\s*Bay\s*\w+$/i, "").replace(/\s+Bay\s+\w+$/i, "");
-  function stopCard(id, end) {
-    const s = stopIndex[id];
+  function stopCard(id, end, ids) {
+    const all = (ids ? String(ids).split(",") : [id]).map((x) => stopIndex[x]).filter(Boolean);
+    const s = all[0];
     if (!s) return "";
-    const rs = (s.routes || []).map((x) => RBY[x]).filter((r) => r && LINEIDX[r.id] != null).sort(tagOrder);
-    const keys = [...new Set([s.key, ...((s.stops || []).map((sid) => stopIndex[sid] && stopIndex[sid].key).filter(Boolean))])];
+    const rs = [...new Set(all.flatMap((x) => x.routes || []))].map((x) => RBY[x]).filter((r) => r && LINEIDX[r.id] != null).sort(tagOrder);
+    const keys = [...new Set(all.flatMap((x) => [x.key, ...((x.stops || []).map((sid) => stopIndex[sid] && stopIndex[sid].key).filter(Boolean))]))];
     const deps = nextDepartures(keys);
-    const kind = s.kind === "stop" ? (s.code ? `Stop ${esc(s.code)}` : "Bus stop") : "Station";
+    const codes = [...new Set(all.map((x) => x.code).filter(Boolean))];
+    const kind = s.kind === "stop" ? (codes.length > 1 ? `Stops ${esc(codes.join(" & "))}` : codes.length ? `Stop ${esc(codes[0])}` : "Bus stop") : "Station";
     let h = `<div class="sc"><div class="sc-name">${esc(s.name)}</div><div class="sc-sub">${kind} · ${rs.length} route${rs.length === 1 ? "" : "s"}${end === 2 ? " · <b>End of the line</b>" : end === 1 ? " · <b>Trips start here</b>" : ""}</div>`;
     if (rs.length) h += `<div class="sc-badges">${rs.slice(0, 10).map((r) => badgeHTML(r)).join("")}${rs.length > 10 ? `<span class="sc-more">+${rs.length - 10}</span>` : ""}</div>`;
     if (deps && deps.length) {
@@ -3079,7 +3097,7 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
         } else {
           highlightStop(stopHit[0]);
           tip.classList.add("tip-card");
-          tip.innerHTML = stopCard(p.id, lid === "sel-stops" || lid === "hov-stops" ? p.end : 0);
+          tip.innerHTML = stopCard(p.id, lid === "sel-stops" || lid === "hov-stops" ? p.end : 0, p.ids);
         }
         showTipAt(e.originalEvent);
         return;
@@ -3207,7 +3225,7 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
           const own = lines.filter((f) => f.properties.r === LINEIDX[r.id]);
           all.push(...snapStops(stopFeatures([r], routes.length === 1), own, "route"));
         }
-        map.getSource("hoverstops").setData(fc(all));
+        map.getSource("hoverstops").setData(fc(mergeStops(all)));
         if (hovStopsKey !== key) popIn("hov");
       } else map.getSource("hoverstops").setData(fc([]));
       hovStopsKey = key;
