@@ -31,8 +31,11 @@ def main():
     page = open(os.path.join(web, "page.html")).read()
     css = open(os.path.join(web, "app.css")).read()
     js = open(os.path.join(web, "app.js")).read()
+    # the geometry engine is its own script so the page can also start it as a background worker
+    geom = open(os.path.join(web, "geom.js")).read()
     body = (page.replace("/*MAPLIBRE_CSS*/", maplibre_css())
                 .replace("/*APP_CSS*/", css)
+                .replace("/*GEOM_JS*/", geom)
                 .replace("/*APP_JS*/", js))
     # The claude.ai preview can't reach outside servers, so only the website gets live data.
     artifact = body.replace("/*MODE*/", "bundled").replace("/*LIVE*/", "")

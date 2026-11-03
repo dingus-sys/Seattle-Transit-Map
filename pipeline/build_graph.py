@@ -361,7 +361,26 @@ def assign_lines(g, routes, mask=None):
 def trim_stubs(g, routes, max_len=140.0, mask=None):
     """Drop a route from short dead-end pieces that aren't one of its real ends: leftovers
     of ramps and station loops that would draw as little hooks. Near freeways, where ramps
-    run alongside the main line and pick up its routes, longer pieces (450 m) go too."""
+    run alongside the main line and pick up its routes, longer pieces (450 m) go too.
+
+    Only redundant pieces go: where the route's own shape beside the piece is already drawn
+    by its other segments. A dead end that is the only drawing of that stretch is the edge
+    of a gap, and trimming it would only widen the gap."""
+    from shapely.ops import unary_union
+
+    def redundant(eid, slug, rg, mine):
+        stub = LineString(g.edges[eid]["c"])
+        snap = R_FWY + 10 if limit.get(eid, max_len) > max_len else SNAP
+        beside = rg.intersection(stub.buffer(snap))
+        if beside.is_empty or beside.length < 5:
+            return True  # the route doesn't really run here
+        others = [LineString(g.edges[k]["c"]) for k in mine if k != eid]
+        others = [o for o in others if o.distance(stub) < 2 * snap + 50]
+        if not others:
+            return False
+        drawn = beside.intersection(unary_union(others).buffer(snap)).length
+        return drawn >= 0.6 * beside.length
+
     near_fwy = mask.buffer(60) if mask is not None else None
     limit = {}
     for eid, e in g.edges.items():
@@ -374,10 +393,13 @@ def trim_stubs(g, routes, max_len=140.0, mask=None):
         while changed:
             changed = False
             deg = defaultdict(list)
+            mine = []
             for eid, e in g.edges.items():
-                if slug in e["lines"] and e["a"] != e["b"]:
-                    deg[e["a"]].append(eid)
-                    deg[e["b"]].append(eid)
+                if slug in e["lines"]:
+                    mine.append(eid)
+                    if e["a"] != e["b"]:
+                        deg[e["a"]].append(eid)
+                        deg[e["b"]].append(eid)
             for n, eids in deg.items():
                 if len(eids) != 1:
                     continue
@@ -387,6 +409,8 @@ def trim_stubs(g, routes, max_len=140.0, mask=None):
                 other = g.other(eid, n)
                 if len(deg.get(other, [])) < 2 or g.length(eid) > limit.get(eid, max_len):
                     continue
+                if not redundant(eid, slug, rg, mine):
+                    continue
                 g.edges[eid]["lines"] = g.edges[eid]["lines"] - {slug}
                 removed += 1
                 changed = True
@@ -394,6 +418,54 @@ def trim_stubs(g, routes, max_len=140.0, mask=None):
     for eid in [k for k, e in g.edges.items() if not e["lines"]]:
         g.remove(eid)
     return removed
+
+
+def fill_gaps(g, routes, mask=None, max_span=2500.0):
+    """Bridge what is still missing of each route with the route's own shape.
+
+    Where a route's shape cuts across a big interchange, the traced streets may not follow it
+    and the route ends up with a hole: two loose ends with nothing drawn between them. Loose
+    ends are paired along the shape, and an undrawn stretch between a pair becomes a segment
+    of its own (shared by every route with the same two ends)."""
+    from shapely.geometry import Point
+    from shapely.ops import substring, unary_union
+    near_fwy = mask.buffer(60) if mask is not None else None
+    on_fwy = {k: near_fwy is not None and near_fwy.contains(LineString(e["c"]).interpolate(0.5, normalized=True))
+              for k, e in g.edges.items()}
+    added, filled = {}, 0
+    for slug, rg in routes.items():
+        mine = [k for k, e in g.edges.items() if slug in e["lines"]]
+        if not mine:
+            continue
+        deg = defaultdict(int)
+        for k in mine:
+            e = g.edges[k]
+            if e["a"] != e["b"]:
+                deg[e["a"]] += 1
+                deg[e["b"]] += 1
+        ends = [pt for p in rg.geoms for pt in (p.coords[0], p.coords[-1])]
+        loose = [n for n, d in deg.items() if d == 1 and min(math.dist(g.pos[n], t) for t in ends) > 4 * R]
+        if len(loose) < 2:
+            continue
+        cover = unary_union([LineString(g.edges[k]["c"]).buffer(R_FWY + 10 if on_fwy.get(k) else SNAP + 8) for k in mine])
+        for part in rg.geoms:
+            on = sorted((part.project(Point(g.pos[n])), n) for n in loose if part.distance(Point(g.pos[n])) < 4 * R)
+            for (s1, n1), (s2, n2) in zip(on, on[1:]):
+                if n1 == n2 or not (2 * R < s2 - s1 < max_span):
+                    continue
+                sub = substring(part, s1, s2)
+                missing = sub.difference(cover).length
+                if missing < 40 or missing < 0.25 * sub.length:
+                    continue  # already drawn: two loose ends side by side, not a hole
+                key = frozenset((n1, n2))
+                if key in added and added[key] in g.edges:
+                    g.edges[added[key]]["lines"] = g.edges[added[key]]["lines"] | {slug}
+                else:
+                    a, b = (n1, n2)
+                    coords = [g.pos[a]] + list(sub.coords)[1:-1] + [g.pos[b]]
+                    added[key] = g.add(a, b, coords, frozenset({slug}))
+                filled += 1
+    return filled
 
 
 def collapse_bubbles(g, mask=None):
@@ -770,6 +842,7 @@ def build_layer(routes, rank, name, mask=None):
     merge_chains(g, same=lambda e1, e2: e1["lines"] == e2["lines"])
     folded = collapse_bubbles(g, mask)
     trimmed += trim_stubs(g, routes, mask=mask)  # folding a ramp loop leaves its two sides as stubs
+    fixed += fill_gaps(g, routes, mask)
     merge_chains(g, same=lambda e1, e2: e1["lines"] == e2["lines"])
     moved, replaced = refine_geometry(g, routes, rank)
     hooks = unhook(g, mask)

@@ -23,7 +23,7 @@ pipeline/         Python build steps (run in this order by build_all.py)
   build_areas.py    DART areas, Access area, Metro Flex zones
   build_graph.py    the shared-corridor network and ribbon order
   build_site.py     assembles web/ into site/index.html (+ artifact.html)
-web/              page template, styles and app script
+web/              page template, styles, app script and geom.js (the line geometry engine)
 site/             the finished static site (this is what gets published)
 .github/workflows pages.yml publishes site/; refresh-data.yml rebuilds data weekly
 ```
@@ -78,9 +78,15 @@ for any two, the one that turns left ends up on the left, with the same order ca
 along whole corridors. Rail, surface and water services are separate networks, so trains
 in tunnels aren't bundled with the buses above them.
 
-In the browser (`web/app.js`), each service line is drawn as one continuous path: corners
-are rounded, lines keep their lane through junctions (bundles slide sideways to make that
-possible), and when a line must change sides it eases across over a short distance.
+Where a route's own shape cuts across a big interchange and the traced streets don't follow
+it, the missing stretch is drawn from the route's shape, so no route breaks off mid-way.
+
+In the browser, `web/geom.js` lays out each view: every service line is one continuous path,
+corners are rounded, lines keep their lane through junctions (bundles slide sideways to make
+that possible), and when a line must change sides it eases across over a short distance. That
+work runs in a background worker so panning and zooming stay smooth (`web/app.js` only hands
+the finished lines to the map); where workers aren't allowed it runs on the page instead. Add
+`?noworker` to the address to force that.
 
 ## Data and credits
 
