@@ -372,7 +372,7 @@ def main():
         elif cat == "sounder":
             label = short.replace(" Line", "")
         elif cat == "streetcar":
-            label = "SLU" if "South Lake" in short else "FHS"
+            label = "SLU" if "South Lake" in short else "FH"
         elif cat == "monorail":
             label = "M"
         elif cat == "swift":

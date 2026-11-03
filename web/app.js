@@ -364,11 +364,11 @@
       inner(`ties-${g}`, "net", ["all", f, ["==", ["get", "h"], 4]],
         { "line-color": P.casing, "line-width": px("hm"), "line-dasharray": [1.2, 1.6] });
     }
-    // hovered line: drawn again, thicker, on top (width springs up when it appears)
+    // hovered line: drawn again, bolder, on top; nothing else changes
     L.push({ id: "hover-case", type: "line", source: "hover", layout: { "line-cap": "round", "line-join": "round" },
-      paint: { "line-color": P.casing, "line-width": px("cm", 1), "line-width-transition": { duration: 220 } } });
+      paint: { "line-color": P.casing, "line-width": px("cm", 1.6) } });
     L.push({ id: "hover-line", type: "line", source: "hover", layout: { "line-cap": "round", "line-join": "round" },
-      paint: { "line-color": ["get", "c"], "line-width": px("wm", 1), "line-width-transition": { duration: 220 } } });
+      paint: { "line-color": ["get", "c"], "line-width": px("wm", 1.65) } });
     // selected route, drawn again on top
     L.push({ id: "sel-glow", type: "line", source: "sel", layout: { "line-cap": "round", "line-join": "round" },
       paint: { "line-color": ["get", "c"], "line-opacity": 0.28, "line-blur": 4, "line-width": px("gm") } });
@@ -510,6 +510,7 @@
       worker = new Worker(URL.createObjectURL(new Blob([src], { type: "text/javascript" })));
       worker.onmessage = (e) => {
         const m = e.data;
+        if (m.type === "route") { const cb = routeCbs.get(m.id); routeCbs.delete(m.id); if (cb) cb(m.feats); return; }
         if (m.type !== "built") return;
         clearTimeout(watchdog);
         inFlight = null;
@@ -529,16 +530,33 @@
     // no answer at all (a blocked worker): draw on the page instead
     watchdog = setTimeout(() => { if (inFlight === msg) { runHere(); rebuild(); } }, 15000);
   }
+  // one route's path in the current view's lanes (for hover previews), from the engine
+  let routeSeq = 0;
+  const routeCbs = new Map();
+  function requestRoutePath(idx, cb) {
+    if (!worker) { cb(engine ? engine.routePath(idx) : []); return; }
+    const id = ++routeSeq;
+    routeCbs.set(id, cb);
+    worker.postMessage({ type: "route", id, idx });
+  }
   function applyBuild(m) {
     if (m.id < appliedSeq || !map || !map.getSource("net")) return;
     appliedSeq = m.id;
     lastFeats = m.feats;
+    lastSelFeats = m.selFeats;
     lastBuildMs = m.ms || 0;
     map.getSource("net").setData({ type: "FeatureCollection", features: m.feats });
-    if (hoverKey) { hoverKey = ""; map.getSource("hover").setData({ type: "FeatureCollection", features: [] }); }
+    if (hoverKey) focusOff();
     map.getSource("sel").setData({ type: "FeatureCollection", features: m.selFeats });
     map.getSource("netlabels").setData({ type: "FeatureCollection", features: m.labels });
     map.getSource("sellabels").setData({ type: "FeatureCollection", features: m.selLabels });
+    refreshStations();
+    // the selected route's stops sit on its drawn line (which moves with the lanes as you zoom)
+    if (selected && selected.type === "route" && m.selIdx === LINEIDX[selected.id]) {
+      const r = RBY[selected.id];
+      setStops("sel", stopFeatures([r], true), m.selFeats, "route", selStopsFor !== r.id);
+      selStopsFor = r.id;
+    }
     if (!inFlight && !queued) idleWaiters.splice(0).forEach((f) => f());
   }
 
@@ -550,7 +568,7 @@
     return { local: f, peak: Math.max(0.5, Math.min(1, f + 0.15) * 0.8), shuttle: f, dart: f };
   }
   function tierFor(z) { const t = BUS_TIERS[settings.busDetail]; return z >= t[2] ? 2 : z >= t[1] ? 1 : 0; }
-  let curStep = null, lastBuild = 0, buildTimer = null, builtView = null, lastFeats = [];
+  let curStep = null, lastBuild = 0, buildTimer = null, builtView = null, lastFeats = [], lastSelFeats = [];
   // The area last drawn (meters): the view plus a wide margin, so panning stays smooth.
   function viewBox(margin) {
     const b = map.getBounds();
@@ -604,14 +622,15 @@
     const MAX = 6;
     let extra = 0;
     if (rs.length > MAX) { extra = rs.length - (MAX - 1); rs = rs.slice(0, MAX - 1); }
-    const groups = [];
+    const groups = [], all = list.split(".").map(Number);
     for (const r of rs) {
       const c = tagColor(r);
       let g = groups.find((x) => x.c === c);
-      if (!g) groups.push((g = { c, fg: tagText(r), items: [] }));
+      if (!g) groups.push((g = { c, fg: tagText(r), items: [], refs: [] }));
       g.items.push(shortLabel(r));
+      g.refs.push({ r: LINEIDX[r.id] });
     }
-    if (extra) groups[groups.length - 1].items.push(`+${extra}`);
+    if (extra) { groups[groups.length - 1].items.push(`+${extra}`); groups[groups.length - 1].refs.push({ more: all.slice(MAX - 1) }); }
     const dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
     const h = 15 * dpr, pad = 4.5 * dpr, sep = 7 * dpr, gap = 2 * dpr, halo = 1.5 * dpr, rad = 3.5 * dpr;
     const cv = document.createElement("canvas");
@@ -628,7 +647,16 @@
     ctx.font = font;
     ctx.textBaseline = "middle";
     let x = halo;
+    const layout = { w: cv.width / dpr, h: cv.height / dpr, items: [] };
     for (const g of groups) {
+      // hit areas for each number (CSS px from the tag's left edge)
+      let bx = x + (g.w - (g.ws.reduce((a, b) => a + b, 0) + sep * (g.items.length - 1))) / 2, from = x;
+      g.items.forEach((t, k) => {
+        const to = k === g.items.length - 1 ? x + g.w + gap / 2 : bx + g.ws[k] + sep / 2;
+        layout.items.push({ ...g.refs[k], x0: (k === 0 && x === halo ? 0 : from) / dpr, x1: to / dpr });
+        from = to;
+        bx += g.ws[k] + sep;
+      });
       ctx.fillStyle = dark ? "#1c1c1e" : "#ffffff";
       roundRect(ctx, x - halo, 0, g.w + halo * 2, H, rad + halo); ctx.fill();
       ctx.fillStyle = g.c;
@@ -646,6 +674,8 @@
       });
       x += g.w + gap;
     }
+    layout.items[layout.items.length - 1].x1 = layout.w;
+    BADGE_LAYOUT.set(id, layout);
     const data = ctx.getImageData(0, 0, cv.width, cv.height);
     if (!map.hasImage(id)) map.addImage(id, { width: cv.width, height: cv.height, data: data.data }, { pixelRatio: dpr });
   }
@@ -673,7 +703,8 @@
       if (!cats.has("link") && (cats.has("ferry") || cats.has("watertaxi"))) stroke = LINE[theme].ferry;
       if (!cats.has("link") && (cats.has("sounder") || cats.has("amtrak"))) stroke = LINE[theme].sounder;
       const size = cats.has("link") ? (rs.filter((r) => r.cat === "link").length > 1 ? 1.15 : 1) : major ? 0.95 : 0.7;
-      return { type: "Feature", properties: { id: s.id, name: s.name, major: major ? 1 : 0, size, stroke },
+      const snap = rs.length && rs.every((r) => r.cat === "streetcar") ? "streetcar" : "";
+      return { type: "Feature", properties: { id: s.id, name: s.name, major: major ? 1 : 0, size, stroke, snap },
         geometry: { type: "Point", coordinates: [s.lon, s.lat] } };
     }) };
   }
@@ -702,7 +733,7 @@
         for (const [k, v] of Object.entries(L.paint || {})) map.setPaintProperty(L.id, k, v);
       }
     }
-    map.getSource("stations").setData(stationsGeoJSON());
+    refreshStations();
     rebuild();
     applySelectionStyle();
     renderFilterBar();
@@ -1026,12 +1057,12 @@
     stopCache.set(r.id, list);
     return list;
   }
-  function stopFeatures(routes, withEnds, bounds) {
+  function stopFeatures(routes, withEnds) {
     const color = keyColor(VKEY(routes[0].cat)), seen = new Map();
     for (const r of routes) {
       for (const st of routeStops(r)) {
         const k = st.lon + "," + st.lat;
-        if (seen.has(k) || (bounds && !bounds.contains([st.lon, st.lat]))) continue;
+        if (seen.has(k)) continue;
         seen.set(k, { type: "Feature", properties: { id: st.id, name: st.name, c: color, end: withEnds ? st.end : 0 },
           geometry: { type: "Point", coordinates: [st.lon, st.lat] } });
       }
@@ -1039,26 +1070,95 @@
     return [...seen.values()];
   }
   const fc = (features) => ({ type: "FeatureCollection", features });
-  function showRouteStops(r) {
-    const src = map && map.getSource("selstops");
-    if (!src) return;
-    cancelAnimationFrame(anims.sel);
-    src.setData(fc(r ? stopFeatures([r], true) : []));
-    if (r) popIn("sel");
+  const toLonLat = (q) => [LON0 + q[0] / KX, LAT0 + q[1] / KY];
+  // The drawn lines (lon/lat) as segments in meters, in a grid for quick nearest-point lookups.
+  // Loose ends: line ends that no other piece continues from (where the drawing stops).
+  function segIndex(feats) {
+    const cell = 160, grid = new Map(), segs = [], endCount = new Map();
+    const ek = (c) => c[0].toFixed(6) + "," + c[1].toFixed(6);
+    for (const f of feats) {
+      const cs = f.geometry.coordinates;
+      for (const c of [cs[0], cs[cs.length - 1]]) endCount.set(ek(c), (endCount.get(ek(c)) || 0) + 1);
+      const P = cs.map(([x, y]) => toM(x, y));
+      for (let i = 0; i < P.length - 1; i++) {
+        const a = P[i], b = P[i + 1], n = segs.push([a, b]) - 1;
+        for (let gx = Math.floor(Math.min(a[0], b[0]) / cell); gx <= Math.floor(Math.max(a[0], b[0]) / cell); gx++)
+          for (let gy = Math.floor(Math.min(a[1], b[1]) / cell); gy <= Math.floor(Math.max(a[1], b[1]) / cell); gy++) {
+            const key = gx + "," + gy;
+            if (!grid.has(key)) grid.set(key, []);
+            grid.get(key).push(n);
+          }
+      }
+    }
+    const loose = [];
+    for (const f of feats) {
+      const cs = f.geometry.coordinates;
+      for (const c of [cs[0], cs[cs.length - 1]]) if (endCount.get(ek(c)) === 1) loose.push(toM(c[0], c[1]));
+    }
+    return { cell, grid, segs, loose };
   }
-  let hoverStopsKey = "";
-  function showHoverStops(routes) {
-    const src = map && map.getSource("hoverstops");
+  function nearestOn(ix, p, maxD) {
+    let best = null, bd = maxD;
+    const r = Math.ceil(maxD / ix.cell), gx = Math.floor(p[0] / ix.cell), gy = Math.floor(p[1] / ix.cell), seen = new Set();
+    for (let dx = -r; dx <= r; dx++) for (let dy = -r; dy <= r; dy++) {
+      for (const n of ix.grid.get((gx + dx) + "," + (gy + dy)) || []) {
+        if (seen.has(n)) continue;
+        seen.add(n);
+        const [a, b] = ix.segs[n], vx = b[0] - a[0], vy = b[1] - a[1], L2 = vx * vx + vy * vy || 1;
+        const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / L2));
+        const q = [a[0] + t * vx, a[1] + t * vy], d = Math.hypot(q[0] - p[0], q[1] - p[1]);
+        if (d < bd) { bd = d; best = q; }
+      }
+    }
+    return best ? { q: best, d: bd } : null;
+  }
+  // Put stops onto the line drawn for their route, and leave out stops the drawn line doesn't
+  // reach (beyond a loose end, or away from a highlighted stretch).
+  function snapStops(stopFeats, lineFeats, mode) {
+    if (!lineFeats || !lineFeats.length) return [];
+    const ix = segIndex(lineFeats), mpp = MPP0 / 2 ** map.getZoom();
+    const maxD = mode === "route" ? Math.max(45, 16 * mpp) : Math.max(30, 9 * mpp);
+    const endTol = Math.max(20, 6 * mpp);
+    const out = [];
+    for (const f of stopFeats) {
+      const p = toM(...f.geometry.coordinates);
+      const hit = nearestOn(ix, p, maxD);
+      if (!hit) continue;
+      // snapped onto a loose end from well beyond it: the drawing doesn't get to this stop
+      if (hit.d > endTol && ix.loose.some((e) => Math.hypot(e[0] - hit.q[0], e[1] - hit.q[1]) < 1)) continue;
+      out.push({ ...f, geometry: { type: "Point", coordinates: toLonLat(hit.q) } });
+    }
+    return out;
+  }
+  let selStopsFor = null, hovStopsKey = "";
+  function setStops(prefix, stopFeats, lineFeats, mode, animate) {
+    const src = map && map.getSource(prefix === "sel" ? "selstops" : "hoverstops");
     if (!src) return;
-    const key = routes ? routes.map((r) => r.id).join(",") : "";
-    if (key === hoverStopsKey) return;
-    hoverStopsKey = key;
-    if (!routes || !routes.length) { cancelAnimationFrame(anims.hov); src.setData(fc([])); return; }
-    const b = map.getBounds(), pad = 0.3;
-    const dx = (b.getEast() - b.getWest()) * pad, dy = (b.getNorth() - b.getSouth()) * pad;
-    const box = new maplibregl.LngLatBounds([b.getWest() - dx, b.getSouth() - dy], [b.getEast() + dx, b.getNorth() + dy]);
-    src.setData(fc(stopFeatures(routes, routes.length === 1, box)));
-    popIn("hov");
+    src.setData(fc(lineFeats ? snapStops(stopFeats, lineFeats, mode) : []));
+    if (animate) popIn(prefix);
+  }
+  function showRouteStops(r) {
+    cancelAnimationFrame(anims.sel);
+    selStopsFor = null; // the next build (with this route's line) pops its stops in
+    if (!r && map && map.getSource("selstops")) map.getSource("selstops").setData(fc([]));
+  }
+  // streetcar stations sit on the streetcar's drawn line (it runs in a lane beside the buses)
+  function refreshStations() {
+    const src = map && map.getSource("stations");
+    if (!src) return;
+    const data = stationsGeoJSON();
+    // a selected streetcar is drawn down the middle of its street: its stations go there
+    const selCar = selected && selected.type === "route" && RBY[selected.id] && RBY[selected.id].cat === "streetcar";
+    const lines = (selCar ? lastSelFeats : lastFeats).filter((f) => f.properties.cat === "streetcar");
+    if (lines.length) {
+      const ix = segIndex(lines), maxD = Math.max(45, 16 * MPP0 / 2 ** map.getZoom());
+      for (const f of data.features) {
+        if (f.properties.snap !== "streetcar") continue;
+        const hit = nearestOn(ix, toM(...f.geometry.coordinates), maxD);
+        if (hit) f.geometry = { type: "Point", coordinates: toLonLat(hit.q) };
+      }
+    }
+    src.setData(data);
   }
   // the stop under the pointer, drawn bigger on top
   let hlId = "";
@@ -1511,7 +1611,7 @@
     }
     setView(html);
     $("#back").addEventListener("click", clearSelection);
-    for (const b of body().querySelectorAll("[data-route]")) b.addEventListener("click", () => selectRoute(b.dataset.route));
+    for (const b of body().querySelectorAll("[data-route]")) { b.addEventListener("click", () => selectRoute(b.dataset.route)); previewOnHover(b); }
     openSheet("half");
   }
   function nearbyStops(s, meters) {
@@ -1596,7 +1696,7 @@
     vis("stops", ["stops", "stop-name"]);
     vis("live", ["veh-icon", "veh-label"]);
     if (enabled.has("live")) startLive(); else stopLive();
-    if (map.getSource("stations")) map.getSource("stations").setData(stationsGeoJSON());
+    if (map.getSource("stations")) refreshStations();
     renderFilterBar();
     rebuild();
   }
@@ -1620,17 +1720,46 @@
   }
   let popup = null;
   function closePopup() { if (popup) { popup.remove(); popup = null; } }
+  // pointing at a route in a list shows it on the map
+  function previewOnHover(b) {
+    b.addEventListener("mouseenter", () => { if (!(selected && selected.type === "route")) focusRoute(RBY[b.dataset.route]); });
+    b.addEventListener("mouseleave", () => setHover(null));
+  }
   function openPopup(lngLat, html, maxWidth = "300px") {
     closePopup();
     popup = new maplibregl.Popup({ maxWidth, className: "glass-pop" }).setLngLat(lngLat).setHTML(html).addTo(map);
-    popup.getElement().querySelectorAll("[data-route]").forEach((b) => b.addEventListener("click", () => { closePopup(); selectRoute(b.dataset.route, { fit: false }); }));
+    popup.getElement().querySelectorAll("[data-route]").forEach((b) => {
+      b.addEventListener("click", () => { closePopup(); selectRoute(b.dataset.route, { fit: false }); });
+      previewOnHover(b);
+    });
   }
   function setupInteraction() {
     const tip = $("#tip");
     const hitLayers = () => ["sel-stops", "hov-stops", "stations", "stops", "flex"].filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none");
     const vehAt = (pt, rad) => (map.getLayer("veh-icon") && map.getLayoutProperty("veh-icon", "visibility") !== "none"
       ? map.queryRenderedFeatures([[pt.x - rad, pt.y - rad], [pt.x + rad, pt.y + rad]], { layers: ["veh-icon"] }) : []);
+    let tipTimer = 0;
+    const hideTip = () => { clearTimeout(tipTimer); tipTimer = setTimeout(() => { tip.hidden = true; }, 120); };
+    const showTipAt = (ev) => { clearTimeout(tipTimer); placeTip(ev); };
     map.on("mousemove", (e) => {
+      // a number on a route tag
+      const tg = tagAt(e.point);
+      showLens(tg);
+      if (tg) {
+        map.getCanvas().style.cursor = "pointer";
+        highlightStop(null);
+        tip.classList.remove("tip-card");
+        if (tg.item.r != null) {
+          const r = LINES[tg.item.r];
+          if (!(selected && selected.type === "route")) focusRoute(r);
+          tip.innerHTML = `<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}</span>`;
+        } else {
+          setHover(null);
+          tip.innerHTML = `<span class="tip-badges">${tg.item.more.slice(0, 12).map((i) => badgeHTML(LINES[i])).join("")}</span>`;
+        }
+        showTipAt({ clientX: e.originalEvent.clientX, clientY: e.originalEvent.clientY + 14 });
+        return;
+      }
       const vh = vehAt(e.point, 6);
       if (vh.length) {
         const r = RBY[vh[0].properties.r];
@@ -1638,7 +1767,7 @@
         highlightStop(null);
         tip.classList.remove("tip-card");
         tip.innerHTML = `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><br>${vh[0].properties.est ? "Estimated from the timetable" : "Live position"}</span>`;
-        placeTip(e.originalEvent);
+        showTipAt(e.originalEvent);
         return;
       }
       const stopHit = map.queryRenderedFeatures([[e.point.x - 5, e.point.y - 5], [e.point.x + 5, e.point.y + 5]], { layers: hitLayers() });
@@ -1653,9 +1782,9 @@
         } else {
           highlightStop(stopHit[0]);
           tip.classList.add("tip-card");
-          tip.innerHTML = stopCard(p.id, lid === "sel-stops" ? p.end : 0);
+          tip.innerHTML = stopCard(p.id, lid === "sel-stops" || lid === "hov-stops" ? p.end : 0);
         }
-        placeTip(e.originalEvent);
+        showTipAt(e.originalEvent);
         return;
       }
       highlightStop(null);
@@ -1671,18 +1800,26 @@
         const r = rs[0];
         tip.innerHTML = rs.length === 1 ? `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}</span>`
           : `<span class="tip-badges">${rs.slice(0, 8).map((x) => badgeHTML(x)).join("")}</span>${rs.length > 8 ? `<span class="tt">+${rs.length - 8}</span>` : ""}`;
-        placeTip(e.originalEvent);
+        showTipAt(e.originalEvent);
       } else {
         map.getCanvas().style.cursor = "";
-        tip.hidden = true;
+        hideTip();
         setHover(null);
       }
     });
-    map.getCanvas().addEventListener("mouseleave", () => { tip.hidden = true; setHover(null); highlightStop(null); });
-    map.on("movestart", () => setHover(null));
+    map.getCanvas().addEventListener("mouseleave", () => { tip.hidden = true; setHover(null); highlightStop(null); showLens(null); });
+    map.on("movestart", () => { showLens(null); });
     map.on("click", (e) => {
       tip.hidden = true;
       closePopup();
+      // a number on a route tag opens that route; "+3" lists the rest
+      const tg = tagAt(e.point);
+      if (tg) {
+        showLens(null);
+        if (tg.item.r != null) selectRoute(LINES[tg.item.r].id, { fit: false });
+        else openPopup(tg.coords, `<div class="pop"><h3>${tg.item.more.length} more routes</h3>${routeRows(tg.item.more.map((i) => LINES[i]).sort(tagOrder))}</div>`);
+        return;
+      }
       // a tap right on a station's circle opens the station, even with a train or bus on top of it
       const onStation = map.getLayer("stations") && map.getLayoutProperty("stations", "visibility") !== "none"
         ? map.queryRenderedFeatures([[e.point.x - 4, e.point.y - 4], [e.point.x + 4, e.point.y + 4]], { layers: ["stations"] }) : [];
@@ -1737,55 +1874,95 @@
       else if (panelView === "layers") { panelView = "home"; showHome(); }
     });
   }
-  // Hover: a single route thickens along its whole path; a shared corridor line thickens
-  // along the stretch of street where it carries that same set of routes.
-  let hoverKey = "", spotTimer = 0;
-  function setHover(feat, routes) {
-    const key = feat ? `${feat.properties.cat}|${feat.properties.e}|${routes.length}` : "";
+  // Hover. A line carrying one route: that route's whole path, drawn bold on top, with its stops.
+  // A line carrying several: the stretch of street they share, bold, with the stops along it.
+  // Nothing else on the map changes. Stops pop in once per line, not on every mouse move.
+  let hoverKey = "", hoverTimer = 0, hoverStretch = null;
+  const withColor = (feats) => feats.map((f) => ({ ...f, properties: { ...f.properties, c: keyColor(f.properties.cat) } }));
+  function focusOff() {
+    clearTimeout(hoverTimer);
+    hoverKey = "";
+    hoverStretch = null;
+    hovStopsKey = "";
+    if (!map || !map.getSource("hover")) return;
+    map.getSource("hover").setData(fc([]));
+    map.getSource("hoverstops").setData(fc([]));
+  }
+  function focusRoute(r) {
+    if (!r || LINEIDX[r.id] == null) return;
+    clearTimeout(hoverTimer);
+    const key = "r:" + r.id;
     if (key === hoverKey) return;
     hoverKey = key;
-    const src = map.getSource("hover");
-    if (!src) return;
-    clearTimeout(spotTimer);
-    if (!feat) {
-      src.setData({ type: "FeatureCollection", features: [] });
-      // let go after a moment, so sliding from one line to the next doesn't flicker
-      spotTimer = setTimeout(() => { if (!hoverKey) { showHoverStops(null); if (!(selected && selected.type === "route")) setNetDim(1); } }, 160);
-      return;
-    }
-    spotTimer = setTimeout(() => { if (hoverKey === key && !(selected && selected.type === "route")) setNetDim(0.32); }, 90);
-    // stops of the line actually under the pointer (its service type on this street), not of
-    // every line nearby
-    const E = EDGES[feat.properties.e];
-    const own = routes.length === 1 ? routes : E && E.byKey.get(feat.properties.cat) ? E.byKey.get(feat.properties.cat).map((i) => LINES[i]).sort(tagOrder) : routes;
-    showHoverStops(own);
-    const cat = feat.properties.cat, e0 = feat.properties.e;
-    const edges = new Set();
-    if (routes.length === 1) {
-      const i = LINEIDX[routes[0].id];
-      for (const E of EDGES) if (E.l.includes(i)) edges.add(E.k);
-    } else {
-      const sig = (E) => (E.byKey.get(cat) || []).join(".");
-      const want = sig(EDGES[e0]);
-      const byNode = new Map();
-      for (const E of EDGES) if (sig(E) === want) for (const n of [E.a, E.b]) { if (!byNode.has(n)) byNode.set(n, []); byNode.get(n).push(E); }
-      const stack = [EDGES[e0]];
-      while (stack.length) {
-        const E = stack.pop();
-        if (edges.has(E.k)) continue;
-        edges.add(E.k);
-        for (const n of [E.a, E.b]) for (const E2 of byNode.get(n) || []) if (!edges.has(E2.k)) stack.push(E2);
-      }
-    }
-    const feats = lastFeats.filter((f) => f.properties.cat === cat && edges.has(f.properties.e));
-    map.setPaintProperty("hover-line", "line-width", px("wm", 1), { validate: false });
-    map.setPaintProperty("hover-case", "line-width", px("cm", 1), { validate: false });
-    src.setData({ type: "FeatureCollection", features: feats });
-    requestAnimationFrame(() => {
-      map.setPaintProperty("hover-line", "line-width", px("wm", 1.7));
-      map.setPaintProperty("hover-case", "line-width", px("cm", 1.55));
+    hoverStretch = null;
+    requestRoutePath(LINEIDX[r.id], (feats) => {
+      if (hoverKey !== key) return;
+      const lines = withColor(feats);
+      map.getSource("hover").setData(fc(lines));
+      setStops("hov", stopFeatures([r], true), lines, "route", hovStopsKey !== key);
+      hovStopsKey = key;
     });
   }
+  function setHover(feat, routes) {
+    if (!feat) { clearTimeout(hoverTimer); hoverTimer = setTimeout(focusOff, 170); return; }
+    clearTimeout(hoverTimer);
+    const cat = feat.properties.cat, e0 = feat.properties.e, E0 = EDGES[e0];
+    const own = E0 && E0.byKey.get(cat) ? E0.byKey.get(cat).map((i) => LINES[i]).sort(tagOrder) : routes;
+    if (own.length === 1) { focusRoute(own[0]); return; }
+    const want = (E0.byKey.get(cat) || []).join(".");
+    if (hoverStretch && hoverStretch.cat === cat && hoverStretch.want === want && hoverStretch.edges.has(e0)) return;
+    // the connected stretch carrying exactly these routes
+    const sig = (E) => (E.byKey.get(cat) || []).join("."), edges = new Set(), byNode = new Map();
+    for (const E of EDGES) if (sig(E) === want) for (const n of [E.a, E.b]) { if (!byNode.has(n)) byNode.set(n, []); byNode.get(n).push(E); }
+    const stack = [E0];
+    while (stack.length) {
+      const E = stack.pop();
+      if (edges.has(E.k)) continue;
+      edges.add(E.k);
+      for (const n of [E.a, E.b]) for (const E2 of byNode.get(n) || []) if (!edges.has(E2.k)) stack.push(E2);
+    }
+    const key = "s:" + cat + "|" + want + "|" + Math.min(...edges);
+    hoverKey = key;
+    hoverStretch = { cat, want, edges };
+    const lines = lastFeats.filter((f) => f.properties.cat === cat && edges.has(f.properties.e));
+    map.getSource("hover").setData(fc(lines));
+    setStops("hov", stopFeatures(own, false), lines, "stretch", hovStopsKey !== key);
+    hovStopsKey = key;
+  }
+
+  // ---------------------------------------------------------------- route tags you can point at
+  // Each number on a tag is its own target: hovering it lifts that number (the lens) and shows
+  // that route's whole line and stops; clicking it opens the route.
+  const BADGE_LAYOUT = new Map();
+  function tagAt(pt) {
+    if (!map.getLayer("badges") || map.getLayoutProperty("badges", "visibility") === "none") return null;
+    const hits = map.queryRenderedFeatures([[pt.x - 1, pt.y - 1], [pt.x + 1, pt.y + 1]], { layers: ["badges"] });
+    for (const f of hits) {
+      const L = BADGE_LAYOUT.get("b:" + f.properties.k);
+      if (!L) continue;
+      const c = map.project(f.geometry.coordinates), left = c.x - L.w / 2, top = c.y - L.h / 2, dx = pt.x - left;
+      if (dx < 0 || dx > L.w || pt.y < top || pt.y > top + L.h) continue;
+      const item = L.items.find((it) => dx >= it.x0 && dx < it.x1) || L.items[L.items.length - 1];
+      return { item, left, top, L, coords: f.geometry.coordinates };
+    }
+    return null;
+  }
+  let lensKey = "";
+  function showLens(hit) {
+    const lens = $("#lens");
+    if (!hit) { if (lensKey) { lens.hidden = true; lensKey = ""; } return; }
+    const key = hit.left.toFixed(0) + "," + hit.top.toFixed(0) + "," + hit.item.x0;
+    const rect = map.getCanvas().getBoundingClientRect();
+    lens.style.left = rect.left + hit.left + (hit.item.x0 + hit.item.x1) / 2 + "px";
+    lens.style.top = rect.top + hit.top + hit.L.h / 2 + "px";
+    if (key === lensKey) return;
+    lensKey = key;
+    const it = hit.item;
+    lens.innerHTML = it.r != null ? `<span class="lens-in">${badgeHTML(LINES[it.r])}</span>`
+      : `<span class="lens-in"><span class="badge lens-more">+${it.more.length}</span></span>`;
+    lens.hidden = false;
+  }
+
   function placeTip(ev) {
     const tip = $("#tip");
     tip.hidden = false;
@@ -1910,7 +2087,7 @@
       else if (e.id.startsWith("arr:")) drawArrow(e.id);
     });
     map.on("load", () => {
-      map.getSource("stations").setData(stationsGeoJSON());
+      refreshStations();
       map.getSource("stops").setData(stopsGeoJSON());
       applyLayerToggles();
       applyTheme();

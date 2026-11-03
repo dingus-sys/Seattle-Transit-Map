@@ -10,8 +10,9 @@ paratransit area, plus live vehicle positions.
 
 Lines follow the real streets. Where several routes share a street, they're drawn
 side by side as ribbons in a consistent order, so you can tell them apart in busy
-places like the U District or downtown. Hover a line and it comes forward: the rest of the
-map fades back, its stops appear, and arrows show where it runs one way only. Hover any stop
+places like the U District or downtown. Hover a line and it turns bold, with its stops and
+arrows where it runs one way only. Point at a single number on a route tag (the "62" in
+"45 | 62 | 75") to see just that route; click it to open it. Hover any stop
 for a card with its routes and next departures (from the timetable). Click a line for its
 frequency, hours, schedule at a glance and stop list; click a stop to see every route that
 serves it.

@@ -145,16 +145,57 @@ const KCTMGeom = (() => {
   // One continuous path along `steps`, sitting in lane `key` of each segment. Corners are
   // rounded to suit the bundle width; lane changes are eased steps that may overlap, so a
   // line crossing a busy street glides across instead of jogging. Calls emit(stepIndex, coords).
-  function drawPath(key, steps, lay, S, emit, water = false) {
-    const pts = [], seg = [], joints = [];
+  // Simplify a run's centerline across its junctions (schematic: small jogs and hooks go),
+  // keeping every junction as a vertex but moved onto the simplified line, so lane changes
+  // still happen at the right place.
+  function simplifyRun(pts, joints, tol) {
+    if (pts.length < 3 || tol <= 0) return [pts, joints];
+    const keep = new Uint8Array(pts.length);
+    keep[0] = keep[pts.length - 1] = 1;
+    const stack = [[0, pts.length - 1]], t2 = tol * tol;
+    while (stack.length) {
+      const [i, j] = stack.pop();
+      const [x1, y1] = pts[i], [x2, y2] = pts[j];
+      const dx = x2 - x1, dy = y2 - y1, L2 = dx * dx + dy * dy;
+      let maxd = -1, idx = -1;
+      for (let m = i + 1; m < j; m++) {
+        const [x, y] = pts[m];
+        let t = L2 ? ((x - x1) * dx + (y - y1) * dy) / L2 : 0;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        const d = (x1 + t * dx - x) ** 2 + (y1 + t * dy - y) ** 2;
+        if (d > maxd) { maxd = d; idx = m; }
+      }
+      if (maxd > t2) { keep[idx] = 1; stack.push([i, idx], [idx, j]); }
+    }
+    const jset = new Set(joints), out = [], newJ = [];
+    let prevKept = 0;
+    const nextKept = (i) => { let j = i + 1; while (!keep[j]) j++; return j; };
+    for (let i = 0; i < pts.length; i++) {
+      if (keep[i]) { out.push(pts[i]); prevKept = i; if (jset.has(i)) newJ.push(out.length - 1); continue; }
+      if (!jset.has(i)) continue;
+      // a junction dropped by the simplification: put it back, on the simplified line
+      const a = pts[prevKept], b = pts[nextKept(i)], q = pts[i];
+      const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1;
+      const t = Math.max(0, Math.min(1, ((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / L2));
+      out.push([a[0] + t * dx, a[1] + t * dy]);
+      newJ.push(out.length - 1);
+    }
+    return [out, newJ];
+  }
+
+  function drawPath(key, steps, lay, S, emit, water = false, schematic = 0, center = false) {
+    let pts = [], seg = [], joints = [];
     for (let k = 0; k < steps.length; k++) {
       const { E, fwd } = steps[k], Lo = lay[E.k];
       let g = fwd ? Lo.simp : Lo.simp.slice().reverse();
       if (k > 0) { joints.push(pts.length - 1); g = g.slice(1); }
       for (const q of g) pts.push(q);
-      seg.push({ o: (fwd ? 1 : -1) * (Lo.pos.get(key) + Lo.shift) * S, hw: (Lo.T / 2 + Math.abs(Lo.shift)) * S });
+      // center: a highlighted route runs down the middle of its street (no lanes, so no lane
+      // changes to jog through)
+      seg.push({ o: center ? 0 : (fwd ? 1 : -1) * (Lo.pos.get(key) + Lo.shift) * S, hw: (Lo.T / 2 + Math.abs(Lo.shift)) * S });
     }
     if (pts.length < 2) return;
+    if (schematic > 0) [pts, joints] = simplifyRun(pts, joints, schematic);
 
     const line = [pts[0]], jointAt = [];
     let jk = 0;
@@ -196,6 +237,7 @@ const KCTMGeom = (() => {
     ds.sort((a, b) => a - b);
     const dd = [];
     for (const d of ds) if (d >= 0 && d <= total && (!dd.length || d - dd[dd.length - 1] > 0.02)) dd.push(d);
+    if (dd.length < 2 || total < 0.5) return; // nothing left to draw (a tiny loop, simplified away)
     const P = sampleAt(line, c, dd);
     const mt = miters(P);
     const Q = dd.map((d, j) => {
@@ -269,6 +311,41 @@ const KCTMGeom = (() => {
     const byLine = LINES.map(() => []);
     for (const E of EDGES) for (const i of E.l) byLine[i].push(E);
     const ROUTE_CHAINS = byLine.map((edges) => chainsFor(edges));
+    const runsIn = (lay, steps, key) => {
+      const out = [];
+      let cur = [];
+      for (const st of steps) {
+        const Lo = lay[st.E.k];
+        if (Lo && Lo.pos.has(key)) cur.push(st);
+        else if (cur.length) { out.push(cur); cur = []; }
+      }
+      if (cur.length) out.push(cur);
+      return out;
+    };
+    // physical lane point of corridor `v` on edge F at its end node n (meters)
+    const lanePoint = (lay, F, n, v, S, ahead = 0) => {
+      const Lo = lay[F.k], q = atAOrder(Lo.simp, F.a === n);
+      // walk `ahead` meters into F from node n
+      let i = 0, left = ahead, p = q[0];
+      while (i < q.length - 1) {
+        const d = Math.hypot(q[i + 1][0] - q[i][0], q[i + 1][1] - q[i][1]);
+        if (d >= left) { const t = d ? left / d : 0; p = [q[i][0] + t * (q[i + 1][0] - q[i][0]), q[i][1] + t * (q[i + 1][1] - q[i][1])]; break; }
+        left -= d; i++; p = q[i];
+      }
+      const a = q[Math.min(i, q.length - 2)], b = q[Math.min(i, q.length - 2) + 1];
+      let dx = b[0] - a[0], dy = b[1] - a[1];
+      if (F.a !== n) { dx = -dx; dy = -dy; } // the normal is taken in F's own a->b direction
+      const L = Math.hypot(dx, dy) || 1, off = (Lo.pos.get(v) + Lo.shift) * S;
+      return [p[0] + (dy / L) * off, p[1] + (-dx / L) * off];
+    };
+    const atAOrder = (q, atA) => (atA ? q : q.slice().reverse());
+    const away = (lay, F, n) => { // unit direction leaving node n along F
+      const q = lay[F.k].simp, atA = F.a === n;
+      const p0 = atA ? q[0] : q[q.length - 1], p1 = atA ? q[Math.min(2, q.length - 1)] : q[Math.max(0, q.length - 3)];
+      const dx = p1[0] - p0[0], dy = p1[1] - p0[1], L = Math.hypot(dx, dy) || 1;
+      return [dx / L, dy / L];
+    };
+    let last = null; // the last view's layout, for routePath
     const tagOrder = (a, b) => (CAT[VKEY(LINES[a].cat)].prio - CAT[VKEY(LINES[b].cat)].prio) || (LINES[a].rank - LINES[b].rank);
     const HMODE = { glass: 1, solid: 2, dots: 3, ties: 4 };
     // one-way arrows: +1 points along the drawn line, -1 against it, 0 none (two-way)
@@ -281,6 +358,8 @@ const KCTMGeom = (() => {
       const S = u * MPP0 / 2 ** z; // meters per unit at this zoom
       // line width per service type; all-day and rush-hour buses are drawn slimmer when zoomed out
       const W = (v) => CAT[v].w * ((p.wscale && p.wscale[v]) || 1);
+      // highlighted routes are drawn schematically: jogs under ~5 px (and 12 m) are straightened out
+      const schem = Math.max(12, 5 * MPP0 / 2 ** z);
       const selKey = selIdx >= 0 ? VKEY(LINES[selIdx].cat) : null;
       const color = (key) => p.colors[key] || p.colors.local;
 
@@ -299,23 +378,13 @@ const KCTMGeom = (() => {
         // boats: no side-by-side lanes; ferry routes only meet at the docks, where shifting
         // lanes would put little kinks into otherwise straight crossings
         for (const v of keys) { pos.set(v, E.layer === "w" ? 0 : (x + W(v) / 2) * s); x += W(v) + GAP; }
-        const tol = Math.min(0.25 * S + 0.1 * T * s * S, 9);
+        const tol = Math.min(0.25 * S + 0.1 * T * s * S, Math.max(9, 1.6 * MPP0 / 2 ** z));
         const ck = `${z}|${tol.toFixed(1)}`;
         let simp = E.simp.get(ck);
         if (!simp) { simp = simplify(E.pts, tol); E.simp.set(ck, simp); }
         lay[E.k] = { keys, s, T: T * s, pos, shift: 0, simp };
       }
-      const runs = (steps, key) => {
-        const out = [];
-        let cur = [];
-        for (const st of steps) {
-          const Lo = lay[st.E.k];
-          if (Lo && Lo.pos.has(key)) cur.push(st);
-          else if (cur.length) { out.push(cur); cur = []; }
-        }
-        if (cur.length) out.push(cur);
-        return out;
-      };
+      const runs = (steps, key) => runsIn(lay, steps, key);
 
       // 2. slide whole bundles sideways so corridors keep their lane through junctions
       const cons = [], byEdge = new Map();
@@ -355,15 +424,49 @@ const KCTMGeom = (() => {
         return { r: -1, cat: key, e, wm: w * s * S, cm: (w + GAP * 1.4) * s * S, hm: w * hr * s * S,
           g: c.group, c: color(key), s: 20 - c.prio, d: c.dash ? 1 : 0, h: HMODE[c.inner] || 0 };
       };
+      // where a corridor ends at a junction that its service type carries on from (three
+      // lines of one color meeting, only two of which can continue each other), the end is
+      // joined into the lane it meets instead of stopping short beside it
+      const nodeEdges = new Map();
+      for (const E of EDGES) {
+        const Lo = lay[E.k];
+        if (!Lo) continue;
+        for (const v of Lo.keys) for (const n of [E.a, E.b]) {
+          const key = v + "|" + n;
+          if (!nodeEdges.has(key)) nodeEdges.set(key, []);
+          nodeEdges.get(key).push(E);
+        }
+      }
+      const joinPoint = (v, E, n) => {
+        if (CAT[v].group === "water") return null;
+        const others = (nodeEdges.get(v + "|" + n) || []).filter((F) => F !== E && F.a !== F.b);
+        if (!others.length) return null;
+        const d0 = away(lay, E, n);
+        let best = null, bd = 0.7; // no joining back on itself (hairpin)
+        for (const F of others) {
+          const d1 = away(lay, F, n), dot = d0[0] * d1[0] + d0[1] * d1[1];
+          if (dot < bd) { bd = dot; best = F; }
+        }
+        if (!best) return null;
+        const Lo = lay[best.k], ahead = Math.min(0.35 * best.len, Math.max(12, 1.2 * Lo.T * S));
+        return lanePoint(lay, best, n, v, S, ahead);
+      };
       for (const [v, chains] of KEY_CHAINS) {
         for (const ch of chains) {
           for (const run of runs(ch, v)) {
-            drawPath(v, run, lay, S, (k, coords) => {
-              if (coords.length < 2) return;
+            const pieces = [];
+            drawPath(v, run, lay, S, (k, coords) => { if (coords.length >= 2) pieces.push([k, coords]); }, CAT[v].group === "water");
+            if (!pieces.length) continue;
+            const first = run[0], lastSt = run[run.length - 1];
+            const n0 = first.fwd ? first.E.a : first.E.b, n1 = lastSt.fwd ? lastSt.E.b : lastSt.E.a;
+            if (pieces[0][0] === 0) { const j = joinPoint(v, first.E, n0); if (j) pieces[0][1].unshift(j); }
+            const lp = pieces[pieces.length - 1];
+            if (lp[0] === run.length - 1) { const j = joinPoint(v, lastSt.E, n1); if (j) lp[1].push(j); }
+            for (const [k, coords] of pieces) {
               const pr = props(v, lay[run[k].E.k], run[k].E.k);
               pr.ar = CAT[v].group === "water" ? 0 : arrow(run[k].E.kdir.get(v), run[k].fwd);
               feats.push({ type: "Feature", properties: pr, geometry: { type: "LineString", coordinates: coords.map(toLL) } });
-            }, CAT[v].group === "water");
+            }
           }
         }
       }
@@ -376,10 +479,11 @@ const KCTMGeom = (() => {
               selFeats.push({ type: "Feature", properties: { r: selIdx, cat: selKey, e: run[k].E.k, c: col, d: c.dash ? 1 : 0, ar: c.group === "water" ? 0 : arrow(run[k].E.dirOf(selIdx), run[k].fwd),
                 wm: (c.w + 0.9) * S, cm: (c.w + 2.6) * S, gm: (c.w + 7) * S, hm: (c.w + 0.9) * 0.3 * S },
               geometry: { type: "LineString", coordinates: coords.map(toLL) } });
-            });
+            }, c.group === "water", schem, true);
           }
         }
       }
+      last = { lay, S, z, schem };
 
       // 4. route-number tags. Connected blocks carrying the same routes form one stretch; a
       //    stretch gets one tag (on its longest block), plus repeats along long blocks, and the
@@ -453,9 +557,25 @@ const KCTMGeom = (() => {
           }
         }
       }
-      return { feats, selFeats, labels, selLabels };
+      return { feats, selFeats, labels, selLabels, selIdx };
     }
-    return { build };
+    function routePath(idx) {
+      if (!last || !LINES[idx]) return [];
+      const { lay, S, schem } = last, v = VKEY(LINES[idx].cat), c = CAT[v], out = [];
+      for (const ch of ROUTE_CHAINS[idx]) {
+        for (const run of runsIn(lay, ch, v)) {
+          drawPath(v, run, lay, S, (k, coords) => {
+            if (coords.length < 2) return;
+            const w = c.w;
+            out.push({ type: "Feature", properties: { r: idx, cat: v, e: run[k].E.k, d: c.dash ? 1 : 0,
+              ar: c.group === "water" ? 0 : arrow(run[k].E.dirOf(idx), run[k].fwd), wm: w * S, cm: (w + GAP * 1.4) * S },
+            geometry: { type: "LineString", coordinates: coords.map(toLL) } });
+          }, c.group === "water", schem, true);
+        }
+      }
+      return out;
+    }
+    return { build, routePath };
   }
 
   return { LAT0, LON0, KX, KY, MPP0, toM, toLL, VKEY, cumLen, prepEdges, createEngine };
@@ -469,6 +589,8 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
     if (m.type === "init") {
       engine = KCTMGeom.createEngine(m.init);
       self.postMessage({ type: "ready" });
+    } else if (m.type === "route" && engine) {
+      self.postMessage({ type: "route", id: m.id, idx: m.idx, feats: engine.routePath(m.idx) });
     } else if (m.type === "build" && engine) {
       const t = Date.now();
       const out = engine.build(m.p);
