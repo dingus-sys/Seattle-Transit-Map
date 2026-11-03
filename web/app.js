@@ -95,7 +95,22 @@
     ] },
   ];
   const LAYERS = LAYER_GROUPS.flatMap((g) => g.items);
-  const TIER_ZOOM = [0, 10.2, 12.0];
+  // Display settings (bottom of the Layers page), remembered per viewer.
+  //   busDetail  when bus lines appear as you zoom out: frequent buses from the 2nd zoom, all-day from the 3rd
+  //   tags       how many route-number tags: gap between repeats, spacing along long streets, and the zoom
+  //              where bus tags start
+  //   thickness  line width multiplier
+  const SETTINGS_DEFAULT = { busDetail: "normal", tags: "normal", thickness: "normal" };
+  const BUS_TIERS = { less: [0, 10.2, 12.0], normal: [0, 0, 9.5], more: [0, 0, 0] };
+  const TAG_DENSITY = { fewer: { gap: 420, every: 900, busZ: 12 }, normal: { gap: 260, every: 560, busZ: 10.6 }, more: { gap: 170, every: 360, busZ: 9.6 } };
+  const THICK = { thin: 0.8, normal: 1, bold: 1.25 };
+  const settings = { ...SETTINGS_DEFAULT };
+  {
+    const saved = store.get("settings", {}) || {};
+    if (BUS_TIERS[saved.busDetail]) settings.busDetail = saved.busDetail;
+    if (TAG_DENSITY[saved.tags]) settings.tags = saved.tags;
+    if (THICK[saved.thickness]) settings.thickness = saved.thickness;
+  }
   const GAP = 0.5; // space between corridor lines, in units
 
   // Line unit (px) by zoom, and the widest a set of side-by-side corridors may get (px).
@@ -385,7 +400,7 @@
       { id: "veh-icon", type: "symbol", source: "vehicles",
         layout: { "icon-image": ["concat", "veh:", ["get", "c"], ":", ["case", [">=", ["get", "b"], 0], "a", "o"]],
           "icon-rotate": ["max", ["get", "b"], 0], "icon-rotation-alignment": "map", "icon-allow-overlap": true, "icon-ignore-placement": true,
-          "icon-size": ["interpolate", ["linear"], ["zoom"], 9, 0.55, 12, 0.75, 15, 1, 18, 1.2], "symbol-sort-key": ["get", "s"] } },
+          "icon-size": ["interpolate", ["linear"], ["zoom"], 9, 0.4, 11, 0.52, 13, 0.78, 15, 1, 18, 1.2], "symbol-sort-key": ["get", "s"] } },
       { id: "veh-label", type: "symbol", source: "vehicles", minzoom: 13,
         layout: { "text-field": ["get", "lab"], "text-font": F_BOLD, "text-size": 11.5, "text-anchor": "left", "text-offset": [1.05, 0],
           "text-optional": true, "text-padding": 1 },
@@ -422,7 +437,7 @@
         layout: { "text-field": ["concat", "Metro Flex\n", ["get", "name"]], "text-font": F_BOLD,
           "text-size": ["interpolate", ["linear"], ["zoom"], 10, 10.5, 14, 12.5], "text-max-width": 10, "text-padding": 4 },
         paint: { "text-color": theme === "dark" ? "#e3b4ff" : "#6a2593", "text-halo-color": P.halo, "text-halo-width": 1.8 } },
-      { id: "badges", type: "symbol", source: "netlabels", minzoom: 10.4,
+      { id: "badges", type: "symbol", source: "netlabels", minzoom: 9,
         layout: { "icon-image": ["concat", "b:", ["get", "k"]], "icon-padding": 4, "symbol-sort-key": ["get", "p"] } },
       { id: "sel-badges", type: "symbol", source: "sellabels",
         layout: { "icon-image": ["concat", "b:", ["get", "k"]], "icon-padding": 2 } },
@@ -674,7 +689,7 @@
   }
 
   const zStep = (z) => Math.max(9, Math.min(19, Math.round(z * 4) / 4));
-  function tierFor(z) { return z >= TIER_ZOOM[2] ? 2 : z >= TIER_ZOOM[1] ? 1 : 0; }
+  function tierFor(z) { const t = BUS_TIERS[settings.busDetail]; return z >= t[2] ? 2 : z >= t[1] ? 1 : 0; }
   let curStep = null, lastBuild = 0, buildTimer = null, builtView = null, lastFeats = [];
   // The area last drawn (meters): the view plus a wide margin, so panning stays smooth.
   function viewBox(margin) {
@@ -694,7 +709,7 @@
     const zNow = map.getZoom();
     const z = curStep = zStep(zNow);
     lastBuild = performance.now();
-    const u = interp(UNIT, z), capU = interp(CAP_PX, z) / u;
+    const u = interp(UNIT, z) * THICK[settings.thickness], capU = interp(CAP_PX, z) / u;
     const S = u * MPP0 / 2 ** z; // meters per unit at this zoom
     const tier = tierFor(zNow);
     const selIdx = selected && selected.type === "route" ? LINEIDX[selected.id] : -1;
@@ -796,7 +811,8 @@
 
     // 4. route-number tags. Connected blocks carrying the same routes form one stretch; a
     //    stretch gets one stack of tags (on its longest block), plus repeats on very long blocks.
-    const labelKey = (v) => tier >= 2 || CAT[v].group !== "bus" || (v === "frequent" && zNow >= 11.4);
+    const TD = TAG_DENSITY[settings.tags];
+    const labelKey = (v) => CAT[v].group !== "bus" || zNow >= TD.busZ;
     const labels = [], selLabels = [];
     const tagKey = new Map();
     for (const E of EDGES) {
@@ -822,7 +838,7 @@
     for (const e of tagKey.keys()) { const root = find(e); if (!best.has(root) || EDGES[e].len > EDGES[best.get(root)].len) best.set(root, e); }
     // Tags are points: one at the middle of each stretch, more along long ones (about every
     // 650 px), and never the same set of numbers within ~300 px of itself.
-    const mpp = MPP0 / 2 ** z, minGap = 300 * mpp, every = 650 * mpp;
+    const mpp = MPP0 / 2 ** z, minGap = TD.gap * mpp, every = TD.every * mpp;
     const placed = new Map();
     const cands = [...tagKey].filter(([e]) => best.get(find(e)) === e || EDGES[e].len >= 700)
       .sort((x, y) => EDGES[y[0]].len - EDGES[x[0]].len);
@@ -978,6 +994,7 @@
     map.getSource("stations").setData(stationsGeoJSON());
     rebuild();
     applySelectionStyle();
+    renderFilterBar();
     if (!selected) showHome(true);
   }
 
@@ -1285,8 +1302,105 @@
     b.scrollTop = 0;
   }
   const feedText = () => Object.keys(META.feeds).join(", ");
+  // Filter bar (under search, on every panel page): one chip per kind of service. A chip turns
+  // its whole group off, and back on to how it was (or to the defaults).
+  const FILTERS = [
+    { key: "Trains", label: "Trains", color: () => LINE[theme].link },
+    { key: "Buses", label: "Buses", color: () => LINE[theme].frequent },
+    { key: "On the water", label: "Ferries", color: () => LINE[theme].ferry },
+    { key: "On demand", label: "On demand", color: () => FLEX[theme] },
+  ];
+  const filterMemory = {};
+  function renderFilterBar() {
+    const bar = $("#filterBar");
+    if (!bar) return;
+    bar.innerHTML = FILTERS.map((f) => {
+      const grp = LAYER_GROUPS.find((g) => g.title === f.key);
+      const on = grp.items.some((l) => enabled.has(l.key));
+      return `<button type="button" class="fchip${on ? " on" : ""}" data-f="${esc(f.key)}" aria-pressed="${on}"><span class="dot" style="background:${f.color()}"></span>${esc(f.label)}</button>`;
+    }).join("");
+    for (const b of bar.querySelectorAll(".fchip")) b.addEventListener("click", () => {
+      const grp = LAYER_GROUPS.find((g) => g.title === b.dataset.f);
+      const onNow = grp.items.filter((l) => enabled.has(l.key)).map((l) => l.key);
+      if (onNow.length) {
+        filterMemory[grp.title] = onNow;
+        onNow.forEach((k) => enabled.delete(k));
+      } else {
+        const back = filterMemory[grp.title] || grp.items.filter((l) => l.on).map((l) => l.key);
+        (back.length ? back : grp.items.map((l) => l.key)).forEach((k) => enabled.add(k));
+      }
+      store.set("layers2", [...enabled]);
+      applyLayerToggles();
+      if (!selected) showHome(true);
+    });
+  }
+
+  // Home is deliberately small: what's moving, what the lines mean, and one way in to the
+  // full set of switches ("Layers"). Everything advanced lives on the Layers page.
+  let panelView = "home";
+  const KEY_NAME = {
+    link: "Link light rail", rail: "Sounder & Amtrak", streetcar: "Streetcar", monorail: "Monorail",
+    rapid: "RapidRide & Swift", frequent: "Frequent bus", local: "All-day bus", peak: "Rush-hour bus",
+    water: "Ferries & Water Taxi", dart: "Dial-a-Ride area", flex: "Metro Flex zone", access: "Access area",
+  };
+  const isDefaultLayers = () => LAYERS.every((l) => enabled.has(l.key) === l.on)
+    && Object.keys(SETTINGS_DEFAULT).every((k) => settings[k] === SETTINGS_DEFAULT[k]);
+  const SETTING_ROWS = [
+    { key: "busDetail", name: "Bus lines when zoomed out", opts: [["less", "Fewer"], ["normal", "Normal"], ["more", "All"]] },
+    { key: "tags", name: "Route numbers", opts: [["fewer", "Fewer"], ["normal", "Normal"], ["more", "More"]] },
+    { key: "thickness", name: "Line thickness", opts: [["thin", "Thin"], ["normal", "Normal"], ["bold", "Bold"]] },
+    { key: "theme", name: "Appearance", opts: [["", "Auto"], ["light", "Light"], ["dark", "Dark"]] },
+  ];
+  const settingValue = (key) => (key === "theme" ? document.documentElement.getAttribute("data-theme") || "" : settings[key]);
+  function placeThumb(seg, i, animate) {
+    const thumb = seg.querySelector(".seg-thumb");
+    const n = seg.querySelectorAll("button").length;
+    thumb.style.width = `calc(${100 / n}% - 4px)`;
+    if (animate && thumb.style.transform !== `translateX(${i * 100}%)`) {
+      thumb.classList.remove("moving"); void thumb.offsetWidth; thumb.classList.add("moving");
+    }
+    thumb.style.transform = `translateX(${i * 100}%)`;
+  }
   function showHome(quiet) {
-    const parts = [];
+    if (panelView === "layers") return showLayers(quiet);
+    const shown = LAYERS.filter((l) => enabled.has(l.key)).length;
+    const keys = LAYERS.filter((l) => KEY_NAME[l.key] && enabled.has(l.key));
+    const live = enabled.has("live");
+    const html = `<div class="home-view">
+      <p class="live-line${live ? "" : " off"}"><span class="pulse" aria-hidden="true"></span><span${live ? ' id="liveDesc"' : ""}>${live ? esc(liveStatusText()) : "Vehicles are hidden"}</span></p>
+      <ul class="group" role="list"><li><button class="row nav-row" id="openLayers" type="button">
+        <span class="icon"><svg viewBox="0 0 30 30" aria-hidden="true"><path d="M15 7 25 12 15 17 5 12Z" fill="var(--accent)" opacity=".9"/><path d="M6.5 16.3 15 20.5l8.5-4.2" stroke="var(--accent)" stroke-width="1.8" fill="none" stroke-linejoin="round" stroke-linecap="round" opacity=".55"/></svg></span>
+        <span class="txt"><span class="name">Layers</span><span class="desc">${shown} of ${LAYERS.length} shown${isDefaultLayers() ? "" : " · customized"}</span></span>
+        <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="m1.5 1.5 5 5.5-5 5.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button></li></ul>
+      ${keys.length ? `<h2 class="section">On the map</h2><ul class="key-grid" role="list">${keys.map((l) =>
+        `<li><span class="sw">${swatch(l)}</span><span>${esc(KEY_NAME[l.key])}</span></li>`).join("")}</ul>`
+        : `<p class="hint">Every layer is off. Turn some on in Layers.</p>`}
+      <p class="hint">Tap a line to see its routes, or a stop to see what serves it.</p>
+    </div>`;
+    const existing = body().querySelector(".home-view");
+    if (quiet && existing) existing.outerHTML = html;
+    else setView(html);
+    $("#openLayers").addEventListener("click", () => { panelView = "layers"; showLayers(); openSheet("half"); });
+  }
+  const layersHead = () => `<h2 class="view-title">Layers</h2>${isDefaultLayers() ? "" : `<button class="text-btn" id="resetLayers" type="button">Reset</button>`}`;
+  function bindReset() {
+    const b = $("#resetLayers");
+    if (!b) return;
+    b.addEventListener("click", () => {
+      enabled.clear();
+      for (const l of LAYERS) if (l.on) enabled.add(l.key);
+      Object.assign(settings, SETTINGS_DEFAULT);
+      store.set("layers2", [...enabled]);
+      store.set("settings", settings);
+      applyLayerToggles();
+      renderLive();
+      showLayers(true);
+    });
+  }
+  function showLayers(quiet) {
+    const parts = [`<button class="back press" id="back" type="button"><svg width="12" height="20" viewBox="0 0 12 20" aria-hidden="true"><path d="M10 2 2 10l8 8" stroke="currentColor" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>Map</button>
+      <div class="view-head">${layersHead()}</div>`];
     for (const grp of LAYER_GROUPS) {
       parts.push(`<h2 class="section">${esc(grp.title)}</h2><ul class="group" role="list">`);
       for (const l of grp.items) {
@@ -1300,11 +1414,39 @@
       }
       parts.push(`</ul>`);
     }
-    parts.push(`<p class="hint">Streets are drawn as service lines: one green line for all the frequent buses on a street, one blue line for the all-day buses, and so on, with the route numbers on tags. Tap a line to see its routes, or a stop to see what serves it.</p>
-      <p class="credits">Routes and schedules from the agencies' open GTFS feeds (${esc(feedText())}). On-demand areas from King County GIS. Base map © OpenStreetMap contributors via OpenFreeMap.</p>`);
+    parts.push(`<h2 class="section">Display</h2><ul class="group settings" role="list">${SETTING_ROWS.map((r) => {
+      const cur = settingValue(r.key);
+      return `<li data-s="${r.key}"><span class="sname" id="s-${r.key}">${esc(r.name)}</span><div class="segmented" role="radiogroup" aria-labelledby="s-${r.key}">${r.opts.map(([v, t]) =>
+        `<button type="button" role="radio" data-v="${v}" aria-checked="${v === cur}" aria-selected="${v === cur}">${esc(t)}</button>`).join("")}<span class="seg-thumb" aria-hidden="true"></span></div></li>`;
+    }).join("")}</ul>`);
+    parts.push(`<p class="hint">Streets are drawn as service lines: one green line for all the frequent buses on a street, one blue line for the all-day buses, and so on, with the route numbers on tags.</p>
+      <p class="credits">Routes and schedules from the agencies' open GTFS feeds (${esc(feedText())}). DART areas from King County GIS; Metro Flex zones from King County Metro. Base map © OpenStreetMap contributors via OpenFreeMap.</p>`);
     const existing = body().querySelector(".layers-view");
     if (quiet && existing) existing.innerHTML = parts.join("");
     else setView(`<div class="layers-view">${parts.join("")}</div>`);
+    $("#back").addEventListener("click", () => { panelView = "home"; showHome(); });
+    bindReset();
+    for (const li of body().querySelectorAll(".settings > li")) {
+      const seg = li.querySelector(".segmented"), key = li.dataset.s;
+      const buttons = [...seg.querySelectorAll("button")];
+      placeThumb(seg, Math.max(0, buttons.findIndex((b) => b.dataset.v === settingValue(key))), false);
+      buttons.forEach((b, i) => b.addEventListener("click", () => {
+        buttons.forEach((x) => { x.setAttribute("aria-checked", String(x === b)); x.setAttribute("aria-selected", String(x === b)); });
+        placeThumb(seg, i, true);
+        if (key === "theme") {
+          if (b.dataset.v) document.documentElement.setAttribute("data-theme", b.dataset.v);
+          else document.documentElement.removeAttribute("data-theme");
+          store.set("theme", b.dataset.v);
+          return;
+        }
+        settings[key] = b.dataset.v;
+        store.set("settings", settings);
+        rebuild();
+        renderLive();
+        body().querySelector(".view-head").innerHTML = layersHead();
+        bindReset();
+      }));
+    }
     for (const li of body().querySelectorAll(".layer")) {
       const input = li.querySelector("input");
       const toggle = (v) => {
@@ -1314,6 +1456,8 @@
         input.checked = v;
         store.set("layers2", [...enabled]);
         applyLayerToggles();
+        body().querySelector(".view-head").innerHTML = layersHead();
+        bindReset();
       };
       input.addEventListener("change", () => toggle(input.checked));
       li.addEventListener("click", (e) => { if (!e.target.closest(".switch")) toggle(!input.checked); });
@@ -1520,6 +1664,7 @@
     vis("stops", ["stops", "stop-name"]);
     vis("live", ["veh-icon", "veh-label"]);
     if (enabled.has("live")) startLive(); else stopLive();
+    renderFilterBar();
     rebuild();
   }
 
@@ -1639,6 +1784,7 @@
       if (e.key !== "Escape" || e.target.closest("input")) return;
       if (popup) closePopup();
       else if (selected) clearSelection();
+      else if (panelView === "layers") { panelView = "home"; showHome(); }
     });
   }
   // Hover: a single route thickens along its whole path; a shared corridor line thickens
