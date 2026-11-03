@@ -145,7 +145,7 @@ const KCTMGeom = (() => {
   // One continuous path along `steps`, sitting in lane `key` of each segment. Corners are
   // rounded to suit the bundle width; lane changes are eased steps that may overlap, so a
   // line crossing a busy street glides across instead of jogging. Calls emit(stepIndex, coords).
-  function drawPath(key, steps, lay, S, emit) {
+  function drawPath(key, steps, lay, S, emit, water = false) {
     const pts = [], seg = [], joints = [];
     for (let k = 0; k < steps.length; k++) {
       const { E, fwd } = steps[k], Lo = lay[E.k];
@@ -185,7 +185,10 @@ const KCTMGeom = (() => {
     const D = jointAt.map((j) => c[j]);
     const moves = D.map((d, k) => {
       const delta = seg[k + 1].o - seg[k].o;
-      return { d, delta, L: Math.max(14, 3.4 * Math.abs(delta), 6 * S) };
+      // on the water, where ferry routes fan out from a dock, ease across slowly: a quick step
+      // reads as a kink in a long straight crossing
+      const L = water ? Math.max(220, 40 * Math.abs(delta), 30 * S) : Math.max(14, 3.4 * Math.abs(delta), 6 * S);
+      return { d, delta, L };
     }).filter((m) => Math.abs(m.delta) > 0.02);
     const ds = c.slice();
     for (const m of moves) for (let j = -8; j <= 8; j++) ds.push(m.d + (m.L * j) / 8);
@@ -276,6 +279,8 @@ const KCTMGeom = (() => {
     function build(p) {
       const { z, zNow, u, capU, keyOn, selIdx } = p;
       const S = u * MPP0 / 2 ** z; // meters per unit at this zoom
+      // line width per service type; all-day and rush-hour buses are drawn slimmer when zoomed out
+      const W = (v) => CAT[v].w * ((p.wscale && p.wscale[v]) || 1);
       const selKey = selIdx >= 0 ? VKEY(LINES[selIdx].cat) : null;
       const color = (key) => p.colors[key] || p.colors.local;
 
@@ -287,11 +292,13 @@ const KCTMGeom = (() => {
         const keys = E.order.filter((v) => keyOn[v] || (v === selKey && E.l.includes(selIdx)));
         if (!keys.length) { lay[E.k] = null; continue; }
         let T = -GAP;
-        for (const v of keys) T += CAT[v].w + GAP;
+        for (const v of keys) T += W(v) + GAP;
         const s = Math.min(1, capU / T);
         const pos = new Map();
         let x = -T / 2;
-        for (const v of keys) { pos.set(v, (x + CAT[v].w / 2) * s); x += CAT[v].w + GAP; }
+        // boats: no side-by-side lanes; ferry routes only meet at the docks, where shifting
+        // lanes would put little kinks into otherwise straight crossings
+        for (const v of keys) { pos.set(v, E.layer === "w" ? 0 : (x + W(v) / 2) * s); x += W(v) + GAP; }
         const tol = Math.min(0.25 * S + 0.1 * T * s * S, 9);
         const ck = `${z}|${tol.toFixed(1)}`;
         let simp = E.simp.get(ck);
@@ -335,7 +342,7 @@ const KCTMGeom = (() => {
             den += 1;
           }
           const lim = 0.3 * Le.T + 0.5;
-          Le.shift = Math.max(-lim, Math.min(lim, num / den));
+          Le.shift = EDGES[e].layer === "w" ? 0 : Math.max(-lim, Math.min(lim, num / den));
         }
       }
 
@@ -344,7 +351,8 @@ const KCTMGeom = (() => {
       const props = (key, Lo, e) => {
         const c = CAT[key], s = Lo.s;
         const hr = c.inner === "glass" ? 0.34 : c.inner === "solid" ? 0.3 : c.inner === "dots" ? 0.32 : c.inner === "ties" ? 0.62 : 0;
-        return { r: -1, cat: key, e, wm: c.w * s * S, cm: (c.w + GAP * 1.4) * s * S, hm: c.w * hr * s * S,
+        const w = W(key);
+        return { r: -1, cat: key, e, wm: w * s * S, cm: (w + GAP * 1.4) * s * S, hm: w * hr * s * S,
           g: c.group, c: color(key), s: 20 - c.prio, d: c.dash ? 1 : 0, h: HMODE[c.inner] || 0 };
       };
       for (const [v, chains] of KEY_CHAINS) {
@@ -353,9 +361,9 @@ const KCTMGeom = (() => {
             drawPath(v, run, lay, S, (k, coords) => {
               if (coords.length < 2) return;
               const pr = props(v, lay[run[k].E.k], run[k].E.k);
-              pr.ar = arrow(run[k].E.kdir.get(v), run[k].fwd);
+              pr.ar = CAT[v].group === "water" ? 0 : arrow(run[k].E.kdir.get(v), run[k].fwd);
               feats.push({ type: "Feature", properties: pr, geometry: { type: "LineString", coordinates: coords.map(toLL) } });
-            });
+            }, CAT[v].group === "water");
           }
         }
       }
@@ -365,7 +373,7 @@ const KCTMGeom = (() => {
           for (const run of runs(ch, selKey)) {
             drawPath(selKey, run, lay, S, (k, coords) => {
               if (coords.length < 2) return;
-              selFeats.push({ type: "Feature", properties: { r: selIdx, cat: selKey, e: run[k].E.k, c: col, d: c.dash ? 1 : 0, ar: arrow(run[k].E.dirOf(selIdx), run[k].fwd),
+              selFeats.push({ type: "Feature", properties: { r: selIdx, cat: selKey, e: run[k].E.k, c: col, d: c.dash ? 1 : 0, ar: c.group === "water" ? 0 : arrow(run[k].E.dirOf(selIdx), run[k].fwd),
                 wm: (c.w + 0.9) * S, cm: (c.w + 2.6) * S, gm: (c.w + 7) * S, hm: (c.w + 0.9) * 0.3 * S },
               geometry: { type: "LineString", coordinates: coords.map(toLL) } });
             });
@@ -402,9 +410,20 @@ const KCTMGeom = (() => {
       const best = new Map();
       for (const e of tagKey.keys()) { const root = find(e); if (!best.has(root) || EDGES[e].len > EDGES[best.get(root)].len) best.set(root, e); }
       const mpp = MPP0 / 2 ** z, minGap = TD.gap * mpp, every = TD.every * mpp;
+      const anyGap = (TD.any || 0) * mpp, cell = Math.max(anyGap, 1), grid = new Map();
+      const crowded = (q) => {
+        if (!anyGap) return false;
+        const gx = Math.floor(q[0] / cell), gy = Math.floor(q[1] / cell);
+        for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+          for (const o of grid.get(`${gx + dx},${gy + dy}`) || []) if (Math.hypot(o[0] - q[0], o[1] - q[1]) < anyGap) return true;
+        }
+        return false;
+      };
+      const remember = (q) => { const key = `${Math.floor(q[0] / cell)},${Math.floor(q[1] / cell)}`; if (!grid.has(key)) grid.set(key, []); grid.get(key).push(q); };
       const placed = new Map();
+      // trains, RapidRide and frequent buses claim their space first, then longer stretches first
       const cands = [...tagKey].filter(([e]) => best.get(find(e)) === e || EDGES[e].len >= 700)
-        .sort((x, y) => EDGES[y[0]].len - EDGES[x[0]].len);
+        .sort((x, y) => (x[1].p - y[1].p) || (EDGES[y[0]].len - EDGES[x[0]].len));
       for (const [e, t] of cands) {
         const E = EDGES[e];
         const cum = E.cum || (E.cum = cumLen(E.pts));
@@ -414,8 +433,9 @@ const KCTMGeom = (() => {
         const order = [...Array(n).keys()].sort((i, j) => Math.abs(i - (n - 1) / 2) - Math.abs(j - (n - 1) / 2));
         for (const i of order) {
           const q = pointAt(E.pts, cum, E.len * (i + 0.5) / n);
-          if (near.some((o) => Math.hypot(o[0] - q[0], o[1] - q[1]) < minGap)) continue;
+          if (near.some((o) => Math.hypot(o[0] - q[0], o[1] - q[1]) < minGap) || crowded(q)) continue;
           near.push(q);
+          remember(q);
           labels.push({ type: "Feature", properties: { k: t.k, p: t.p }, geometry: { type: "Point", coordinates: toLL(q) } });
         }
       }

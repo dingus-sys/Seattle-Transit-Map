@@ -102,7 +102,11 @@
   //   thickness  line width multiplier
   const SETTINGS_DEFAULT = { busDetail: "more", tags: "normal", thickness: "normal" };
   const BUS_TIERS = { less: [0, 10.2, 12.0], normal: [0, 0, 10.0], more: [0, 0, 0] };
-  const TAG_DENSITY = { fewer: { gap: 420, every: 900, busZ: 12 }, normal: { gap: 260, every: 560, busZ: 10.6 }, more: { gap: 170, every: 360, busZ: 9.6 } };
+  // gap: same tag repeating; every: spacing along long streets; any: between any two tags (px,
+  // grows when zoomed out, see tagSpacing); busZ: zoom where bus tags start
+  const TAG_DENSITY = { fewer: { gap: 420, every: 900, any: 70, busZ: 11.5 }, normal: { gap: 280, every: 600, any: 44, busZ: 10.0 },
+    more: { gap: 180, every: 380, any: 26, busZ: 9.4 } };
+  const tagSpacing = (td, z) => ({ ...td, any: td.any * (z < 11 ? 1.25 : 1) });
   const THICK = { thin: 0.8, normal: 1, bold: 1.25 };
   const settings = { ...SETTINGS_DEFAULT };
   {
@@ -321,10 +325,6 @@
         layout: { "text-field": ["get", "name"], "text-font": F_BOLD, "text-transform": "uppercase", "text-letter-spacing": 0.1,
           "text-size": ["interpolate", ["linear"], ["zoom"], 11.5, 9.5, 16, 12], "text-max-width": 8, "text-padding": 8 },
         paint: { "text-color": P.label, "text-opacity": 0.7, "text-halo-color": P.halo, "text-halo-width": 1.4 } },
-      { id: "place-city", type: "symbol", source: "base", "source-layer": "place", maxzoom: 13,
-        filter: ["in", ["get", "class"], ["literal", ["city", "town"]]],
-        layout: { "text-field": ["get", "name"], "text-font": F_BOLD, "text-size": ["interpolate", ["linear"], ["zoom"], 8, 12, 12, 16], "text-max-width": 8 },
-        paint: { "text-color": P.place, "text-halo-color": P.halo, "text-halo-width": 1.6 } },
     ];
   }
 
@@ -405,7 +405,7 @@
         layout: { "icon-image": ["concat", "veh:", ["get", "c"], ":", ["case", [">=", ["get", "b"], 0], "a", "o"]],
           "icon-rotate": ["max", ["get", "b"], 0], "icon-rotation-alignment": "map", "icon-allow-overlap": true, "icon-ignore-placement": true,
           "icon-size": ["interpolate", ["linear"], ["zoom"], 9, 0.4, 11, 0.52, 13, 0.78, 15, 1, 18, 1.2], "symbol-sort-key": ["get", "s"] } },
-      { id: "veh-label", type: "symbol", source: "vehicles", minzoom: 13,
+      { id: "veh-label", type: "symbol", source: "vehicles", minzoom: 14.5,
         layout: { "text-field": ["get", "lab"], "text-font": F_BOLD, "text-size": 11.5, "text-anchor": "left", "text-offset": [1.05, 0],
           "text-optional": true, "text-padding": 1 },
         paint: { "text-color": ["get", "tc"], "text-halo-color": P.halo, "text-halo-width": 2 } },
@@ -456,6 +456,10 @@
           "text-font": F_BOLD, "text-size": ["interpolate", ["linear"], ["zoom"], 11, 11, 15, 12.5], "text-max-width": 11,
           "text-variable-anchor": ["left", "right", "top", "bottom"], "text-radial-offset": 1.1, "text-justify": "auto", "text-padding": 2 },
         paint: { "text-color": P.label, "text-halo-color": P.halo, "text-halo-width": 2 } },
+      { id: "place-city", type: "symbol", source: "base", "source-layer": "place", maxzoom: 13,
+        filter: ["in", ["get", "class"], ["literal", ["city", "town"]]],
+        layout: { "text-field": ["get", "name"], "text-font": F_BOLD, "text-size": ["interpolate", ["linear"], ["zoom"], 8, 12, 12, 16], "text-max-width": 8 },
+        paint: { "text-color": P.place, "text-halo-color": P.halo, "text-halo-width": 2.4 } },
     ];
   }
 
@@ -532,6 +536,12 @@
   }
 
   const zStep = (z) => Math.max(9, Math.min(19, Math.round(z * 4) / 4));
+  // Zoomed out, all-day and rush-hour buses are slimmer than frequent ones, so the busy
+  // coverage map underneath stays readable and the frequent network stands out.
+  function minorScale(z) {
+    const f = z <= 10.5 ? 0.5 : z >= 12.5 ? 1 : 0.5 + 0.5 * (z - 10.5) / 2;
+    return { local: f, peak: Math.min(1, f + 0.15), shuttle: f, dart: f };
+  }
   function tierFor(z) { const t = BUS_TIERS[settings.busDetail]; return z >= t[2] ? 2 : z >= t[1] ? 1 : 0; }
   let curStep = null, lastBuild = 0, buildTimer = null, builtView = null, lastFeats = [];
   // The area last drawn (meters): the view plus a wide margin, so panning stays smooth.
@@ -560,7 +570,8 @@
     for (const k of Object.keys(CAT)) keyOn[k] = (k === "sounder" ? enabledCat("sounder") || enabledCat("amtrak") : enabledCat(k)) && CAT[k].tier <= tier;
     const p = { z, zNow, u, capU: interp(CAP_PX, z) / u, keyOn,
       selIdx: selected && selected.type === "route" ? LINEIDX[selected.id] : -1,
-      view: (builtView = viewBox(0.75)), tags: TAG_DENSITY[settings.tags], theme: theme[0], colors: LINE[theme] };
+      view: (builtView = viewBox(0.75)), tags: tagSpacing(TAG_DENSITY[settings.tags], zNow), theme: theme[0], colors: LINE[theme],
+      wscale: minorScale(zNow) };
     const msg = { id: ++buildSeq, p };
     if (!worker) {
       const t = performance.now();
@@ -646,7 +657,7 @@
   // ---------------------------------------------------------------- data → GeoJSON
   function stationsGeoJSON() {
     const majorCats = new Set(["link", "sounder", "amtrak", "monorail"]);
-    return { type: "FeatureCollection", features: STOPS.stations.map((s) => {
+    return { type: "FeatureCollection", features: STOPS.stations.filter((s) => s.routes.some((id) => RBY[id] && enabledCat(RBY[id].cat))).map((s) => {
       const rs = s.routes.map((id) => RBY[id]).filter(Boolean);
       const cats = new Set(rs.map((r) => r.cat));
       const major = [...cats].some((c) => majorCats.has(c)) || cats.has("ferry") || cats.has("watertaxi");
@@ -1432,6 +1443,7 @@
     vis("stops", ["stops", "stop-name"]);
     vis("live", ["veh-icon", "veh-label"]);
     if (enabled.has("live")) startLive(); else stopLive();
+    if (map.getSource("stations")) map.getSource("stations").setData(stationsGeoJSON());
     renderFilterBar();
     rebuild();
   }

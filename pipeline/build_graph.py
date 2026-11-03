@@ -1052,6 +1052,36 @@ def build_layer(routes, rank, name, mask=None):
     return g
 
 
+def water_direct(routes):
+    """Boats get their own lines straight from their shapes. Bundling crossings that only meet
+    at the docks traced little hooks where their paths fan out; ferries rarely share water,
+    so each crossing is simply drawn as it is (one copy per route; the return trip, which
+    retraces it, is left out)."""
+    from shapely.ops import unary_union
+    nodes, edges, meta = {}, [], []
+    for slug, rg in routes.items():
+        kept = []
+        for part in sorted(rg.geoms, key=lambda p: -p.length):
+            part = part.simplify(8)
+            if part.length < 50:
+                continue
+            if kept and part.difference(unary_union(kept).buffer(120)).length < 0.2 * part.length:
+                continue  # the same crossing again (return trip)
+            kept.append(part)
+            c = list(part.coords)
+            a, b = len(nodes), len(nodes) + 1
+            nodes[a], nodes[b] = c[0], c[-1]
+            edges.append([a, b, c])
+            meta.append(slug)
+    g = Graph(nodes, edges)
+    for (eid, e), slug in zip(sorted(g.edges.items()), meta):
+        e["lines"] = frozenset({slug})
+        e["order"] = [slug]
+        e["dirs"] = {}
+    print(f"  water: {len(routes)} routes -> {len(g.edges)} crossings, drawn from their own shapes", flush=True)
+    return g
+
+
 def main():
     all_routes, rank = load_routes()
     mask = freeway_mask()
@@ -1064,7 +1094,7 @@ def main():
         routes = {k: g for k, (lay, g) in all_routes.items() if lay == name}
         if not routes:
             continue
-        g = build_layer(routes, rank, name, mask if name == "surface" else None)
+        g = water_direct(routes) if name == "water" else build_layer(routes, rank, name, mask if name == "surface" else None)
         for eid, e in g.edges.items():
             lon, lat = inv.transform(*zip(*e["c"]))
             coords = [[round(x, 5), round(y, 5)] for x, y in zip(lon, lat)]

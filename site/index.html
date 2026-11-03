@@ -678,7 +678,7 @@ const KCTMGeom = (() => {
   // One continuous path along `steps`, sitting in lane `key` of each segment. Corners are
   // rounded to suit the bundle width; lane changes are eased steps that may overlap, so a
   // line crossing a busy street glides across instead of jogging. Calls emit(stepIndex, coords).
-  function drawPath(key, steps, lay, S, emit) {
+  function drawPath(key, steps, lay, S, emit, water = false) {
     const pts = [], seg = [], joints = [];
     for (let k = 0; k < steps.length; k++) {
       const { E, fwd } = steps[k], Lo = lay[E.k];
@@ -718,7 +718,10 @@ const KCTMGeom = (() => {
     const D = jointAt.map((j) => c[j]);
     const moves = D.map((d, k) => {
       const delta = seg[k + 1].o - seg[k].o;
-      return { d, delta, L: Math.max(14, 3.4 * Math.abs(delta), 6 * S) };
+      // on the water, where ferry routes fan out from a dock, ease across slowly: a quick step
+      // reads as a kink in a long straight crossing
+      const L = water ? Math.max(220, 40 * Math.abs(delta), 30 * S) : Math.max(14, 3.4 * Math.abs(delta), 6 * S);
+      return { d, delta, L };
     }).filter((m) => Math.abs(m.delta) > 0.02);
     const ds = c.slice();
     for (const m of moves) for (let j = -8; j <= 8; j++) ds.push(m.d + (m.L * j) / 8);
@@ -809,6 +812,8 @@ const KCTMGeom = (() => {
     function build(p) {
       const { z, zNow, u, capU, keyOn, selIdx } = p;
       const S = u * MPP0 / 2 ** z; // meters per unit at this zoom
+      // line width per service type; all-day and rush-hour buses are drawn slimmer when zoomed out
+      const W = (v) => CAT[v].w * ((p.wscale && p.wscale[v]) || 1);
       const selKey = selIdx >= 0 ? VKEY(LINES[selIdx].cat) : null;
       const color = (key) => p.colors[key] || p.colors.local;
 
@@ -820,11 +825,13 @@ const KCTMGeom = (() => {
         const keys = E.order.filter((v) => keyOn[v] || (v === selKey && E.l.includes(selIdx)));
         if (!keys.length) { lay[E.k] = null; continue; }
         let T = -GAP;
-        for (const v of keys) T += CAT[v].w + GAP;
+        for (const v of keys) T += W(v) + GAP;
         const s = Math.min(1, capU / T);
         const pos = new Map();
         let x = -T / 2;
-        for (const v of keys) { pos.set(v, (x + CAT[v].w / 2) * s); x += CAT[v].w + GAP; }
+        // boats: no side-by-side lanes; ferry routes only meet at the docks, where shifting
+        // lanes would put little kinks into otherwise straight crossings
+        for (const v of keys) { pos.set(v, E.layer === "w" ? 0 : (x + W(v) / 2) * s); x += W(v) + GAP; }
         const tol = Math.min(0.25 * S + 0.1 * T * s * S, 9);
         const ck = `${z}|${tol.toFixed(1)}`;
         let simp = E.simp.get(ck);
@@ -868,7 +875,7 @@ const KCTMGeom = (() => {
             den += 1;
           }
           const lim = 0.3 * Le.T + 0.5;
-          Le.shift = Math.max(-lim, Math.min(lim, num / den));
+          Le.shift = EDGES[e].layer === "w" ? 0 : Math.max(-lim, Math.min(lim, num / den));
         }
       }
 
@@ -877,7 +884,8 @@ const KCTMGeom = (() => {
       const props = (key, Lo, e) => {
         const c = CAT[key], s = Lo.s;
         const hr = c.inner === "glass" ? 0.34 : c.inner === "solid" ? 0.3 : c.inner === "dots" ? 0.32 : c.inner === "ties" ? 0.62 : 0;
-        return { r: -1, cat: key, e, wm: c.w * s * S, cm: (c.w + GAP * 1.4) * s * S, hm: c.w * hr * s * S,
+        const w = W(key);
+        return { r: -1, cat: key, e, wm: w * s * S, cm: (w + GAP * 1.4) * s * S, hm: w * hr * s * S,
           g: c.group, c: color(key), s: 20 - c.prio, d: c.dash ? 1 : 0, h: HMODE[c.inner] || 0 };
       };
       for (const [v, chains] of KEY_CHAINS) {
@@ -886,9 +894,9 @@ const KCTMGeom = (() => {
             drawPath(v, run, lay, S, (k, coords) => {
               if (coords.length < 2) return;
               const pr = props(v, lay[run[k].E.k], run[k].E.k);
-              pr.ar = arrow(run[k].E.kdir.get(v), run[k].fwd);
+              pr.ar = CAT[v].group === "water" ? 0 : arrow(run[k].E.kdir.get(v), run[k].fwd);
               feats.push({ type: "Feature", properties: pr, geometry: { type: "LineString", coordinates: coords.map(toLL) } });
-            });
+            }, CAT[v].group === "water");
           }
         }
       }
@@ -898,7 +906,7 @@ const KCTMGeom = (() => {
           for (const run of runs(ch, selKey)) {
             drawPath(selKey, run, lay, S, (k, coords) => {
               if (coords.length < 2) return;
-              selFeats.push({ type: "Feature", properties: { r: selIdx, cat: selKey, e: run[k].E.k, c: col, d: c.dash ? 1 : 0, ar: arrow(run[k].E.dirOf(selIdx), run[k].fwd),
+              selFeats.push({ type: "Feature", properties: { r: selIdx, cat: selKey, e: run[k].E.k, c: col, d: c.dash ? 1 : 0, ar: c.group === "water" ? 0 : arrow(run[k].E.dirOf(selIdx), run[k].fwd),
                 wm: (c.w + 0.9) * S, cm: (c.w + 2.6) * S, gm: (c.w + 7) * S, hm: (c.w + 0.9) * 0.3 * S },
               geometry: { type: "LineString", coordinates: coords.map(toLL) } });
             });
@@ -935,9 +943,20 @@ const KCTMGeom = (() => {
       const best = new Map();
       for (const e of tagKey.keys()) { const root = find(e); if (!best.has(root) || EDGES[e].len > EDGES[best.get(root)].len) best.set(root, e); }
       const mpp = MPP0 / 2 ** z, minGap = TD.gap * mpp, every = TD.every * mpp;
+      const anyGap = (TD.any || 0) * mpp, cell = Math.max(anyGap, 1), grid = new Map();
+      const crowded = (q) => {
+        if (!anyGap) return false;
+        const gx = Math.floor(q[0] / cell), gy = Math.floor(q[1] / cell);
+        for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+          for (const o of grid.get(`${gx + dx},${gy + dy}`) || []) if (Math.hypot(o[0] - q[0], o[1] - q[1]) < anyGap) return true;
+        }
+        return false;
+      };
+      const remember = (q) => { const key = `${Math.floor(q[0] / cell)},${Math.floor(q[1] / cell)}`; if (!grid.has(key)) grid.set(key, []); grid.get(key).push(q); };
       const placed = new Map();
+      // trains, RapidRide and frequent buses claim their space first, then longer stretches first
       const cands = [...tagKey].filter(([e]) => best.get(find(e)) === e || EDGES[e].len >= 700)
-        .sort((x, y) => EDGES[y[0]].len - EDGES[x[0]].len);
+        .sort((x, y) => (x[1].p - y[1].p) || (EDGES[y[0]].len - EDGES[x[0]].len));
       for (const [e, t] of cands) {
         const E = EDGES[e];
         const cum = E.cum || (E.cum = cumLen(E.pts));
@@ -947,8 +966,9 @@ const KCTMGeom = (() => {
         const order = [...Array(n).keys()].sort((i, j) => Math.abs(i - (n - 1) / 2) - Math.abs(j - (n - 1) / 2));
         for (const i of order) {
           const q = pointAt(E.pts, cum, E.len * (i + 0.5) / n);
-          if (near.some((o) => Math.hypot(o[0] - q[0], o[1] - q[1]) < minGap)) continue;
+          if (near.some((o) => Math.hypot(o[0] - q[0], o[1] - q[1]) < minGap) || crowded(q)) continue;
           near.push(q);
+          remember(q);
           labels.push({ type: "Feature", properties: { k: t.k, p: t.p }, geometry: { type: "Point", coordinates: toLL(q) } });
         }
       }
@@ -1094,7 +1114,11 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
   //   thickness  line width multiplier
   const SETTINGS_DEFAULT = { busDetail: "more", tags: "normal", thickness: "normal" };
   const BUS_TIERS = { less: [0, 10.2, 12.0], normal: [0, 0, 10.0], more: [0, 0, 0] };
-  const TAG_DENSITY = { fewer: { gap: 420, every: 900, busZ: 12 }, normal: { gap: 260, every: 560, busZ: 10.6 }, more: { gap: 170, every: 360, busZ: 9.6 } };
+  // gap: same tag repeating; every: spacing along long streets; any: between any two tags (px,
+  // grows when zoomed out, see tagSpacing); busZ: zoom where bus tags start
+  const TAG_DENSITY = { fewer: { gap: 420, every: 900, any: 70, busZ: 11.5 }, normal: { gap: 280, every: 600, any: 44, busZ: 10.0 },
+    more: { gap: 180, every: 380, any: 26, busZ: 9.4 } };
+  const tagSpacing = (td, z) => ({ ...td, any: td.any * (z < 11 ? 1.25 : 1) });
   const THICK = { thin: 0.8, normal: 1, bold: 1.25 };
   const settings = { ...SETTINGS_DEFAULT };
   {
@@ -1313,10 +1337,6 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
         layout: { "text-field": ["get", "name"], "text-font": F_BOLD, "text-transform": "uppercase", "text-letter-spacing": 0.1,
           "text-size": ["interpolate", ["linear"], ["zoom"], 11.5, 9.5, 16, 12], "text-max-width": 8, "text-padding": 8 },
         paint: { "text-color": P.label, "text-opacity": 0.7, "text-halo-color": P.halo, "text-halo-width": 1.4 } },
-      { id: "place-city", type: "symbol", source: "base", "source-layer": "place", maxzoom: 13,
-        filter: ["in", ["get", "class"], ["literal", ["city", "town"]]],
-        layout: { "text-field": ["get", "name"], "text-font": F_BOLD, "text-size": ["interpolate", ["linear"], ["zoom"], 8, 12, 12, 16], "text-max-width": 8 },
-        paint: { "text-color": P.place, "text-halo-color": P.halo, "text-halo-width": 1.6 } },
     ];
   }
 
@@ -1397,7 +1417,7 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
         layout: { "icon-image": ["concat", "veh:", ["get", "c"], ":", ["case", [">=", ["get", "b"], 0], "a", "o"]],
           "icon-rotate": ["max", ["get", "b"], 0], "icon-rotation-alignment": "map", "icon-allow-overlap": true, "icon-ignore-placement": true,
           "icon-size": ["interpolate", ["linear"], ["zoom"], 9, 0.4, 11, 0.52, 13, 0.78, 15, 1, 18, 1.2], "symbol-sort-key": ["get", "s"] } },
-      { id: "veh-label", type: "symbol", source: "vehicles", minzoom: 13,
+      { id: "veh-label", type: "symbol", source: "vehicles", minzoom: 14.5,
         layout: { "text-field": ["get", "lab"], "text-font": F_BOLD, "text-size": 11.5, "text-anchor": "left", "text-offset": [1.05, 0],
           "text-optional": true, "text-padding": 1 },
         paint: { "text-color": ["get", "tc"], "text-halo-color": P.halo, "text-halo-width": 2 } },
@@ -1448,6 +1468,10 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
           "text-font": F_BOLD, "text-size": ["interpolate", ["linear"], ["zoom"], 11, 11, 15, 12.5], "text-max-width": 11,
           "text-variable-anchor": ["left", "right", "top", "bottom"], "text-radial-offset": 1.1, "text-justify": "auto", "text-padding": 2 },
         paint: { "text-color": P.label, "text-halo-color": P.halo, "text-halo-width": 2 } },
+      { id: "place-city", type: "symbol", source: "base", "source-layer": "place", maxzoom: 13,
+        filter: ["in", ["get", "class"], ["literal", ["city", "town"]]],
+        layout: { "text-field": ["get", "name"], "text-font": F_BOLD, "text-size": ["interpolate", ["linear"], ["zoom"], 8, 12, 12, 16], "text-max-width": 8 },
+        paint: { "text-color": P.place, "text-halo-color": P.halo, "text-halo-width": 2.4 } },
     ];
   }
 
@@ -1524,6 +1548,12 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
   }
 
   const zStep = (z) => Math.max(9, Math.min(19, Math.round(z * 4) / 4));
+  // Zoomed out, all-day and rush-hour buses are slimmer than frequent ones, so the busy
+  // coverage map underneath stays readable and the frequent network stands out.
+  function minorScale(z) {
+    const f = z <= 10.5 ? 0.5 : z >= 12.5 ? 1 : 0.5 + 0.5 * (z - 10.5) / 2;
+    return { local: f, peak: Math.min(1, f + 0.15), shuttle: f, dart: f };
+  }
   function tierFor(z) { const t = BUS_TIERS[settings.busDetail]; return z >= t[2] ? 2 : z >= t[1] ? 1 : 0; }
   let curStep = null, lastBuild = 0, buildTimer = null, builtView = null, lastFeats = [];
   // The area last drawn (meters): the view plus a wide margin, so panning stays smooth.
@@ -1552,7 +1582,8 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
     for (const k of Object.keys(CAT)) keyOn[k] = (k === "sounder" ? enabledCat("sounder") || enabledCat("amtrak") : enabledCat(k)) && CAT[k].tier <= tier;
     const p = { z, zNow, u, capU: interp(CAP_PX, z) / u, keyOn,
       selIdx: selected && selected.type === "route" ? LINEIDX[selected.id] : -1,
-      view: (builtView = viewBox(0.75)), tags: TAG_DENSITY[settings.tags], theme: theme[0], colors: LINE[theme] };
+      view: (builtView = viewBox(0.75)), tags: tagSpacing(TAG_DENSITY[settings.tags], zNow), theme: theme[0], colors: LINE[theme],
+      wscale: minorScale(zNow) };
     const msg = { id: ++buildSeq, p };
     if (!worker) {
       const t = performance.now();
@@ -1638,7 +1669,7 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
   // ---------------------------------------------------------------- data → GeoJSON
   function stationsGeoJSON() {
     const majorCats = new Set(["link", "sounder", "amtrak", "monorail"]);
-    return { type: "FeatureCollection", features: STOPS.stations.map((s) => {
+    return { type: "FeatureCollection", features: STOPS.stations.filter((s) => s.routes.some((id) => RBY[id] && enabledCat(RBY[id].cat))).map((s) => {
       const rs = s.routes.map((id) => RBY[id]).filter(Boolean);
       const cats = new Set(rs.map((r) => r.cat));
       const major = [...cats].some((c) => majorCats.has(c)) || cats.has("ferry") || cats.has("watertaxi");
@@ -2424,6 +2455,7 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
     vis("stops", ["stops", "stop-name"]);
     vis("live", ["veh-icon", "veh-label"]);
     if (enabled.has("live")) startLive(); else stopLive();
+    if (map.getSource("stations")) map.getSource("stations").setData(stationsGeoJSON());
     renderFilterBar();
     rebuild();
   }
