@@ -8,7 +8,7 @@ import os
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SITE = os.path.join(ROOT, "site")
-CACHE = os.environ.get("TRANSIT_CACHE", "/root/build")
+CACHE = os.environ.get("TRANSIT_CACHE", os.path.join(ROOT, ".cache"))
 
 # Detailed map area: Everett, Mukilteo and Marysville in the north; Tacoma, Lakewood, Puyallup
 # and Spanaway, and on to Olympia, Lacey and Tumwater in the south; Kitsap (Bremerton,

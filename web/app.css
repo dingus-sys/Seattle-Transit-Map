@@ -425,6 +425,13 @@ table.sched td.good { color: var(--good); font-weight: 650; }
 .vs-early { background: color-mix(in srgb, #2f7fd3 16%, transparent); color: #1d64b3; }
 :root[data-dark="1"] .vs-ok { color: #5fd38a; } :root[data-dark="1"] .vs-slow { color: #ffb84d; }
 :root[data-dark="1"] .vs-late { color: #ff7a8a; } :root[data-dark="1"] .vs-early { color: #7ab6ff; }
+/* how busy a vehicle is: plenty of seats -> packed */
+.vo-ok { background: color-mix(in srgb, #1f9d55 14%, transparent); color: #17803f; }
+.vo-some { background: color-mix(in srgb, #7a8b99 20%, transparent); color: #55646f; }
+.vo-busy { background: color-mix(in srgb, #e08a00 18%, transparent); color: #a86400; }
+.vo-full { background: color-mix(in srgb, #8d4bd0 18%, transparent); color: #6f32ad; }
+:root[data-dark="1"] .vo-ok { color: #5fd38a; } :root[data-dark="1"] .vo-some { color: #b6c3cd; }
+:root[data-dark="1"] .vo-busy { color: #ffb84d; } :root[data-dark="1"] .vo-full { color: #c99bf0; }
 .vs-note { color: var(--muted); font-size: 12px; }
 /* lens: the route number you point at on a tag lifts off it */
 .lens { position: fixed; z-index: 5; pointer-events: none; transform: translate(-50%, -50%); }

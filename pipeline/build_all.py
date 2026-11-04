@@ -3,7 +3,7 @@
     python3 pipeline/build_all.py            # full rebuild
     python3 pipeline/build_all.py --no-tiles # skip the base map (it rarely needs refreshing)
 
-Downloads land in $TRANSIT_CACHE (default /root/build). Delete the cached GTFS folder
+Downloads land in $TRANSIT_CACHE (default <repo>/.cache). Delete the cached GTFS folder
 there to force a fresh schedule download.
 """
 import os

@@ -910,6 +910,19 @@
     status: new Map(), statusTurn: 0 };
   const plainId = (x) => String(x || "").replace(/^\d+_/, "");
   const liveState = () => live; // for the test scripts
+  // How busy a vehicle is. GTFS-realtime calls this occupancy_status (0-8); OneBusAway's REST
+  // feed gives the same thing as the enum's name. NO_DATA_AVAILABLE (7) and NOT_BOARDABLE (8)
+  // tell a rider nothing, so they read as no answer at all.
+  const OCC_CODE = { EMPTY: 0, MANY_SEATS_AVAILABLE: 1, FEW_SEATS_AVAILABLE: 2, STANDING_ROOM_ONLY: 3,
+    CRUSHED_STANDING_ROOM_ONLY: 4, FULL: 5, NOT_ACCEPTING_PASSENGERS: 6, NO_DATA_AVAILABLE: 7, NOT_BOARDABLE: 8 };
+  const OCC_TEXT = ["Empty", "Plenty of seats", "A few seats left", "Standing room only", "Packed", "Full", "Not picking up"];
+  const OCC_CLS = ["ok", "ok", "some", "busy", "busy", "full", "full"];
+  // the enum name, a number, or nothing -> 0-6, or null when there's no useful answer
+  function occCode(x) {
+    if (x == null || x === "") return null;
+    const n = typeof x === "number" ? x : OCC_CODE[String(x).toUpperCase()];
+    return n >= 0 && n <= 6 ? n : null;
+  }
   let RTMAP = new Map();
   function varint(r) { let x = 0, m = 1, b; do { b = r.b[r.p++]; x += (b & 0x7f) * m; m *= 128; } while (b & 0x80); return x; }
   function skipField(r, wt) { if (wt === 0) varint(r); else if (wt === 1) r.p += 8; else if (wt === 2) { const n = varint(r); r.p += n; } else if (wt === 5) r.p += 4; else throw new Error("bad wire type"); }
@@ -934,6 +947,8 @@
             return false;
           });
           if (f3 === 5 && wt3 === 0) { v.ts = varint(r); return true; } // timestamp
+          if (f3 === 9 && wt3 === 0) { v.occ = varint(r); return true; }     // occupancy_status
+          if (f3 === 10 && wt3 === 0) { v.occPct = varint(r); return true; } // occupancy_percentage
           if (f3 === 8 && wt3 === 2) return sub((f4, wt4) => {   // vehicle descriptor
             if (wt4 === 2 && f4 === 1) { v.id = str(); return true; }
             if (wt4 === 2 && f4 === 2) { v.label = str(); return true; }
@@ -958,8 +973,10 @@
       if (!t || !loc) continue;
       const o = ts.orientation; // degrees counterclockwise from east
       out.push({ route: plainId(t.routeId), trip: plainId(x.tripId), lat: loc.lat, lon: loc.lon, id: plainId(x.vehicleId), head: t.tripHeadsign || "",
-        bearing: o != null && isFinite(o) ? ((90 - o) % 360 + 360) % 360 || 0.01 : undefined, ts: x.lastUpdateTime ? Math.round(x.lastUpdateTime / 1000) : 0 });
-      live.status.set(a + "_" + plainId(x.vehicleId), { dev: ts.scheduleDeviation, predicted: !!ts.predicted, upd: x.lastUpdateTime, got: Date.now() });
+        bearing: o != null && isFinite(o) ? ((90 - o) % 360 + 360) % 360 || 0.01 : undefined, ts: x.lastUpdateTime ? Math.round(x.lastUpdateTime / 1000) : 0,
+        occ: occCode(x.occupancyStatus != null ? x.occupancyStatus : ts.occupancyStatus) });
+      live.status.set(a + "_" + plainId(x.vehicleId), { dev: ts.scheduleDeviation, predicted: !!ts.predicted, upd: x.lastUpdateTime, got: Date.now(),
+        occ: occCode(ts.occupancyStatus), occN: ts.occupancyCount, occCap: ts.occupancyCapacity });
     }
     return out;
   }
@@ -1296,7 +1313,8 @@
           for (const x of (d.data && d.data.list) || []) {
             const ts = x.tripStatus;
             if (!ts) continue;
-            live.status.set(a + "_" + plainId(x.vehicleId), { dev: ts.scheduleDeviation, predicted: !!ts.predicted, upd: x.lastUpdateTime, got: Date.now() });
+            live.status.set(a + "_" + plainId(x.vehicleId), { dev: ts.scheduleDeviation, predicted: !!ts.predicted, upd: x.lastUpdateTime, got: Date.now(),
+              occ: occCode(ts.occupancyStatus), occN: ts.occupancyCount, occCap: ts.occupancyCapacity });
           }
         }
       } catch (e) { /* status is a bonus; positions still work */ }
@@ -1323,9 +1341,12 @@
           if (prev) {
             const from = vehPos(prev, now), d = geoDist(from, to);
             const b = v.bearing != null && v.bearing > 0 ? v.bearing : d > 12 ? geoBearing(from, to) : prev.b;
-            Object.assign(prev, { from, to, t0: now, r, b, ts: v.ts, label: v.label || prev.label, vid: v.id, name, head: v.head || prev.head });
+            const occ = occCode(v.occ);
+            Object.assign(prev, { from, to, t0: now, r, b, ts: v.ts, label: v.label || prev.label, vid: v.id, name, head: v.head || prev.head,
+              occ: occ != null ? occ : prev.occ, occPct: v.occPct != null ? v.occPct : prev.occPct });
           } else {
-            live.vehicles.set(id, { id, agency: a, from: to, to, t0: now, r, b: v.bearing > 0 ? v.bearing : -1, ts: v.ts, label: v.label, vid: v.id, name, head: v.head });
+            live.vehicles.set(id, { id, agency: a, from: to, to, t0: now, r, b: v.bearing > 0 ? v.bearing : -1, ts: v.ts, label: v.label, vid: v.id, name, head: v.head,
+              occ: occCode(v.occ), occPct: v.occPct });
           }
         } catch (e) { /* one odd report doesn't stop the rest */ }
       }
@@ -1450,6 +1471,18 @@
     if (m === 0) return { text: "On time", cls: "ok" };
     return st.dev > 0 ? { text: `${m} min late`, cls: m >= 5 ? "late" : "slow" } : { text: `${m} min early`, cls: "early" };
   }
+  // "Standing room only · 48 of 60" — how busy a vehicle is, from its own report if it carries
+  // one, otherwise from its agency's status report. Riders' counts come only from the REST feed.
+  function vehicleOccupancy(v) {
+    if (!v) return null;
+    const st = live.status.get(v.agency + "_" + plainId(v.vid));
+    const fresh = st && Date.now() - st.got <= 10 * 60000 ? st : null;
+    const code = v.occ != null ? v.occ : fresh && fresh.occ != null ? fresh.occ : null;
+    if (code == null) return null;
+    const n = fresh && fresh.occN, cap = fresh && fresh.occCap;
+    const detail = n > 0 && cap > 0 ? `${n} of ${cap}` : v.occPct > 0 ? `${v.occPct}% full` : "";
+    return { text: OCC_TEXT[code], cls: OCC_CLS[code], detail };
+  }
   const CLOCK = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", hour: "numeric", minute: "2-digit" });
   function updatedText(ts) {
     if (!ts) return "Live position";
@@ -1462,7 +1495,10 @@
     // the newest report for this vehicle: its position, or its agency's status report
     const raw = v && live.status.get(v.agency + "_" + plainId(v.vid));
     const ts = Math.max((v && v.ts) || 0, raw && raw.upd ? raw.upd / 1000 : 0);
-    return `${st ? `<span class="vs vs-${st.cls}">${st.text}</span>` : ""}<span class="vs-note">${esc(updatedText(ts))}</span>`;
+    const oc = vehicleOccupancy(v);
+    return `${st ? `<span class="vs vs-${st.cls}">${st.text}</span>` : ""}`
+      + `${oc ? `<span class="vs vo-${oc.cls}">${esc(oc.text)}${oc.detail ? ` · ${esc(oc.detail)}` : ""}</span>` : ""}`
+      + `<span class="vs-note">${esc(updatedText(ts))}</span>`;
   }
 
   function liveStatusText() {
@@ -2857,6 +2893,7 @@
     window.__atlas = {
       rebuild, timeRebuild: () => { const t = performance.now(); rebuild(); return performance.now() - t; },
       inWorker: () => !!worker, lastBuildMs: () => lastBuildMs, engineInit, lastParams: () => lastParams, lastFeats: () => lastFeats, liveState: () => liveState(), alerts: () => alerts, wsfState: () => wsfState(),
+      vehicleLines, vehicleOccupancy, occCode,
       idle: () => new Promise((res) => { if (!inFlight && !queued) res(); else idleWaiters.push(res); }),
     };
     map.touchZoomRotate.disableRotation();
