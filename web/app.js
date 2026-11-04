@@ -1913,14 +1913,16 @@
   }
   async function loadStopDepartures(obaId) {
     try {
+      // no includeReferences=false here: on this server it makes the answer a bare "null"
       const r = await fetch(`${LIVE.deps}/${encodeURIComponent(obaId)}.json?key=${encodeURIComponent(LIVE.key)}`
-        + "&includeReferences=false&minutesBefore=0&minutesAfter=90", { cache: "no-store" });
+        + "&minutesBefore=0&minutesAfter=90", { cache: "no-store" });
       if (r.status === 429) { depCache.pause = Date.now() + 60000; return; }
       if (!r.ok) throw new Error(String(r.status));
       const j = await r.json();
       if (j && j.code === 429) { depCache.pause = Date.now() + 60000; return; }
-      const entry = (j && j.data && j.data.entry) || {};
-      depCache.byStop.set(obaId, { got: Date.now(), list: (entry.arrivalsAndDepartures || []).map(readDeparture).filter(Boolean) });
+      // anything that isn't a proper answer is "no answer" (the timetable stays), never "no departures"
+      if (!j || j.code !== 200 || !j.data || !j.data.entry || !Array.isArray(j.data.entry.arrivalsAndDepartures)) throw new Error("no answer");
+      depCache.byStop.set(obaId, { got: Date.now(), list: j.data.entry.arrivalsAndDepartures.map(readDeparture).filter(Boolean) });
     } catch (e) {
       // the timetable still answers; don't ask again for this stop straight away
       depCache.byStop.set(obaId, { got: Date.now(), list: null });
