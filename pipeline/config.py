@@ -69,11 +69,33 @@ OBA_STATUS = "https://api.pugetsound.onebusaway.org/api/where/vehicles-for-agenc
 # Agencies whose live positions aren't on OneBusAway but on their own open feed (no key needed).
 # "agency" is the id their routes carry in routes.json ("rt": "19_<route id>").
 LIVE_FEEDS = [
-    {"agency": "19", "url": "https://its.rideralerts.com/InfoPoint/GTFS-Realtime.ashx?Type=VehiclePosition"},  # Intercity Transit
+    {"agency": "19", "url": "https://its.rideralerts.com/InfoPoint/GTFS-Realtime.ashx?Type=VehiclePosition",  # Intercity Transit
+     "alerts": "https://its.rideralerts.com/InfoPoint/GTFS-Realtime.ashx?Type=Alert"},
 ]
+# Service alerts (detours, closed stops, canceled trips) per agency, as GTFS-realtime
+OBA_ALERTS = "https://api.pugetsound.onebusaway.org/api/gtfs_realtime/alerts-for-agency"
+# Agencies whose vehicles come from OneBusAway's REST feed instead of GTFS-realtime: Washington
+# State Ferries' realtime feed leaves out which route a boat is on; the REST feed has it.
+OBA_REST_POSITIONS = ["95"]
+# Washington State Ferries' own API (vessel names, at dock / left dock, arrival estimates and
+# ferry service bulletins). It needs a free WSDOT access code: the WSF_ACCESS_CODE repository
+# secret, or "wsf_access_code" in pipeline/local_secrets.json. Without one, ferries still show
+# live from OneBusAway, without the WSF bulletins.
+WSF_API = "https://www.wsdot.wa.gov/ferries/api"
 
 TILEJSON_URL = "https://tiles.openfreemap.org/planet"
 FONTS_URL = "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf"
+
+
+def wsf_code():
+    code = os.environ.get("WSF_ACCESS_CODE", "").strip()
+    if code:
+        return code
+    path = os.path.join(os.path.dirname(__file__), "local_secrets.json")
+    if os.path.exists(path):
+        import json
+        return json.load(open(path)).get("wsf_access_code", "")
+    return ""
 
 
 def oba_key():

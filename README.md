@@ -6,7 +6,7 @@ Bainbridge, Port Orchard, Gig Harbor and Vashon, and east to Monroe and North Be
 Amtrak, the streetcars, the Monorail, RapidRide, Swift, every King County Metro, Community
 Transit, Pierce Transit, Everett Transit, Kitsap Transit, Intercity Transit and ST Express bus, the Water Taxi,
 state and Kitsap ferries, Dial-a-Ride (DART) areas, Metro Flex zones and the Access
-paratransit area, plus live vehicle positions.
+paratransit area, plus live vehicle positions (ferries included) and service alerts.
 
 Lines follow the real streets, in the manner of the printed Seattle Transit Map: a street
 carrying one route is one line, a street carrying two is a line twice as wide, and busier
@@ -69,8 +69,26 @@ key from oba_api_key@soundtransit.org:
 - locally, put `{"oba_api_key": "..."}` in `pipeline/local_secrets.json` (git-ignored) and
   build with `python3 pipeline/build_site.py --with-key` to test live data.
 
-Each vehicle sits on its route's line and shows when it last reported and whether it's on
-time, early or late (OneBusAway's vehicle status, fetched for one agency per update round).
+Each vehicle is a round badge that says what it is (a bus, a train, a streetcar or a boat)
+with a small pointer showing which way it's heading. It sits on its route's line and shows
+when it last reported and whether it's on time, early or late (OneBusAway's vehicle status,
+fetched for one agency per update round).
+
+Washington State Ferries' boats come from OneBusAway's REST feed (its GTFS-realtime feed
+leaves out which route a boat is on), with the boat's name, where it's headed and whether
+it's early or late. With a free WSDOT access code (register at
+https://www.wsdot.wa.gov/traffic/api/), ferries also show "at the dock / left at / arrives
+about" from WSF's own API: add it as a repository secret named `WSF_ACCESS_CODE`, or as
+`"wsf_access_code"` in `pipeline/local_secrets.json`.
+
+## Service alerts
+
+Detours, closed or moved stops, canceled trips and other notices come from each agency's
+GTFS-realtime alerts through OneBusAway (same key), Intercity Transit's own alert feed, and,
+with the WSDOT access code, Washington State Ferries' bulletins. They're checked every few
+minutes and sorted into disruptions (red), service changes (amber) and notices (blue): all
+of them under Service alerts on the home panel, a route's on its card, a stop's on its card
+and hover card, and a marker on a line's hover card.
 
 The key does end up in the deployed page, as it must for a browser to call the API directly.
 The claude.ai preview can't reach outside servers, so live vehicles show only on the website.
@@ -101,6 +119,12 @@ in tunnels aren't bundled with the buses above them.
 
 Where a route's own shape cuts across a big interchange and the traced streets don't follow
 it, the missing stretch is drawn from the route's shape, so no route breaks off mid-way.
+
+`pipeline/tidy_junctions.py` then tidies the finished network: where a street meets another
+at two points a few dozen meters apart (often a freeway and its ramps), the link between them
+is folded into one junction, so routes going straight across don't jog and turning routes
+turn in one place; and a route is taken off any short dead-end piece next to a junction where
+it really turns.
 
 In the browser, `web/geom.js` lays out each view: every route is one continuous strand,
 corners are rounded, each route keeps its place across the street through junctions (whole

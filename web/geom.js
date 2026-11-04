@@ -80,7 +80,10 @@ const KCTMGeom = (() => {
   }
   const unitVec = (a, b) => { const dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy) || 1; return [dx / L, dy / L]; };
 
-  function chainsFor(edges) {
+  // Continuous paths through a set of segments: at each junction the segments that line up best
+  // are joined. One route (`through`) always carries on where it has just two segments at a
+  // junction, however sharp the turn: it does pass through there.
+  function chainsFor(edges, through = false) {
     const dirAt = (E, end) => {
       const p = E.pts, n = p.length, c = E.cum || (E.cum = cumLen(p)), L = c[n - 1];
       const look = Math.min(L * 0.5, 30);
@@ -107,7 +110,8 @@ const KCTMGeom = (() => {
       cand.sort((a, b) => a[0] - b[0]);
       const used = new Set();
       for (const [d, i, j] of cand) {
-        if (used.has(i) || used.has(j) || d > 0.8 || (list.length > 2 && d > 0.3)) continue;
+        if (used.has(i) || used.has(j)) continue;
+        if (!(through && list.length === 2) && (d > 0.8 || (list.length > 2 && d > 0.3))) continue;
         used.add(i); used.add(j);
         link.set(key(list[i]), list[j]);
         link.set(key(list[j]), list[i]);
@@ -288,7 +292,7 @@ const KCTMGeom = (() => {
     const KEY_CHAINS = new Map([...byKey].map(([v, edges]) => [v, chainsFor(edges)]));
     const byLine = LINES.map(() => []);
     for (const E of EDGES) for (const i of E.l) byLine[i].push(E);
-    const ROUTE_CHAINS = byLine.map((edges) => chainsFor(edges));
+    const ROUTE_CHAINS = byLine.map((edges) => chainsFor(edges, true));
     // where each route passes from one street segment to the next (for keeping its lane)
     const ROUTE_PAIRS = [];
     ROUTE_CHAINS.forEach((chains, i) => {

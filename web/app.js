@@ -430,12 +430,21 @@
         "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1, 13, 2, 16, 2.6] } },
     ];
   }
+  const VEH_SIZE = ["interpolate", ["linear"], ["zoom"], 9, 0.34, 11, 0.44, 12.5, 0.58, 14, 0.78, 15.5, 0.95, 18, 1.08];
+  // what a vehicle is, for its badge
+  const vehKind = (r) => (["link", "sounder", "amtrak"].includes(r.cat) ? "rail" : ["streetcar", "monorail"].includes(r.cat) ? "tram"
+    : ["ferry", "watertaxi"].includes(r.cat) ? "boat" : "bus");
   function liveLayers(P) {
     return [
+      // which way it's heading: a small pointer that turns with the vehicle...
+      { id: "veh-dir", type: "symbol", source: "vehicles", filter: [">=", ["get", "b"], 0],
+        layout: { "icon-image": ["concat", "vdir:", ["get", "c"]], "icon-rotate": ["get", "b"], "icon-rotation-alignment": "map",
+          "icon-allow-overlap": true, "icon-ignore-placement": true, "icon-size": VEH_SIZE, "symbol-sort-key": ["get", "s"] } },
+      // ...under an upright badge that says what it is: a bus, a train, a streetcar or a boat
       { id: "veh-icon", type: "symbol", source: "vehicles",
-        layout: { "icon-image": ["concat", "veh:", ["get", "c"], ":", ["case", [">=", ["get", "b"], 0], "a", "o"]],
-          "icon-rotate": ["max", ["get", "b"], 0], "icon-rotation-alignment": "map", "icon-allow-overlap": true, "icon-ignore-placement": true,
-          "icon-size": ["interpolate", ["linear"], ["zoom"], 9, 0.32, 11, 0.42, 12.5, 0.58, 14, 0.8, 15.5, 1, 18, 1.15], "symbol-sort-key": ["get", "s"] } },
+        layout: { "icon-image": ["concat", "veh:", ["get", "c"], ":", ["get", "m"]], "icon-rotation-alignment": "viewport",
+          "icon-allow-overlap": true, "icon-ignore-placement": true, "icon-size": VEH_SIZE, "symbol-sort-key": ["get", "s"] },
+        paint: { "icon-opacity": ["case", ["==", ["get", "est"], 1], 0.82, 1] } },
       { id: "veh-label", type: "symbol", source: "vehicles", minzoom: 14.5,
         layout: { "text-field": ["get", "lab"], "text-font": F_BOLD, "text-size": 11.5, "text-anchor": "left", "text-offset": [1.05, 0],
           "text-optional": true, "text-padding": 1 },
@@ -779,6 +788,7 @@
   const live = { vehicles: new Map(), timer: 0, last: 0, error: false, polling: false, anim: 0, count: 0, pauseUntil: 0,
     status: new Map(), statusTurn: 0 };
   const plainId = (x) => String(x || "").replace(/^\d+_/, "");
+  const liveState = () => live; // for the test scripts
   let RTMAP = new Map();
   function varint(r) { let x = 0, m = 1, b; do { b = r.b[r.p++]; x += (b & 0x7f) * m; m *= 128; } while (b & 0x80); return x; }
   function skipField(r, wt) { if (wt === 0) varint(r); else if (wt === 1) r.p += 8; else if (wt === 2) { const n = varint(r); r.p += n; } else if (wt === 5) r.p += 4; else throw new Error("bad wire type"); }
@@ -816,6 +826,295 @@
     });
     return out;
   }
+  // OneBusAway's REST vehicles (with trip references) in the same shape as parseVehicles gives;
+  // their on-time status comes along too
+  function restVehicles(a, d) {
+    const data = d && d.data, out = [];
+    if (!data) return out;
+    const trips = new Map(((data.references && data.references.trips) || []).map((t) => [t.id, t]));
+    for (const x of data.list || []) {
+      const t = trips.get(x.tripId), ts = x.tripStatus || {}, loc = x.location || ts.position;
+      if (!t || !loc) continue;
+      const o = ts.orientation; // degrees counterclockwise from east
+      out.push({ route: plainId(t.routeId), trip: plainId(x.tripId), lat: loc.lat, lon: loc.lon, id: plainId(x.vehicleId), head: t.tripHeadsign || "",
+        bearing: o != null && isFinite(o) ? ((90 - o) % 360 + 360) % 360 || 0.01 : undefined, ts: x.lastUpdateTime ? Math.round(x.lastUpdateTime / 1000) : 0 });
+      live.status.set(a + "_" + plainId(x.vehicleId), { dev: ts.scheduleDeviation, predicted: !!ts.predicted, upd: x.lastUpdateTime, got: Date.now() });
+    }
+    return out;
+  }
+  // Washington State Ferries' fleet, by WSF vessel id
+  const WSF_VESSELS = { 1: "Cathlamet", 2: "Chelan", 15: "Issaquah", 17: "Kaleetan", 18: "Kitsap", 19: "Kittitas", 25: "Puyallup",
+    28: "Sealth", 30: "Spokane", 32: "Tacoma", 33: "Tillikum", 36: "Walla Walla", 37: "Wenatchee", 38: "Yakima", 52: "Kennewick",
+    65: "Chetzemoka", 66: "Salish", 68: "Tokitae", 69: "Samish", 74: "Chimacum", 75: "Suquamish" };
+  // WSF's own API (needs an access code): where each boat is in its crossing, and bulletins.
+  // It answers JSONP, which works from any page.
+  const wsfOn = () => !!(LIVE && LIVE.wsf && LIVE.wsf.code && !/^__/.test(LIVE.wsf.code));
+  let jsonpSeq = 0;
+  function jsonp(url, ms = 12000) {
+    return new Promise((ok, fail) => {
+      const cb = `__kctm_jp${++jsonpSeq}`, el = document.createElement("script");
+      const done = (f, v) => { clearTimeout(t); delete window[cb]; el.remove(); f(v); };
+      const t = setTimeout(() => done(fail, new Error("timeout")), ms);
+      window[cb] = (data) => done(ok, data);
+      el.onerror = () => done(fail, new Error("load"));
+      el.src = `${url}${url.includes("?") ? "&" : "?"}callback=${cb}`;
+      document.head.appendChild(el);
+    });
+  }
+  const wsfDate = (x) => { const m = /Date\((\d+)/.exec(String(x || "")); return m ? +m[1] : 0; };
+  const wsf = { vessels: new Map(), got: 0 };
+  async function pollWsf() {
+    if (Date.now() - wsf.got < 15000) return;
+    wsf.got = Date.now();
+    try {
+      const list = await jsonp(`${LIVE.wsf.base}/vessels/rest/vessellocations?apiaccesscode=${encodeURIComponent(LIVE.wsf.code)}`);
+      wsf.vessels = new Map((list || []).map((v) => [String(v.VesselID), v]));
+    } catch (e) { /* the boats still show from OneBusAway */ }
+  }
+  // "Left Kingston 2:05 PM · arrives Edmonds about 2:35 PM", "At the dock in Bainbridge Island · leaves 3:10 PM"
+  function ferryLine(v) {
+    const w = v && v.agency === "95" ? wsf.vessels.get(String(v.vid)) : null;
+    if (!w) return v && v.head ? esc(v.head) : "";
+    const t = (x) => (wsfDate(x) ? CLOCK.format(new Date(wsfDate(x))) : "");
+    if (w.AtDock) return esc(`At the dock in ${w.DepartingTerminalName}${t(w.ScheduledDeparture) ? ` · leaves ${t(w.ScheduledDeparture)}` : ""}`);
+    return esc(`${w.DepartingTerminalName ? `Left ${w.DepartingTerminalName}${t(w.LeftDock) ? " " + t(w.LeftDock) : ""}` : ""}${w.ArrivingTerminalName ? ` · arrives ${w.ArrivingTerminalName}${t(w.Eta) ? " about " + t(w.Eta) : ""}` : ""}`);
+  }
+  // a boat's name and where it is in its crossing
+  function vesselLine(id, tag = "span") {
+    const v = live.vehicles.get(id);
+    if (!v || !(v.name || v.head)) return "";
+    const where = ferryLine(v);
+    return `<${tag} class="vs-sub">${v.name ? `<b>${esc(v.name)}</b>` : ""}${v.name && where ? " · " : ""}${where}</${tag}>`;
+  }
+  // ---------------------------------------------------------------- service alerts
+  // Detours, closed or moved stops, canceled trips and other notices, from each agency's
+  // GTFS-realtime alerts (through OneBusAway; Intercity Transit's own feed) and, with an access
+  // code, Washington State Ferries' bulletins. Checked every few minutes.
+  const ALERT_MS = 4 * 60000;
+  const alerts = { list: [], byRoute: new Map(), byStop: new Map(), got: 0, polling: false };
+  const STOP_PREFIX = { 1: "kcm", 23: "kcm", 40: "st", 29: "ct", 3: "pt", 97: "et", 20: "kt", 95: "wsf", 19: "it" };
+  function parseAlerts(u8) {
+    const r = { b: u8, p: 0 }, td = new TextDecoder(), out = [];
+    const vi = () => varint(r);
+    const str = () => { const n = vi(), t = td.decode(u8.subarray(r.p, r.p + n)); r.p += n; return t; };
+    const msg = (end, fn) => { while (r.p < end) { const tag = vi(), f = Math.floor(tag / 8), wt = tag & 7; if (!fn(f, wt)) skipField(r, wt); } };
+    const sub = (fn) => { const n = vi(), end = r.p + n; msg(end, fn); r.p = end; return true; };
+    // a translated text: the English one when there's a choice
+    const tstr = () => {
+      let first = "", en = "";
+      sub((f, wt) => {
+        if (f !== 1 || wt !== 2) return false;
+        let text = "", lang = "";
+        sub((g, w) => { if (g === 1 && w === 2) { text = str(); return true; } if (g === 2 && w === 2) { lang = str(); return true; } return false; });
+        if (!first) first = text;
+        if (!en && (!lang || /^en/i.test(lang))) en = text;
+        return true;
+      });
+      return en || first;
+    };
+    msg(u8.length, (f, wt) => {
+      if (f !== 2 || wt !== 2) return false; // FeedMessage.entity
+      const a = { id: "", periods: [], ents: [], effect: 0, url: "", header: "", desc: "" };
+      let isAlert = false;
+      sub((f2, wt2) => {
+        if (f2 === 1 && wt2 === 2) { a.id = str(); return true; }
+        if (f2 !== 5 || wt2 !== 2) return false; // FeedEntity.alert
+        isAlert = true;
+        return sub((f3, wt3) => {
+          if (f3 === 1 && wt3 === 2) { const q = { s: 0, e: 0 }; sub((g, w) => { if (w === 0 && (g === 1 || g === 2)) { const v = vi(); if (g === 1) q.s = v; else q.e = v; return true; } return false; }); a.periods.push(q); return true; }
+          if (f3 === 5 && wt3 === 2) {
+            const e = {};
+            sub((g, w) => {
+              if (g === 1 && w === 2) { e.agency = str(); return true; }
+              if (g === 2 && w === 2) { e.route = str(); return true; }
+              if (g === 4 && w === 2) return sub((h, x) => { if (h === 5 && x === 2) { e.route = e.route || str(); return true; } return false; });
+              if (g === 5 && w === 2) { e.stop = str(); return true; }
+              return false;
+            });
+            a.ents.push(e);
+            return true;
+          }
+          if (f3 === 7 && wt3 === 0) { a.effect = vi(); return true; }
+          if (f3 === 8 && wt3 === 2) { a.url = tstr().trim(); return true; }
+          if (f3 === 10 && wt3 === 2) { a.header = tstr(); return true; }
+          if (f3 === 11 && wt3 === 2) { a.desc = tstr(); return true; }
+          return false;
+        });
+      });
+      if (isAlert) out.push(a);
+      return true;
+    });
+    return out;
+  }
+  // how much it matters: a trip or service that isn't running, a change to how it runs, or a notice
+  function alertLevel(text, effect) {
+    if ([1, 2, 3].includes(effect) || /\b(cancel+ed|cancel+ations?|suspended|no service|not (be )?(running|operating|serving)|out of service|significant delays?|major delays?|disrupt)/i.test(text)) return 2;
+    if ([4, 6, 9].includes(effect) || /\b(detour|re-?rout|relocat|closed|closure|moved|temporar|skip|bypass|delay|reduced|shuttle)/i.test(text)) return 1;
+    return 0;
+  }
+  // Agency feed alerts -> { id, agency, title, desc, url, level, start, end, routes, stops }
+  function readAlerts(feedAgency, raw, now) {
+    const out = [];
+    for (const a of raw) {
+      const live = !a.periods.length || a.periods.some((q) => (!q.s || q.s <= now + 3600) && (!q.e || q.e >= now));
+      if (!live) continue;
+      const routes = new Set(), stops = new Set();
+      for (const e of a.ents) {
+        const ag = e.agency && e.agency !== "0" ? e.agency : feedAgency;
+        if (e.route) { const r = RTMAP.get(`${ag}_${e.route}`); if (r) routes.add(r.id); }
+        if (e.stop) stops.add(`${STOP_PREFIX[ag] || ag}-${e.stop}`);
+      }
+      // some feeds put the whole notice in the title: its first line is the title
+      let title = (a.header || "").trim(), desc = (a.desc || "").trim();
+      const nl = title.indexOf("\n");
+      if (nl > 0) { desc = (title.slice(nl + 1).trim() + (desc ? "\n\n" + desc : "")).trim(); title = title.slice(0, nl).trim(); }
+      if (!title) continue;
+      const start = Math.min(...a.periods.map((q) => q.s || Infinity), Infinity), end = Math.max(...a.periods.map((q) => q.e || 0), 0);
+      out.push({ id: `${feedAgency}:${a.id || title}`, agency: feedAgency, title, desc, url: /^https?:/i.test(a.url) ? a.url : "",
+        level: alertLevel(title + " " + desc, a.effect), start: isFinite(start) ? start : 0, end, routes, stops });
+    }
+    return out;
+  }
+  // WSF bulletins name their routes by terminal ("Faunt/Va/SW", "Sea/Bi", "Ed/King")
+  const WSF_ROUTE_WORDS = [
+    [/\bfaunt|\bva(shon)?\b|\bsw\b|southworth/i, ["wsf-fauntleroy-southworth", "wsf-fauntleroy-vashon-island", "wsf-southworth-vashon-island"]],
+    [/sea(ttle)?\s*\/\s*bi|bainbridge/i, ["wsf-seattle-bainbridge-island"]],
+    [/sea(ttle)?\s*\/\s*br|bremerton/i, ["wsf-seattle-bremerton"]],
+    [/\bed(m|monds)?\s*\/\s*king|kingston/i, ["wsf-edmonds-kingston"]],
+    [/muk(ilteo)?\s*\/\s*clin|clinton/i, ["wsf-clinton-mukilteo"]],
+    [/\bpd\s*\/\s*tah|point defiance|tahlequah/i, ["wsf-point-defiance-tahlequah"]],
+  ];
+  const stripHTML = (h) => { const d = document.createElement("div"); d.innerHTML = String(h || "").replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n\n"); return (d.textContent || "").replace(/\n{3,}/g, "\n\n").trim(); };
+  function wsfAlerts(list, now) {
+    const out = [];
+    for (const b of list || []) {
+      const title = (b.AlertFullTitle || b.RouteAlertText || "").trim();
+      if (!title) continue;
+      const head = title.split(/ - |: /)[0];
+      let ids = [];
+      if (b.AllRoutesFlag) ids = ROUTES.filter((r) => r.id.startsWith("wsf-")).map((r) => r.id);
+      else for (const [re, rs] of WSF_ROUTE_WORDS) if (re.test(head)) ids.push(...rs);
+      ids = ids.filter((id) => RBY[id] && LINEIDX[id] != null);
+      if (!ids.length) continue; // a route outside this map (the San Juans, Port Townsend)
+      const desc = stripHTML(b.BulletinText || b.HomepageAlertText || "");
+      out.push({ id: `95:${b.BulletinID}`, agency: "95", title, desc, url: "https://wsdot.wa.gov/travel/washington-state-ferries",
+        level: alertLevel(title + " " + desc, 0), start: Math.round(wsfDate(b.PublishDate) / 1000), end: 0, routes: new Set(ids), stops: new Set() });
+    }
+    return out;
+  }
+  async function pollAlerts() {
+    if (!LIVE || alerts.polling || document.hidden || Date.now() - alerts.got < ALERT_MS - 5000) return;
+    alerts.polling = true;
+    const now = Date.now() / 1000, found = [];
+    const sources = LIVE.agencies.map((a) => [a, `${LIVE.alerts}/${a}.pb?key=${encodeURIComponent(LIVE.key)}`])
+      .concat((LIVE.feeds || []).filter((f) => f.alerts).map((f) => [f.agency, f.alerts]));
+    for (const [a, url] of LIVE.alerts ? sources : []) {
+      try {
+        const r = await fetch(url, { cache: "no-store" });
+        if (r.status === 429) break;
+        if (r.ok) found.push(...readAlerts(a, parseAlerts(new Uint8Array(await r.arrayBuffer())), now));
+      } catch (e) { /* an agency's alerts are missing this round; the rest still show */ }
+      await new Promise((ok) => setTimeout(ok, 200));
+    }
+    if (wsfOn()) {
+      try { found.push(...wsfAlerts(await jsonp(`${LIVE.wsf.base}/schedule/rest/alerts?apiaccesscode=${encodeURIComponent(LIVE.wsf.code)}`), now)); } catch (e) { /* bulletins later */ }
+    }
+    // the same notice can come through two agencies' feeds: keep it once, with every route it names
+    const byText = new Map();
+    for (const a of found) {
+      if (!a.routes.size && ![...a.stops].some((sid) => stopIndex[sid])) continue; // nothing on this map
+      const k = a.title.toLowerCase().replace(/\s+/g, " ");
+      const prev = byText.get(k);
+      if (prev) { a.routes.forEach((x) => prev.routes.add(x)); a.stops.forEach((x) => prev.stops.add(x)); prev.level = Math.max(prev.level, a.level); }
+      else byText.set(k, a);
+    }
+    alerts.list = [...byText.values()].sort((x, y) => (y.level - x.level) || (y.start - x.start));
+    alerts.byRoute = new Map(); alerts.byStop = new Map();
+    for (const a of alerts.list) {
+      for (const id of a.routes) { if (!alerts.byRoute.has(id)) alerts.byRoute.set(id, []); alerts.byRoute.get(id).push(a); }
+      for (const id of a.stops) { if (!alerts.byStop.has(id)) alerts.byStop.set(id, []); alerts.byStop.get(id).push(a); }
+    }
+    alerts.got = Date.now();
+    alerts.polling = false;
+    onAlerts();
+  }
+  const routeAlerts = (id) => alerts.byRoute.get(id) || [];
+  function stopAlerts(ids) {
+    const seen = new Set(), out = [];
+    for (const id of ids) for (const a of alerts.byStop.get(id) || []) if (!seen.has(a.id)) { seen.add(a.id); out.push(a); }
+    return out.sort((x, y) => y.level - x.level);
+  }
+  const LEVEL = [["notice", "Notice"], ["change", "Service change"], ["stop", "Disruption"]];
+  const agencyName = (a) => ({ 1: "King County Metro", 40: "Sound Transit", 29: "Community Transit", 3: "Pierce Transit", 97: "Everett Transit",
+    20: "Kitsap Transit", 23: "Seattle Streetcar", 95: "Washington State Ferries", 19: "Intercity Transit" })[a] || "";
+  const alertIcon = (lvl) => `<span class="al-ic al-${LEVEL[lvl][0]}" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M8 1.6 15 14H1Z" fill="currentColor"/><path d="M8 6v3.6" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/><circle cx="8" cy="11.6" r=".95" fill="#fff"/></svg></span>`;
+  const alertWhen = (a) => {
+    const d = (t) => new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", month: "short", day: "numeric" }).format(new Date(t * 1000));
+    if (a.end && a.end < Date.now() / 1000 + 86400 * 400) {
+      if (a.start && d(a.start) === d(a.end)) return d(a.end);
+      return `${a.start ? d(a.start) + " – " : "Until "}${d(a.end)}`;
+    }
+    return a.start ? `Since ${d(a.start)}` : "";
+  };
+  // one alert, folded: its title; open: the details and a link
+  function alertHTML(a, { routes = true } = {}) {
+    const rs = routes ? [...a.routes].map((id) => RBY[id]).filter(Boolean).sort(tagOrder) : [];
+    const meta = [agencyName(a.agency), alertWhen(a)].filter(Boolean).join(" · ");
+    return `<li class="alert al-${LEVEL[a.level][0]}"><details><summary>${alertIcon(a.level)}<span class="al-body"><span class="al-kind">${LEVEL[a.level][1]}</span>
+      <span class="al-title">${esc(a.title)}</span>${rs.length ? `<span class="al-routes">${rs.slice(0, 8).map((r) => `<button type="button" class="al-r" data-route="${esc(r.id)}">${badgeHTML(r)}</button>`).join("")}${rs.length > 8 ? `<span class="sc-more">+${rs.length - 8}</span>` : ""}</span>` : ""}</span>
+      <svg class="al-chev" width="12" height="8" viewBox="0 0 12 8" aria-hidden="true"><path d="m1.5 1.5 4.5 4.5 4.5-4.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
+      <div class="al-more">${a.desc ? `<p>${esc(a.desc).replace(/\n/g, "<br>")}</p>` : ""}${meta ? `<p class="al-meta">${esc(meta)}</p>` : ""}${a.url ? `<a class="al-link" href="${esc(a.url)}" target="_blank" rel="noopener">More from ${esc(agencyName(a.agency) || "the agency")}<span aria-hidden="true">↗</span></a>` : ""}</div></details></li>`;
+  }
+  function bindAlertList(root) {
+    for (const b of root.querySelectorAll(".al-r[data-route]")) {
+      b.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); selectRoute(b.dataset.route); });
+      previewOnHover(b);
+    }
+  }
+  // a short line for cards: "⚠ Detour: Route 24 ..." (the most serious one) and how many more
+  function alertTeaser(list) {
+    if (!list.length) return "";
+    const a = list[0];
+    return `<div class="sc-alert al-${LEVEL[a.level][0]}">${alertIcon(a.level)}<span>${esc(a.title.length > 110 ? a.title.slice(0, 108) + "…" : a.title)}${list.length > 1 ? ` <b>+${list.length - 1} more</b>` : ""}</span></div>`;
+  }
+  // new alerts: refresh what's on screen
+  function onAlerts() {
+    if (panelView === "alerts") showAlerts(true);
+    else if (!selected) showHome(true);
+    else if (selected.type === "route" && RBY[selected.id]) fillRouteAlerts(RBY[selected.id]);
+    else if (stopIndex[selected.id]) fillStopAlerts(stopIndex[selected.id]);
+  }
+  function fillRouteAlerts(r) {
+    const box = $("#routeAlerts");
+    if (!box) return;
+    const list = routeAlerts(r.id);
+    box.innerHTML = list.length ? `<h3 class="section">Service alerts</h3><ul class="group alerts" role="list">${list.map((a) => alertHTML(a, { routes: a.routes.size > 1 })).join("")}</ul>` : "";
+    bindAlertList(box);
+  }
+  const stopIdsOf = (s) => [s.id, s.key, ...(s.stops || [])].filter(Boolean);
+  function fillStopAlerts(s) {
+    const box = $("#stopAlerts");
+    if (!box) return;
+    const list = stopAlerts(stopIdsOf(s));
+    box.innerHTML = list.length ? `<h3 class="section">Service alerts</h3><ul class="group alerts" role="list">${list.map((a) => alertHTML(a)).join("")}</ul>` : "";
+    bindAlertList(box);
+  }
+  function showAlerts(quiet) {
+    const groups = [2, 1, 0].map((lvl) => [lvl, alerts.list.filter((a) => a.level === lvl)]).filter(([, l]) => l.length);
+    const html = `<div class="alerts-view"><button class="back press" id="back" type="button"><svg width="12" height="20" viewBox="0 0 12 20" aria-hidden="true"><path d="M10 2 2 10l8 8" stroke="currentColor" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>Map</button>
+      <div class="view-head"><h2 class="view-title">Service alerts</h2></div>
+      ${groups.length ? groups.map(([lvl, l]) => `<h2 class="section">${["Notices", "Service changes", "Disruptions"][lvl]} <span class="count">${l.length}</span></h2><ul class="group alerts" role="list">${l.map((a) => alertHTML(a)).join("")}</ul>`).join("")
+        : `<p class="hint">${alerts.got ? "No service alerts right now." : "Checking for service alerts…"}</p>`}
+      <p class="hint">From the agencies' live alert feeds, checked every few minutes${wsfOn() ? ", including Washington State Ferries bulletins" : ""}. Tap a route number to see it on the map.</p></div>`;
+    const existing = body().querySelector(".alerts-view");
+    const open = existing ? [...existing.querySelectorAll("details[open]")].map((d) => d.closest(".alert").querySelector(".al-title").textContent) : [];
+    if (quiet && existing) existing.outerHTML = html; else setView(html);
+    for (const d of body().querySelectorAll(".alerts-view details")) if (open.includes(d.querySelector(".al-title").textContent)) d.open = true;
+    $("#back").addEventListener("click", () => { panelView = "home"; showHome(); });
+    bindAlertList(body());
+  }
+  setInterval(() => { if (enabled.has("live")) pollAlerts(); }, 30000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) pollAlerts(); });
   const geoDist = (a, b) => { const [x0, y0] = toM(a[0], a[1]), [x1, y1] = toM(b[0], b[1]); return Math.hypot(x1 - x0, y1 - y0); };
   const geoBearing = (a, b) => { const [x0, y0] = toM(a[0], a[1]), [x1, y1] = toM(b[0], b[1]); return (Math.atan2(x1 - x0, y1 - y0) * 180 / Math.PI + 360) % 360; };
   function vehPos(v, now) {
@@ -831,14 +1130,19 @@
     // if the server says "too many requests", stop and wait a minute.
     const res = [];
     // OneBusAway agencies, then agencies with their own open feed (Intercity Transit)
-    const sources = LIVE.agencies.map((a) => [a, `${LIVE.base}/${a}.pb?key=${encodeURIComponent(LIVE.key)}`, true])
-      .concat((LIVE.feeds || []).map((f) => [f.agency, f.url, false]));
-    for (const [a, url, oba] of sources) {
+    // (ferries come from the REST feed, which says which route each boat is on)
+    const restPos = new Set(LIVE.rest || []);
+    const sources = LIVE.agencies.map((a) => [a, restPos.has(a)
+      ? `${LIVE.status}/${a}.json?key=${encodeURIComponent(LIVE.key)}&includeReferences=true`
+      : `${LIVE.base}/${a}.pb?key=${encodeURIComponent(LIVE.key)}`, true, restPos.has(a)])
+      .concat((LIVE.feeds || []).map((f) => [f.agency, f.url, false, false]));
+    if (LIVE.wsf && wsfOn()) pollWsf(); // vessel details from WSF itself, when we have its access code
+    for (const [a, url, oba, rest] of sources) {
       try {
         const r = await fetch(url, { cache: "no-store" });
         if (r.status === 429 && oba) { live.pauseUntil = Date.now() + 60000; break; }
         if (!r.ok) throw new Error(String(r.status));
-        res.push({ status: "fulfilled", value: [a, parseVehicles(new Uint8Array(await r.arrayBuffer()))] });
+        res.push({ status: "fulfilled", value: [a, rest ? restVehicles(a, await r.json()) : parseVehicles(new Uint8Array(await r.arrayBuffer()))] });
       } catch (e) {
         res.push({ status: "rejected", reason: e });
       }
@@ -846,7 +1150,7 @@
     }
     // on time or late: one agency's vehicle status per round (King County Metro every other round)
     if (LIVE.status && Date.now() >= live.pauseUntil) {
-      const order = LIVE.agencies.flatMap((a) => (a === "1" ? ["1"] : ["1", a]));
+      const order = LIVE.agencies.filter((a) => !(LIVE.rest || []).includes(a)).flatMap((a) => (a === "1" ? ["1"] : ["1", a]));
       const a = order[live.statusTurn++ % order.length];
       try {
         const r = await fetch(`${LIVE.status}/${a}.json?key=${encodeURIComponent(LIVE.key)}&includeReferences=false`, { cache: "no-store" });
@@ -875,12 +1179,14 @@
         const id = `${a}_${v.id || v.trip}`, to = [v.lon, v.lat];
         seen.add(id);
         const prev = live.vehicles.get(id);
+        // Washington State Ferries' boats go by name (OneBusAway's vehicle number is WSF's vessel id)
+        const name = a === "95" && WSF_VESSELS[v.id] ? WSF_VESSELS[v.id] : "";
         if (prev) {
           const from = vehPos(prev, now), d = geoDist(from, to);
           const b = v.bearing != null && v.bearing > 0 ? v.bearing : d > 12 ? geoBearing(from, to) : prev.b;
-          Object.assign(prev, { from, to, t0: now, r, b, ts: v.ts, label: v.label || prev.label, vid: v.id });
+          Object.assign(prev, { from, to, t0: now, r, b, ts: v.ts, label: v.label || prev.label, vid: v.id, name, head: v.head || prev.head });
         } else {
-          live.vehicles.set(id, { id, agency: a, from: to, to, t0: now, r, b: v.bearing > 0 ? v.bearing : -1, ts: v.ts, label: v.label, vid: v.id });
+          live.vehicles.set(id, { id, agency: a, from: to, to, t0: now, r, b: v.bearing > 0 ? v.bearing : -1, ts: v.ts, label: v.label, vid: v.id, name, head: v.head });
         }
       }
       for (const [id, v] of live.vehicles) if (v.agency === a && !seen.has(id)) live.vehicles.delete(id);
@@ -953,7 +1259,7 @@
     const mode = live.mode = vehMode();
     let list = [];
     if (!enabled.has("live")) list = [];
-    else if (mode === "live") for (const v of live.vehicles.values()) list.push({ id: v.id, r: v.r, pos: vehPos(v, now), b: v.b });
+    else if (mode === "live") for (const v of live.vehicles.values()) list.push({ id: v.id, r: v.r, pos: vehPos(v, now), b: v.b, name: v.name });
     else if (mode === "est") list = estVehicles();
     live.current = list;
     const sel = selected && selected.type === "route" ? selected.id : null;
@@ -968,7 +1274,7 @@
       if (sel ? sel !== r.id : (!enabledCat(r.cat) || CAT[dkey(r)].tier > tier)) continue;
       const c = tagColor(r);
       const [pos, b] = onLine(r, v.pos, v.b == null ? -1 : v.b);
-      feats.push({ type: "Feature", properties: { id: v.id, r: r.id, c, tc: c, lab: shortLabel(r), b: Math.round(b),
+      feats.push({ type: "Feature", properties: { id: v.id, r: r.id, c, tc: c, lab: v.name || shortLabel(r), b: Math.round(b), m: vehKind(r),
         s: 20 - CAT[dkey(r)].prio, est: v.est ? 1 : 0 }, geometry: { type: "Point", coordinates: pos } });
     }
     live.count = feats.length;
@@ -1043,6 +1349,7 @@
   function startLive() {
     if (!LIVE || live.timer) return;
     pollLive();
+    pollAlerts();
     live.timer = setInterval(pollLive, POLL_MS);
   }
   function stopLive() {
@@ -1051,32 +1358,63 @@
     renderVehicles();
     updateLiveUI();
   }
+  // A vehicle: a round badge in its line's color with a white symbol (bus, train, streetcar,
+  // boat), and a separate pointer showing which way it's going.
+  const VEH_PX = 36, VEH_R = 10;
+  function vehGlyph(ctx, mode, color) {
+    const fillW = () => { ctx.fillStyle = "#fff"; ctx.fill(); };
+    const fillC = () => { ctx.fillStyle = color; ctx.fill(); };
+    const rr = (x, y, w, h, r) => { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); };
+    const dot = (x, y, r) => { ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); };
+    const line = (pts, w) => { ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]); for (const q of pts.slice(1)) ctx.lineTo(q[0], q[1]);
+      ctx.strokeStyle = "#fff"; ctx.lineWidth = w; ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.stroke(); };
+    if (mode === "bus") {
+      rr(-0.62, -0.8, 1.24, 1.38, 0.24); fillW();
+      rr(-0.46, -0.62, 0.92, 0.5, 0.08); fillC();
+      dot(-0.31, 0.3, 0.09); fillC(); dot(0.31, 0.3, 0.09); fillC();
+      rr(-0.52, 0.5, 0.26, 0.3, 0.06); fillW(); rr(0.26, 0.5, 0.26, 0.3, 0.06); fillW();
+    } else if (mode === "rail" || mode === "tram") {
+      const top = mode === "rail" ? -0.84 : -0.6;
+      rr(-0.58, top, 1.16, 0.5 - top, mode === "rail" ? 0.36 : 0.22); fillW();
+      rr(-0.42, top + 0.2, 0.84, 0.46, 0.1); fillC();
+      dot(-0.27, 0.24, 0.085); fillC(); dot(0.27, 0.24, 0.085); fillC();
+      line([[-0.3, 0.5], [-0.52, 0.88]], 0.13); line([[0.3, 0.5], [0.52, 0.88]], 0.13);
+      if (mode === "tram") { line([[-0.28, -0.62], [0, -0.94], [0.28, -0.62]], 0.11); line([[-0.2, -0.94], [0.2, -0.94]], 0.11); }
+    } else { // boat
+      ctx.beginPath(); ctx.moveTo(-0.9, 0.02); ctx.lineTo(0.9, 0.02); ctx.lineTo(0.62, 0.5); ctx.lineTo(-0.62, 0.5); ctx.closePath(); fillW();
+      rr(-0.52, -0.4, 0.94, 0.46, 0.08); fillW();
+      for (const x of [-0.4, -0.13, 0.14]) { rr(x, -0.28, 0.19, 0.16, 0.04); fillC(); }
+      rr(0.12, -0.74, 0.22, 0.4, 0.05); fillW();
+      ctx.beginPath(); ctx.moveTo(-0.84, 0.74);
+      for (let i = 0; i < 4; i++) { const x0 = -0.84 + i * 0.42; ctx.quadraticCurveTo(x0 + 0.105, 0.62, x0 + 0.21, 0.74); ctx.quadraticCurveTo(x0 + 0.315, 0.86, x0 + 0.42, 0.74); }
+      ctx.strokeStyle = "#fff"; ctx.lineWidth = 0.11; ctx.lineCap = "round"; ctx.stroke();
+    }
+  }
   function drawVehicle(id) {
-    const [, color, kind] = id.split(":");
+    const [kind, color, mode] = id.split(":");
     const dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
-    const S = 30 * dpr, cv = document.createElement("canvas");
+    const S = VEH_PX * dpr, cv = document.createElement("canvas");
     cv.width = cv.height = S;
-    const ctx = cv.getContext("2d"), c = S / 2, R = 7.5 * dpr;
-    ctx.shadowColor = "rgba(0,0,0,.28)"; ctx.shadowBlur = 3 * dpr; ctx.shadowOffsetY = 1 * dpr;
-    ctx.fillStyle = "#fff";
-    ctx.beginPath();
-    if (kind === "a") { // teardrop pointing along the direction of travel
-      ctx.moveTo(c, c - R - 6 * dpr);
-      ctx.arc(c, c, R + 2 * dpr, -Math.PI / 2 + 0.62, -Math.PI / 2 - 0.62 + Math.PI * 2);
-      ctx.closePath();
-    } else ctx.arc(c, c, R + 2 * dpr, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.shadowColor = "transparent";
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    if (kind === "a") {
-      ctx.moveTo(c, c - R - 3.4 * dpr);
-      ctx.arc(c, c, R, -Math.PI / 2 + 0.55, -Math.PI / 2 - 0.55 + Math.PI * 2);
-      ctx.closePath();
-    } else ctx.arc(c, c, R, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "#fff";
-    ctx.beginPath(); ctx.arc(c, c, 2.6 * dpr, 0, Math.PI * 2); ctx.fill();
+    const ctx = cv.getContext("2d"), c = S / 2, R = VEH_R * dpr;
+    if (kind === "vdir") {
+      // a pointer just outside the badge's ring, at the top (the layer turns it to the heading)
+      const tip = c - R - 6.5 * dpr, base = c - R + 1.5 * dpr, hw = 5.2 * dpr;
+      ctx.shadowColor = "rgba(0,0,0,.25)"; ctx.shadowBlur = 2.5 * dpr; ctx.shadowOffsetY = 0.8 * dpr;
+      ctx.beginPath(); ctx.moveTo(c, tip - 1.6 * dpr); ctx.lineTo(c + hw + 1.6 * dpr, base); ctx.lineTo(c - hw - 1.6 * dpr, base); ctx.closePath();
+      ctx.fillStyle = "#fff"; ctx.fill();
+      ctx.shadowColor = "transparent";
+      ctx.beginPath(); ctx.moveTo(c, tip); ctx.lineTo(c + hw, base); ctx.lineTo(c - hw, base); ctx.closePath();
+      ctx.fillStyle = color; ctx.fill();
+    } else {
+      ctx.shadowColor = "rgba(0,0,0,.3)"; ctx.shadowBlur = 3.5 * dpr; ctx.shadowOffsetY = 1 * dpr;
+      ctx.beginPath(); ctx.arc(c, c, R + 2 * dpr, 0, Math.PI * 2); ctx.fillStyle = "#fff"; ctx.fill();
+      ctx.shadowColor = "transparent";
+      ctx.beginPath(); ctx.arc(c, c, R, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill();
+      ctx.save(); ctx.translate(c, c); ctx.scale(R * 0.6, R * 0.6);
+      vehGlyph(ctx, mode || "bus", color);
+      ctx.restore();
+    }
     const d = ctx.getImageData(0, 0, S, S);
     if (!map.hasImage(id)) map.addImage(id, { width: S, height: S, data: d.data }, { pixelRatio: dpr });
   }
@@ -1370,6 +1708,7 @@
     const kind = s.kind === "stop" ? (codes.length > 1 ? `Stops ${esc(codes.join(" & "))}` : codes.length ? `Stop ${esc(codes[0])}` : "Bus stop") : "Station";
     let h = `<div class="sc"><div class="sc-name">${esc(s.name)}</div><div class="sc-sub">${kind} · ${rs.length} route${rs.length === 1 ? "" : "s"}${end === 2 ? " · <b>End of the line</b>" : end === 1 ? " · <b>Trips start here</b>" : ""}</div>`;
     if (rs.length) h += `<div class="sc-badges">${rs.slice(0, 10).map((r) => badgeHTML(r)).join("")}${rs.length > 10 ? `<span class="sc-more">+${rs.length - 10}</span>` : ""}</div>`;
+    h += alertTeaser(stopAlerts([...new Set(all.flatMap(stopIdsOf))]));
     if (deps && deps.length) {
       h += `<div class="sc-next">${deps.map((d) => `<div class="sc-row">${badgeHTML(d.r)}<span class="sc-to">${esc(placeName(d.to))}</span><span class="sc-t">${d.t < 60 ? "now" : Math.round(d.t / 60) + " min"}</span></div>`).join("")}</div>`
         + `<div class="sc-foot">Next departures, from the timetable</div>`;
@@ -1538,7 +1877,16 @@
   }
   function showHome(quiet) {
     if (panelView === "layers") return showLayers(quiet);
+    if (panelView === "alerts") return showAlerts(quiet);
     const shown = LAYERS.filter((l) => enabled.has(l.key)).length;
+    const nAl = alerts.list.length, worst = nAl ? alerts.list[0].level : 0;
+    const nStop = alerts.list.filter((a) => a.level === 2).length, nChg = alerts.list.filter((a) => a.level === 1).length;
+    const alertRow = !LIVE ? "" : `<li><button class="row nav-row" id="openAlerts" type="button">
+        <span class="icon al-row-ic">${alertIcon(nAl ? worst : 0)}</span>
+        <span class="txt"><span class="name">Service alerts${nAl ? `<span class="count">${nAl}</span>` : ""}</span><span class="desc">${!alerts.got ? "Checking…" : !nAl ? "None right now"
+          : [nStop ? `${nStop} disruption${nStop === 1 ? "" : "s"}` : "", nChg ? `${nChg} service change${nChg === 1 ? "" : "s"}` : "", nAl - nStop - nChg ? `${nAl - nStop - nChg} notice${nAl - nStop - nChg === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ")}</span></span>
+        <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="m1.5 1.5 5 5.5-5 5.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button></li>`;
     const keys = LAYERS.filter((l) => KEY_NAME[l.key] && enabled.has(l.key));
     const live = enabled.has("live");
     const html = `<div class="home-view">
@@ -1547,7 +1895,7 @@
         <span class="icon"><svg viewBox="0 0 30 30" aria-hidden="true"><path d="M15 7 25 12 15 17 5 12Z" fill="var(--accent)" opacity=".9"/><path d="M6.5 16.3 15 20.5l8.5-4.2" stroke="var(--accent)" stroke-width="1.8" fill="none" stroke-linejoin="round" stroke-linecap="round" opacity=".55"/></svg></span>
         <span class="txt"><span class="name">Layers</span><span class="desc">${shown} of ${LAYERS.length} shown${isDefaultLayers() ? "" : " · customized"}</span></span>
         <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="m1.5 1.5 5 5.5-5 5.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </button></li></ul>
+      </button></li>${alertRow}</ul>
       ${keys.length ? `<h2 class="section">On the map</h2><ul class="key-grid" role="list">${keys.map((l) =>
         `<li><span class="sw">${swatch(l)}</span><span>${esc(KEY_NAME[l.key])}</span></li>`).join("")}</ul>`
         : `<p class="hint">Every layer is off. Turn some on in Layers.</p>`}
@@ -1557,6 +1905,8 @@
     if (quiet && existing) existing.outerHTML = html;
     else setView(html);
     $("#openLayers").addEventListener("click", () => { panelView = "layers"; showLayers(); openSheet("half"); });
+    const oa = $("#openAlerts");
+    if (oa) oa.addEventListener("click", () => { panelView = "alerts"; showAlerts(); openSheet("half"); });
   }
   const layersHead = () => `<h2 class="view-title">Layers</h2>${isDefaultLayers() ? "" : `<button class="text-btn" id="resetLayers" type="button">Reset</button>`}`;
   function bindReset() {
@@ -1702,6 +2052,7 @@
     let html = `${backBtn}
       <div class="hero">${badgeHTML(r, "xl")}<div><h2>${esc(routeTitle(r))}</h2><p>${esc(r.name || "")}</p></div></div>
       <div class="chips"><span class="chip"><span class="dot" style="background:${color}"></span>${esc(CAT_NAME[r.cat])}</span><span class="chip">${esc(r.agency)}</span><span class="chip live-chip" id="liveChip" hidden><span class="pulse" aria-hidden="true"></span><span class="n"></span></span></div>
+      <div id="routeAlerts"></div>
       <div class="tiles">
         <div class="tile"><span class="k">Midday on weekdays</span><span class="v">${w && w.mid_n >= 3 ? "Every " : ""}${freq}</span></div>
         <div class="tile"><span class="k">Weekday hours</span><span class="v sm">${esc(span)}</span></div>
@@ -1738,6 +2089,7 @@
       renderStops(0);
       for (const t of body().querySelectorAll(".segmented button")) t.addEventListener("click", () => renderStops(+t.dataset.i));
     }
+    fillRouteAlerts(r);
     updateLiveUI();
     openSheet("half");
   }
@@ -1748,6 +2100,7 @@
     const rs = s.routes.map((id) => RBY[id]).filter(Boolean).sort(tagOrder);
     const kind = s.kind === "stop" ? (s.code ? `Bus stop #${s.code}` : "Bus stop") : s.kind === "ferry" ? "Ferry terminal" : "Station";
     let html = `${backBtn}<div class="hero"><span class="stop-glyph${s.kind === "stop" ? "" : " big"}" aria-hidden="true"></span><div><h2>${esc(s.name)}</h2><p>${esc(kind)}</p></div></div>
+      <div id="stopAlerts"></div>
       <h3 class="section">${rs.length} route${rs.length === 1 ? "" : "s"} stop here</h3>${routeRows(rs)}`;
     if (s.kind !== "stop") {
       const near = nearbyStops(s, 250);
@@ -1757,6 +2110,7 @@
     setView(html);
     $("#back").addEventListener("click", clearSelection);
     for (const b of body().querySelectorAll("[data-route]")) { b.addEventListener("click", () => selectRoute(b.dataset.route)); previewOnHover(b); }
+    fillStopAlerts(s);
     openSheet("half");
   }
   function nearbyStops(s, meters) {
@@ -1839,7 +2193,7 @@
     vis("access", ["access-fill", "access-line"]);
     vis("flex", ["flex", "flex-fill", "flex-line"]);
     vis("stops", ["stops", "stop-name"]);
-    vis("live", ["veh-icon", "veh-label"]);
+    vis("live", ["veh-dir", "veh-icon", "veh-label"]);
     if (enabled.has("live")) startLive(); else stopLive();
     if (map.getSource("stations")) refreshStations();
     renderFilterBar();
@@ -1962,7 +2316,7 @@
         cur = { kind: "veh", id: vh.properties.id };
         map.getCanvas().style.cursor = "pointer";
         highlightStop(null);
-        tipShow("veh:" + vh.properties.id, `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><span class="vs-row">${vehicleLines(vh.properties.id, vh.properties.est)}</span></span>`, "", ev(e));
+        tipShow("veh:" + vh.properties.id, `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b>${vesselLine(vh.properties.id)}<span class="vs-row">${vehicleLines(vh.properties.id, vh.properties.est)}</span></span>`, "", ev(e));
         return;
       }
       const st = pickStop(e.point);
@@ -1987,7 +2341,9 @@
         map.getCanvas().style.cursor = "pointer";
         if (!(selected && selected.type === "route")) focusRoutes(ln.routes);
         const rs = ln.routes, r = rs[0];
-        const more = ln.n > 1 ? `<span class="tt-more">${ln.n} routes share this street</span>` : "";
+        const nal = rs.length === 1 ? routeAlerts(rs[0].id) : [];
+        const more = (ln.n > 1 ? `<span class="tt-more">${ln.n} routes share this street</span>` : "")
+          + (nal.length ? `<span class="tt-alert al-${LEVEL[nal[0].level][0]}">${alertIcon(nal[0].level)}${nal.length === 1 ? esc(LEVEL[nal[0].level][1]) : `${nal.length} alerts`}</span>` : "");
         tipShow("line:" + rs.map((x) => x.id).join(","), rs.length === 1
           ? `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}${more}</span>`
           : `<span class="tip-badges">${rs.slice(0, 8).map((x) => badgeHTML(x)).join("")}</span>${rs.length > 8 ? `<span class="tt">+${rs.length - 8}</span>` : ""}`, "", ev(e));
@@ -2024,7 +2380,7 @@
         }
         if (v && r) {
           const age = v.ts ? Math.max(0, Math.round(Date.now() / 1000 - v.ts)) : null;
-          openPopup(vh[0].geometry.coordinates, `<div class="pop"><h3>${esc(routeTitle(r))}</h3><p>${esc(r.name)}</p><p class="vs-row">${vehicleLines(v.id, false)}</p>${v.label ? `<p>Vehicle ${esc(v.label)}</p>` : ""}${routeRows([r])}</div>`, "280px");
+          openPopup(vh[0].geometry.coordinates, `<div class="pop"><h3>${esc(routeTitle(r))}</h3><p>${esc(r.name)}</p>${vesselLine(v.id, "p")}<p class="vs-row">${vehicleLines(v.id, false)}</p>${v.label && !v.name ? `<p>Vehicle ${esc(v.label)}</p>` : ""}${routeRows([r])}</div>`, "280px");
           return;
         }
       }
@@ -2064,7 +2420,7 @@
       if (e.key !== "Escape" || e.target.closest("input")) return;
       if (popup) closePopup();
       else if (selected) clearSelection();
-      else if (panelView === "layers") { panelView = "home"; showHome(); }
+      else if (panelView === "layers" || panelView === "alerts") { panelView = "home"; showHome(); }
     });
   }
   // Hover. A line carrying one route: that route's whole path, drawn bold on top, with its stops.
@@ -2358,13 +2714,13 @@
     window.__map = map; // handy for debugging from the console
     window.__atlas = {
       rebuild, timeRebuild: () => { const t = performance.now(); rebuild(); return performance.now() - t; },
-      inWorker: () => !!worker, lastBuildMs: () => lastBuildMs, engineInit, lastParams: () => lastParams, lastFeats: () => lastFeats,
+      inWorker: () => !!worker, lastBuildMs: () => lastBuildMs, engineInit, lastParams: () => lastParams, lastFeats: () => lastFeats, liveState: () => liveState(), alerts: () => alerts,
       idle: () => new Promise((res) => { if (!inFlight && !queued) res(); else idleWaiters.push(res); }),
     };
     map.touchZoomRotate.disableRotation();
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
     map.on("styleimagemissing", (e) => {
-      if (e.id.startsWith("veh:")) drawVehicle(e.id);
+      if (e.id.startsWith("veh:") || e.id.startsWith("vdir:")) drawVehicle(e.id);
       else if (e.id.startsWith("b:")) drawBadge(e.id);
       else if (e.id.startsWith("arr:")) drawArrow(e.id);
     });

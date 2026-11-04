@@ -12,10 +12,12 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(__file__))
 import json  # noqa: E402
 
-from config import CACHE, LIVE_FEEDS, OBA_AGENCIES, OBA_BASE, OBA_STATUS, ROOT, SITE, oba_key  # noqa: E402
+from config import (CACHE, LIVE_FEEDS, OBA_AGENCIES, OBA_ALERTS, OBA_BASE, OBA_REST_POSITIONS, OBA_STATUS,  # noqa: E402
+                    ROOT, SITE, WSF_API, oba_key, wsf_code)
 
 MAPLIBRE_CSS_URL = "https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.css"
 KEY_PLACEHOLDER = "__OBA_API_KEY__"
+WSF_PLACEHOLDER = "__WSF_ACCESS_CODE__"
 
 
 def maplibre_css():
@@ -43,7 +45,10 @@ def main():
     # GitHub Pages workflow replaces with the OBA_API_KEY secret at deploy time. For local
     # testing, `build_site.py --with-key` writes the key from pipeline/local_secrets.json.
     key = oba_key() if "--with-key" in sys.argv else KEY_PLACEHOLDER
-    live = " window.ATLAS_LIVE = " + json.dumps({"key": key, "base": OBA_BASE, "status": OBA_STATUS, "agencies": OBA_AGENCIES, "feeds": LIVE_FEEDS}) + ";"
+    wsf = (wsf_code() or "") if "--with-key" in sys.argv else WSF_PLACEHOLDER
+    live = " window.ATLAS_LIVE = " + json.dumps({"key": key, "base": OBA_BASE, "status": OBA_STATUS, "agencies": OBA_AGENCIES,
+                                                 "feeds": LIVE_FEEDS, "alerts": OBA_ALERTS, "rest": OBA_REST_POSITIONS,
+                                                 "wsf": {"base": WSF_API, "code": wsf}}) + ";"
     body = body.replace("/*LIVE*/", live)
     full = ("<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
             "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\">\n"
