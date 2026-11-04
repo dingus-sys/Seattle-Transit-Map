@@ -121,10 +121,12 @@ Where a route's own shape cuts across a big interchange and the traced streets d
 it, the missing stretch is drawn from the route's shape, so no route breaks off mid-way.
 
 `pipeline/tidy_junctions.py` then tidies the finished network: where a street meets another
-at two points a few dozen meters apart (often a freeway and its ramps), the link between them
-is folded into one junction, so routes going straight across don't jog and turning routes
-turn in one place; and a route is taken off any short dead-end piece next to a junction where
-it really turns.
+at two points a few dozen meters apart (often a freeway and its ramps), and a route only uses
+the short link between them to get across, the link is folded into one junction, so the route
+crosses in one clean line instead of jogging or hopping into the other line's bundle; and a
+route is taken off any short dead-end piece next to a junction where it really turns. In the
+browser, the routes inside each street's line are put in the order that best matches the
+streets they come from and go on to, so strands cross each other as little as possible.
 
 In the browser, `web/geom.js` lays out each view: every route is one continuous strand,
 corners are rounded, each route keeps its place across the street through junctions (whole

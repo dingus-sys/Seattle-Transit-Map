@@ -300,6 +300,49 @@ const KCTMGeom = (() => {
         if (ch[k].E !== ch[k + 1].E) ROUTE_PAIRS.push([i, ch[k].E.k, ch[k].fwd ? 1 : -1, ch[k + 1].E.k, ch[k + 1].fwd ? 1 : -1]);
       }
     });
+    // Within each street's line of one service type, order the routes to match the streets they
+    // come from and go on to, so their strands cross each other as little as possible (the order
+    // the network was built with can disagree from one block to the next where routes join and
+    // leave, and every disagreement is two strands swapping sides).
+    const CONT = EDGES.map(() => []); // per segment: { i, F, f } — route i carries on into F; f relates the two sides
+    for (const [i, e1, s1, e2, s2] of ROUTE_PAIRS) { CONT[e1].push({ i, F: e2, f: s1 * s2 }); CONT[e2].push({ i, F: e1, f: s1 * s2 }); }
+    const keyOf = (i) => VKEY(LINES[i].cat);
+    const xOf = (E, i) => { const list = E.byKey.get(keyOf(i)), j = list.indexOf(i); return j - (list.length - 1) / 2; };
+    function swaps() {
+      let n = 0;
+      for (const E of EDGES) {
+        const by = new Map(); // routes going on into the same segment the same way
+        for (const c of CONT[E.k]) { const k = `${c.F}|${c.f}|${keyOf(c.i)}`; if (!by.has(k)) by.set(k, []); by.get(k).push(c); }
+        for (const list of by.values()) {
+          for (let a = 0; a < list.length; a++) for (let b = a + 1; b < list.length; b++) {
+            const p = list[a], q = list[b], F = EDGES[p.F];
+            if ((xOf(E, p.i) - xOf(E, q.i)) * p.f * (xOf(F, p.i) - xOf(F, q.i)) < 0) n++;
+          }
+        }
+      }
+      return n / 2;
+    }
+    const before = swaps();
+    let best = before, snap = EDGES.map((E) => new Map([...E.byKey].map(([v, l]) => [v, l.slice()])));
+    for (let pass = 0; pass < 8 && best > 0; pass++) {
+      for (const E of EDGES) {
+        for (const [v, list] of E.byKey) {
+          if (list.length < 2) continue;
+          const want = new Map();
+          for (const i of list) {
+            const cs = CONT[E.k].filter((c) => c.i === i);
+            want.set(i, cs.length ? cs.reduce((acc, c) => acc + c.f * xOf(EDGES[c.F], i), 0) / cs.length : xOf(E, i));
+          }
+          const cur = new Map(list.map((i, j) => [i, j]));
+          list.sort((a, b) => (want.get(a) - want.get(b)) || (cur.get(a) - cur.get(b)));
+        }
+      }
+      const n = swaps();
+      if (n < best) { best = n; snap = EDGES.map((E) => new Map([...E.byKey].map(([v, l]) => [v, l.slice()]))); }
+    }
+    EDGES.forEach((E, k) => { for (const [v, l] of snap[k]) E.byKey.set(v, l); });
+    const strandStats = { before, after: best };
+
     const runsIn = (lay, steps, key) => {
       const out = [];
       let cur = [];
@@ -593,7 +636,7 @@ const KCTMGeom = (() => {
       return out;
     }
     const routePath = (idx) => routePaths([idx]);
-    return { build, routePath, routePaths };
+    return { build, routePath, routePaths, strandStats };
   }
 
   return { LAT0, LON0, KX, KY, MPP0, toM, toLL, VKEY, cumLen, prepEdges, createEngine };

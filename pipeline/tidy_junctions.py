@@ -3,10 +3,11 @@
 Two leftovers of tracing routes onto streets make intersections look broken on the map:
 
 1. A crossing split in two. Where a street (often a freeway with its ramps) meets another at two
-   points a few dozen meters apart, a route going straight across has to jog along the cross
-   street between them, and draws as a little "+" or S. Such a short link between two
-   junctions, crossed straight by a route, is folded into one junction at its middle, so the
-   route crosses in one clean line and turning routes turn there.
+   points a few dozen meters apart, a route going across has to jog along the other line
+   between them, and draws as a little "+", S or hop into the other line's bundle. Such a short
+   link between two junctions, which a route only uses to get across (it turns onto it at one
+   end and off it at the other), is folded into one junction at its middle, so the route
+   crosses in one clean line and turning routes turn there.
 
 2. Route stubs. A route sometimes picks up a short dead-end piece next to a junction where it
    actually turns (a ramp traced onto the wrong side of the junction). It draws as a line that
@@ -30,6 +31,7 @@ KY = 110574
 
 JOG_MAX = 60.0      # longest link that can be folded (m)
 STUB_MAX = 80.0     # longest piece a route can be taken off (m)
+RIDE_MAX = 50.0     # longest link a route can just borrow to cross another line (m)
 
 
 def to_m(c):
@@ -108,19 +110,26 @@ def main():
             na, nb = nkey(e, 0), nkey(e, 1)
             if na == nb or len(at[na]) < 3 or len(at[nb]) < 3:
                 continue
-            dx = out_dir(e["p"])
+            dx = out_dir(e["p"])                 # along the link, leaving its a end
+            dxb = out_dir(leaving(k, 1))          # along the link, leaving its b end
             jog = False
             for r in e["l"]:
                 A = [x for x in at[na] if x[0] != k and r in edges[x[0]]["l"]]
                 B = [x for x in at[nb] if x[0] != k and r in edges[x[0]]["l"]]
                 for a in A:
                     da = out_dir(leaving(*a))
-                    # the link runs across the route, not along it
-                    if abs(da[0] * dx[0] + da[1] * dx[1]) > 0.6:
-                        continue
                     for b in B:
                         db = out_dir(leaving(*b))
-                        if da[0] * db[0] + da[1] * db[1] < -0.8:
+                        dab = da[0] * db[0] + da[1] * db[1]
+                        # the link runs across the route, which goes straight on past it
+                        if abs(da[0] * dx[0] + da[1] * dx[1]) <= 0.6 and dab < -0.8:
+                            jog = True
+                        # or the route only borrows the link to get across or around a corner:
+                        # it turns onto it at one end and off it at the other (a 26 m ride
+                        # along a freeway's line to cross it), without turning back on itself
+                        turn_a = da[0] * dx[0] + da[1] * dx[1] > -0.82
+                        turn_b = db[0] * dxb[0] + db[1] * dxb[1] > -0.82
+                        if L <= RIDE_MAX and turn_a and turn_b and dab < 0.3:
                             jog = True
             if jog:
                 cands.append((L, k))
