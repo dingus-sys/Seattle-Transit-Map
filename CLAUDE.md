@@ -34,14 +34,19 @@ service is a corridor, lines follow the real streets, and the look is Apple "liq
    them from scratch and overwrites the repo. Fix problems in `pipeline/` or `web/`.
 3. **Don't use official agency logos** (RapidRide, Link, DART and the rest are trademarks, and it
    would make the map look like an official agency product). Original symbols for service types are fine.
-4. Follow the attribution lines your session instructions give for commits and PRs.
+4. **Other sessions and the weekly data bot push to `main` too.** Before pushing run `git fetch origin`
+   and rebase on `origin/main` (`git rebase origin/main`); never force-push. Look at
+   `git log --oneline origin/main` first: someone may have just changed the same area. Read their
+   commit messages, which explain the why.
+5. Follow the attribution lines your session instructions give for commits and PRs.
 
 ## Run, build, test, ship
 
 ```bash
 pip install -r requirements.txt
 python3 pipeline/build_site.py                 # after editing web/*: rebuilds site/index.html (fast)
-python3 pipeline/build_all.py --no-tiles       # rebuilds all data (slow: downloads GTFS and tiles)
+python3 pipeline/build_all.py --no-tiles       # rebuilds all data (slow: downloads GTFS and tiles into <repo>/.cache,
+                                               #   or $TRANSIT_CACHE; delete .cache/gtfs to force a fresh download)
 python3 -m http.server -d site 8765 &          # serve it (a background server dies after its time limit)
 ```
 
@@ -110,7 +115,10 @@ then `build_site`.
 decoded by hand in `app.js`; agencies in `OBA_AGENCIES`), Intercity Transit's own feeds, and
 Washington State Ferries boats from OneBusAway's REST feed (the realtime feed lacks the route).
 Each polling round starts at a different agency, and a rate-limit answer skips the rest of
-OneBusAway that round. The WSF API (ferry bulletins, "at the dock / arrives about") needs the
+OneBusAway that round. Vehicles also carry how busy they are (occupancy, read from both the
+realtime feed and the REST status), and a stop card first shows the timetable, then swaps in the
+agency's predicted departures (OneBusAway `arrivals-and-departures-for-stop`, one stop at a time, cached
+30 s, with its own rate-limit pause); stop ids map to OneBusAway's by feed (`stopAgency` in `ATLAS_LIVE`). The WSF API (ferry bulletins, "at the dock / arrives about") needs the
 WSDOT access code and is called with JSONP. Places (parks, schools, museums, zoo...) come from
 the live map tiles only: the bundled tiles leave out the `poi` layer to stay small. Highway
 shields work from the bundled tiles too.
