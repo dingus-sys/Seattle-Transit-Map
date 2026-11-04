@@ -12,8 +12,8 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(__file__))
 import json  # noqa: E402
 
-from config import (CACHE, LIVE_FEEDS, OBA_AGENCIES, OBA_ALERTS, OBA_BASE, OBA_REST_POSITIONS, OBA_STATUS,  # noqa: E402
-                    ROOT, SITE, WSF_API, oba_key, wsf_code)
+from config import (CACHE, FEEDS, LIVE_FEEDS, OBA_AGENCIES, OBA_ALERTS, OBA_BASE, OBA_DEPARTURES,  # noqa: E402
+                    OBA_REST_POSITIONS, OBA_STATUS, ROOT, SITE, WSF_API, oba_key, wsf_code)
 
 MAPLIBRE_CSS_URL = "https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.css"
 KEY_PLACEHOLDER = "__OBA_API_KEY__"
@@ -48,6 +48,10 @@ def main():
     wsf = (wsf_code() or "") if "--with-key" in sys.argv else WSF_PLACEHOLDER
     live = " window.ATLAS_LIVE = " + json.dumps({"key": key, "base": OBA_BASE, "status": OBA_STATUS, "agencies": OBA_AGENCIES,
                                                  "feeds": LIVE_FEEDS, "alerts": OBA_ALERTS, "rest": OBA_REST_POSITIONS,
+                                                 "deps": OBA_DEPARTURES,
+                                                 # stop ids read "<feed>-<the agency's own id>"; OneBusAway calls the
+                                                 # same stop "<agency number>_<the agency's own id>"
+                                                 "stopAgency": {f["key"]: f["default"] for f in FEEDS},
                                                  "wsf": {"base": WSF_API, "code": wsf}}) + ";"
     body = body.replace("/*LIVE*/", live)
     full = ("<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"

@@ -463,10 +463,18 @@ table.sched td.good { color: var(--good); font-weight: 650; }
 .sc-badges .badge.round, .sc-row .badge.round { width: 22px; min-width: 22px; height: 22px; padding: 0; }
 .sc-more { color: var(--muted); font-size: 12px; font-weight: 600; }
 .sc-next { margin-top: 9px; padding-top: 8px; border-top: .5px solid var(--hairline); display: grid; gap: 5px; }
-.sc-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; font-size: 12.5px; }
+.sc-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 8px; font-size: 12.5px; }
 .sc-to { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sc-t { color: var(--ink); font-weight: 650; font-variant-numeric: tabular-nums; }
 .sc-foot { margin-top: 7px; color: var(--muted); font-size: 11px; }
+/* a departure the agency is predicting right now, and how busy that bus is expected to be */
+.sc-live { display: inline-block; width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: #1f9d55;
+  vertical-align: middle; animation: sc-pulse 2s ease-in-out infinite; }
+:root[data-dark="1"] .sc-live { background: #5fd38a; }
+@keyframes sc-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .sc-live { animation: none; } }
+.sc-occ { display: inline-flex; align-items: center; padding: 3px 5px; border-radius: 99px; }
+.sc-meter { display: block; }
 .loading {
   position: fixed; inset: 0; z-index: 7; display: grid; place-items: center; pointer-events: none;
   transition: opacity .4s ease;
@@ -639,7 +647,7 @@ table.sched td.good { color: var(--good); font-weight: 650; }
 <div class="loading" id="loading"><div class="pill glass"><span class="spinner" aria-hidden="true"></span>Loading the network…</div></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.js"></script>
-<script>window.ATLAS_MODE = "auto"; window.ATLAS_LIVE = {"key": "__OBA_API_KEY__", "base": "https://api.pugetsound.onebusaway.org/api/gtfs_realtime/vehicle-positions-for-agency", "status": "https://api.pugetsound.onebusaway.org/api/where/vehicles-for-agency", "agencies": ["1", "40", "29", "23", "3", "97", "95", "20"], "feeds": [{"agency": "19", "url": "https://its.rideralerts.com/InfoPoint/GTFS-Realtime.ashx?Type=VehiclePosition", "alerts": "https://its.rideralerts.com/InfoPoint/GTFS-Realtime.ashx?Type=Alert"}], "alerts": "https://api.pugetsound.onebusaway.org/api/gtfs_realtime/alerts-for-agency", "rest": ["95"], "wsf": {"base": "https://www.wsdot.wa.gov/ferries/api", "code": "__WSF_ACCESS_CODE__"}};</script>
+<script>window.ATLAS_MODE = "auto"; window.ATLAS_LIVE = {"key": "__OBA_API_KEY__", "base": "https://api.pugetsound.onebusaway.org/api/gtfs_realtime/vehicle-positions-for-agency", "status": "https://api.pugetsound.onebusaway.org/api/where/vehicles-for-agency", "agencies": ["1", "40", "29", "23", "3", "97", "95", "20"], "feeds": [{"agency": "19", "url": "https://its.rideralerts.com/InfoPoint/GTFS-Realtime.ashx?Type=VehiclePosition", "alerts": "https://its.rideralerts.com/InfoPoint/GTFS-Realtime.ashx?Type=Alert"}], "alerts": "https://api.pugetsound.onebusaway.org/api/gtfs_realtime/alerts-for-agency", "rest": ["95"], "deps": "https://api.pugetsound.onebusaway.org/api/where/arrivals-and-departures-for-stop", "stopAgency": {"kcm": "1", "st": "40", "ct": "29", "pt": "3", "et": "97", "wsf": "95", "kt": "20", "it": "19", "mono": "96", "amtrak": "51"}, "wsf": {"base": "https://www.wsdot.wa.gov/ferries/api", "code": "__WSF_ACCESS_CODE__"}};</script>
 <script id="geom-src">/* King County Transit Map — line geometry engine.
  *
  * Turns the street network (site/data/network.json) into what the map draws for one view:
@@ -2221,6 +2229,14 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
     CRUSHED_STANDING_ROOM_ONLY: 4, FULL: 5, NOT_ACCEPTING_PASSENGERS: 6, NO_DATA_AVAILABLE: 7, NOT_BOARDABLE: 8 };
   const OCC_TEXT = ["Empty", "Plenty of seats", "A few seats left", "Standing room only", "Packed", "Full", "Not picking up"];
   const OCC_CLS = ["ok", "ok", "some", "busy", "busy", "full", "full"];
+  // the same as three small figures, narrow enough to sit beside a destination in a stop
+  // card's row: one for seats, two once riders are standing, three when it's packed or full
+  function occMeter(code) {
+    const n = code <= 2 ? 1 : code <= 3 ? 2 : 3;
+    const person = (i) => `<g transform="translate(${i * 6} 0)" opacity="${i < n ? 1 : 0.28}"><circle cx="2.5" cy="2" r="1.8"/>`
+      + `<path d="M0 10V7.6C0 6.1 1.1 5 2.5 5S5 6.1 5 7.6V10z"/></g>`;
+    return `<svg class="sc-meter" width="17" height="10" viewBox="0 0 17 10" fill="currentColor" aria-hidden="true">${[0, 1, 2].map(person).join("")}</svg>`;
+  }
   // the enum name, a number, or nothing -> 0-6, or null when there's no useful answer
   function occCode(x) {
     if (x == null || x === "") return null;
@@ -2781,7 +2797,8 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
     if (!v) return null;
     const st = live.status.get(v.agency + "_" + plainId(v.vid));
     const fresh = st && Date.now() - st.got <= 10 * 60000 ? st : null;
-    const code = v.occ != null ? v.occ : fresh && fresh.occ != null ? fresh.occ : null;
+    // through occCode again: whatever the caller hands us, only 0-6 can reach OCC_TEXT
+    const code = occCode(v.occ != null ? v.occ : fresh && fresh.occ != null ? fresh.occ : null);
     if (code == null) return null;
     const n = fresh && fresh.occN, cap = fresh && fresh.occCap;
     const detail = n > 0 && cap > 0 ? `${n} of ${cap}` : v.occPct > 0 ? `${v.occPct}% full` : "";
@@ -3179,22 +3196,126 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
     return res;
   }
   const placeName = (sid) => ((stopIndex[sid] && stopIndex[sid].name) || "").replace(/\s*[-–]\s*Bay\s*\w+$/i, "").replace(/\s+Bay\s+\w+$/i, "");
+
+  // ---------------------------------------------------------------- real departures
+  // The timetable above answers the moment a rider points at a stop and is always there.
+  // This asks OneBusAway what the agency actually predicts for that stop and, when an answer
+  // comes back, puts those times in its place. It keeps its own rate-limit pause, so a busy
+  // departures call never stops the buses on the map from moving.
+  const depCache = { byStop: new Map(), pause: 0, inflight: new Set(), timer: 0 };
+  const DEP_FRESH = 30000;    // a stop's predictions are worth reusing for half a minute
+  const DEP_MAX_STOPS = 4;    // a station gathers many platforms; ask about the first few
+  const DEP_WAIT = 220;       // let the pointer settle before asking about a stop
+  // "kcm-75403" is OneBusAway's "1_75403": the same stop, the agency named a different way
+  function obaStop(id) {
+    const i = String(id || "").indexOf("-");
+    if (i < 0) return null;
+    const a = LIVE && LIVE.stopAgency && LIVE.stopAgency[id.slice(0, i)];
+    return a ? `${a}_${id.slice(i + 1)}` : null;
+  }
+  const obaStopsFor = (ids) => [...new Set(ids.map(obaStop).filter(Boolean))].slice(0, DEP_MAX_STOPS);
+  const tidyHeadsign = (s) => String(s || "").replace(/\s+/g, " ").trim();
+  function readDeparture(x) {
+    if (x.departureEnabled === false) return null;  // the end of the line: buses arrive, they don't leave
+    const at = x.predictedDepartureTime > 0 ? x.predictedDepartureTime : x.scheduledDepartureTime;
+    const r = RTMAP.get(x.routeId);
+    if (!at || !r || LINEIDX[r.id] == null) return null;
+    return { at, r, toName: tidyHeadsign(x.tripHeadsign), live: !!(x.predicted && x.predictedDepartureTime > 0),
+      occ: occCode(x.occupancyStatus != null ? x.occupancyStatus : x.predictedOccupancy) };
+  }
+  async function loadStopDepartures(obaId) {
+    try {
+      const r = await fetch(`${LIVE.deps}/${encodeURIComponent(obaId)}.json?key=${encodeURIComponent(LIVE.key)}`
+        + "&includeReferences=false&minutesBefore=0&minutesAfter=90", { cache: "no-store" });
+      if (r.status === 429) { depCache.pause = Date.now() + 60000; return; }
+      if (!r.ok) throw new Error(String(r.status));
+      const j = await r.json();
+      if (j && j.code === 429) { depCache.pause = Date.now() + 60000; return; }
+      const entry = (j && j.data && j.data.entry) || {};
+      depCache.byStop.set(obaId, { got: Date.now(), list: (entry.arrivalsAndDepartures || []).map(readDeparture).filter(Boolean) });
+    } catch (e) {
+      // the timetable still answers; don't ask again for this stop straight away
+      depCache.byStop.set(obaId, { got: Date.now(), list: null });
+    } finally {
+      depCache.inflight.delete(obaId);
+    }
+  }
+  // ask about the stop under the pointer, once it has settled there
+  function ensureDepartures(stopIds, onReady) {
+    clearTimeout(depCache.timer);
+    if (!LIVE || !LIVE.deps || Date.now() < depCache.pause) return;
+    const ids = obaStopsFor(stopIds);
+    const stale = ids.filter((id) => !depCache.inflight.has(id)
+      && (!depCache.byStop.has(id) || Date.now() - depCache.byStop.get(id).got > DEP_FRESH));
+    if (!stale.length) return;
+    depCache.timer = setTimeout(() => {
+      for (const id of stale) depCache.inflight.add(id);
+      Promise.all(stale.map(loadStopDepartures)).then(() => onReady && onReady());
+    }, DEP_WAIT);
+  }
+  // what we've been told about this stop, or null if we haven't been told anything yet
+  function liveDepartures(stopIds, limit = 4) {
+    if (!LIVE || !LIVE.deps) return null;
+    const now = Date.now();
+    let told = false, all = [];
+    for (const id of obaStopsFor(stopIds)) {
+      const e = depCache.byStop.get(id);
+      if (!e || !e.list) continue;
+      told = true;
+      all = all.concat(e.list);
+    }
+    if (!told) return null;
+    all = all.filter((d) => d.at - now > -30000).sort((a, b) => a.at - b.at);
+    // one bus listed at two platforms of the same station: keep one
+    const last = new Map(), res = [];
+    for (const d of all) {
+      const k = d.r.id + "|" + d.toName;
+      if (last.has(k) && d.at - last.get(k) < 150000) continue;
+      last.set(k, d.at);
+      res.push({ t: (d.at - now) / 1000, r: d.r, toName: d.toName, live: d.live, occ: d.occ });
+      if (res.length >= limit) break;
+    }
+    return res;
+  }
+  const depMinutes = (t) => (t < 60 ? "now" : Math.round(t / 60) + " min");
+  function depRowsHTML(keys, stopIds) {
+    const live = liveDepartures(stopIds), sched = nextDepartures(keys);
+    // the agency's own answer wins, but an empty one never hides a timetable that has something
+    const useLive = !!(live && live.length), list = useLive ? live : sched;
+    if (!list) return "";
+    if (!list.length) return `<div class="sc-foot">No departures in the next 90 minutes</div>`;
+    const rows = list.map((d) => {
+      const to = useLive ? d.toName : placeName(d.to);
+      const dot = useLive && d.live ? `<span class="sc-live" aria-hidden="true"></span>` : "";
+      const occ = useLive && d.occ != null
+        ? `<span class="sc-occ vo-${OCC_CLS[d.occ]}" role="img" aria-label="${esc(OCC_TEXT[d.occ])}" title="${esc(OCC_TEXT[d.occ])}">${occMeter(d.occ)}</span>` : "<span></span>";
+      return `<div class="sc-row">${badgeHTML(d.r)}<span class="sc-to">${esc(to)}</span>${occ}<span class="sc-t">${dot}${depMinutes(d.t)}</span></div>`;
+    }).join("");
+    const foot = useLive ? (list.some((d) => d.live) ? "Next departures, live from the agency" : "Next departures, from the agency's schedule")
+      : "Next departures, from the timetable";
+    return `<div class="sc-next">${rows}</div><div class="sc-foot">${foot}</div>`;
+  }
+  // the answer arrived while the card is still up: put the real times in place
+  function repaintStopDeps(key, keys, stopIds) {
+    if (tipKey !== key) return;
+    const box = document.getElementById("scDeps");
+    if (box) box.innerHTML = depRowsHTML(keys, stopIds);
+  }
   function stopCard(id, end, ids) {
     const all = (ids ? String(ids).split(",") : [id]).map((x) => stopIndex[x]).filter(Boolean);
     const s = all[0];
     if (!s) return "";
     const rs = [...new Set(all.flatMap((x) => x.routes || []))].map((x) => RBY[x]).filter((r) => r && LINEIDX[r.id] != null).sort(tagOrder);
     const keys = [...new Set(all.flatMap((x) => [x.key, ...((x.stops || []).map((sid) => stopIndex[sid] && stopIndex[sid].key).filter(Boolean))]))];
-    const deps = nextDepartures(keys);
+    const stopIds = [...new Set(all.flatMap(stopIdsOf))];
     const codes = [...new Set(all.map((x) => x.code).filter(Boolean))];
     const kind = s.kind === "stop" ? (codes.length > 1 ? `Stops ${esc(codes.join(" & "))}` : codes.length ? `Stop ${esc(codes[0])}` : "Bus stop") : "Station";
     let h = `<div class="sc"><div class="sc-name">${esc(s.name)}</div><div class="sc-sub">${kind} · ${rs.length} route${rs.length === 1 ? "" : "s"}${end === 2 ? " · <b>End of the line</b>" : end === 1 ? " · <b>Trips start here</b>" : ""}</div>`;
     if (rs.length) h += `<div class="sc-badges">${rs.slice(0, 10).map((r) => badgeHTML(r)).join("")}${rs.length > 10 ? `<span class="sc-more">+${rs.length - 10}</span>` : ""}</div>`;
-    h += alertTeaser(stopAlerts([...new Set(all.flatMap(stopIdsOf))]));
-    if (deps && deps.length) {
-      h += `<div class="sc-next">${deps.map((d) => `<div class="sc-row">${badgeHTML(d.r)}<span class="sc-to">${esc(placeName(d.to))}</span><span class="sc-t">${d.t < 60 ? "now" : Math.round(d.t / 60) + " min"}</span></div>`).join("")}</div>`
-        + `<div class="sc-foot">Next departures, from the timetable</div>`;
-    } else if (deps) h += `<div class="sc-foot">No departures in the next 90 minutes</div>`;
+    h += alertTeaser(stopAlerts(stopIds));
+    h += `<div id="scDeps">${depRowsHTML(keys, stopIds)}</div>`;
+    // the timetable is on screen already; ask the agency what it actually predicts
+    ensureDepartures(stopIds, () => repaintStopDeps(`stop:${id}:${end}`, keys, stopIds));
     return h + "</div>";
   }
 
@@ -4198,6 +4319,7 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
       rebuild, timeRebuild: () => { const t = performance.now(); rebuild(); return performance.now() - t; },
       inWorker: () => !!worker, lastBuildMs: () => lastBuildMs, engineInit, lastParams: () => lastParams, lastFeats: () => lastFeats, liveState: () => liveState(), alerts: () => alerts, wsfState: () => wsfState(),
       vehicleLines, vehicleOccupancy, occCode,
+      obaStop, readDeparture, liveDepartures, depRowsHTML, depCache: () => depCache, stopCard, ensureDepartures,
       idle: () => new Promise((res) => { if (!inFlight && !queued) res(); else idleWaiters.push(res); }),
     };
     map.touchZoomRotate.disableRotation();

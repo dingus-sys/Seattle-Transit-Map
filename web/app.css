@@ -454,10 +454,18 @@ table.sched td.good { color: var(--good); font-weight: 650; }
 .sc-badges .badge.round, .sc-row .badge.round { width: 22px; min-width: 22px; height: 22px; padding: 0; }
 .sc-more { color: var(--muted); font-size: 12px; font-weight: 600; }
 .sc-next { margin-top: 9px; padding-top: 8px; border-top: .5px solid var(--hairline); display: grid; gap: 5px; }
-.sc-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; font-size: 12.5px; }
+.sc-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 8px; font-size: 12.5px; }
 .sc-to { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sc-t { color: var(--ink); font-weight: 650; font-variant-numeric: tabular-nums; }
 .sc-foot { margin-top: 7px; color: var(--muted); font-size: 11px; }
+/* a departure the agency is predicting right now, and how busy that bus is expected to be */
+.sc-live { display: inline-block; width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: #1f9d55;
+  vertical-align: middle; animation: sc-pulse 2s ease-in-out infinite; }
+:root[data-dark="1"] .sc-live { background: #5fd38a; }
+@keyframes sc-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .sc-live { animation: none; } }
+.sc-occ { display: inline-flex; align-items: center; padding: 3px 5px; border-radius: 99px; }
+.sc-meter { display: block; }
 .loading {
   position: fixed; inset: 0; z-index: 7; display: grid; place-items: center; pointer-events: none;
   transition: opacity .4s ease;
