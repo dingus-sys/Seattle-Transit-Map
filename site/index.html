@@ -4347,7 +4347,7 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
     const baseSource = live
       ? { type: "vector", tiles: live.tiles, minzoom: 0, maxzoom: 14, attribution: '<a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a> © <a href="https://www.openmaptiles.org/" target="_blank" rel="noopener">OpenMapTiles</a> © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>' }
       : { type: "vector", tiles: ["atlas://{z}/{x}/{y}"], minzoom: 0, maxzoom: manifest ? manifest.maxzoom : 14, attribution: "OpenFreeMap © OpenMapTiles © OpenStreetMap contributors" };
-    const R = META.region, RR = META.rail_region || R;
+    const R = META.region;
     const narrow = isNarrow();
     const empty = { type: "FeatureCollection", features: [] };
     map = new maplibregl.Map({
@@ -4379,9 +4379,7 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
       },
       bounds: narrow ? [[-122.42, 47.54], [-122.17, 47.72]] : [[-122.44, 47.50], [-122.10, 47.77]],
       fitBoundsOptions: { padding: narrow ? { top: 20, bottom: 150, left: 10, right: 10 } : { top: 30, bottom: 30, left: 420, right: 80 } },
-      // the map's edge plus a margin, and far enough out to follow the Amtrak line to its ends
-      maxBounds: [[Math.min(R.west - 0.4, RR.west - 0.08), Math.min(R.south - 0.3, RR.south - 0.08)],
-        [Math.max(R.east + 0.4, RR.east + 0.08), Math.max(R.north + 0.3, RR.north + 0.08)]],
+      maxBounds: [[R.west - 0.4, R.south - 0.3], [R.east + 0.4, R.north + 0.3]],
       minZoom: 9, maxZoom: 18.5, dragRotate: false, pitchWithRotate: false, touchPitch: false,
       attributionControl: false,
     });

@@ -133,6 +133,18 @@ shields work from the bundled tiles too.
   before chasing a bug that is already fixed.
 - The `route`/`line` filters, tags and layers read feature properties set in `geom.js`
   (`r, cat, e, zu, wm, cm, hm, sh, ws, n, g, c, s, d, h, ar`); change both sides together.
+- After a pipeline run, check the `match_shapes` line: it should match about 667 of 680 shapes.
+  If it says `{'error': N}` the street matching failed and the network is built from rough agency
+  shapes (routes break on bridges). It used to fail on macOS/Python 3.14 (worker processes that
+  weren't forked); it now forks, but check the count.
+- Route QA: compare what's drawn with each route's real path and stops before shipping a data
+  change. A good check: for every route, its matched shape (`.cache/route_shapes_matched.json`)
+  should stay within ~60 m of its drawn edges, its edges should be one connected piece, and its
+  stops within ~80 m. Routes folded onto the next street over (one-way pairs) are expected to
+  show up to ~130 m off.
+- Trains: a line goes on a stretch of track when it covers 70% of it, so a line that ends partway
+  along a long stretch needs a junction there (`split_at_line_ends` in `build_graph.py`), or it is
+  drawn past its end (Sounder N) or not at all (Sounder S to Lakewood).
 
 ## Open items
 
@@ -141,8 +153,13 @@ shields work from the bundled tiles too.
    off (boats themselves show live). The user needs a repository secret named exactly `WSF_ACCESS_CODE`
    (Settings, Secrets and variables, Actions), then to run the "Publish map to GitHub Pages" workflow.
    Verify with `curl` that `"wsf": {..., "code": "..."}` in the live page is non-empty (never print it).
-2. Known kinks: a small knot at Denny & I-5, and a jog in the D Line near Yesler & Prefontaine.
-   About 300 strand swaps remain at junctions, mostly routes that really do cross.
+2. Known kinks: a small knot at Denny & I-5. (The knot and D Line jog at Yesler & Prefontaine are
+   fixed: small triangles of junctions become one junction in `tidy_junctions.py`; at Kingston that
+   leaves a bus cutting one block diagonally.) About 300 strand swaps remain at junctions, mostly
+   routes that really do cross. Route 193 (peak, First Hill to Federal Way) has a 12 km gap on I-5:
+   since Federal Way Link it is alone on that stretch and the build drops a lone freeway route there.
+   Some routes list stops their drawn line doesn't pass (stops served only by trip variants that
+   carry under 15% of the trips, which aren't drawn): e.g. 21, 4, 7, 906.
 3. The user asked for official agency logos; this was declined (rule 3). Original service-type
    symbols (light rail, rapid bus, bus, ferry, on-demand) for route cards and the Layers list were
    offered and not yet answered.
