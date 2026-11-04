@@ -4,3 +4,5 @@ __pycache__/
 pipeline/local_secrets.json
 *.zip
 site/artifact.html
+shots/
+vid2/
