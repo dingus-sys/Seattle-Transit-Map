@@ -1461,7 +1461,10 @@
     const sel = selected && selected.type === "route" && selected.id === r.id;
     const ix = sel ? (vehIxSel = vehIxSel || segIndex(lastSelFeats)) : (vehIx = vehIx || segIndex(lastFeats));
     const mpp = MPP0 / 2 ** map.getZoom();
-    const hit = nearestOn(ix, toM(pos[0], pos[1]), Math.max(40, 26 * mpp),
+    // a boat only ever sails its own lane, so it goes onto it from any distance (a position report
+    // can be a long way off the drawn line, which put boats in open water); on land, only when close
+    const reach = CAT[key].group === "water" ? 8000 : Math.max(40, 26 * mpp);
+    const hit = nearestOn(ix, toM(pos[0], pos[1]), reach,
       sel ? null : (pr) => (pr.r >= 0 ? pr.r === i : pr.cat === key && EDGES[pr.e] && EDGES[pr.e].l.includes(i)));
     if (!hit) return [pos, b];
     let hb = (Math.atan2(hit.dir[0], hit.dir[1]) * 180 / Math.PI + 360) % 360;
@@ -3010,6 +3013,7 @@
       inWorker: () => !!worker, lastBuildMs: () => lastBuildMs, engineInit, lastParams: () => lastParams, lastFeats: () => lastFeats, liveState: () => liveState(), alerts: () => alerts, wsfState: () => wsfState(),
       vehicleLines, vehicleOccupancy, occCode,
       obaStop, readDeparture, liveDepartures, depRowsHTML, depCache: () => depCache, stopCard, ensureDepartures,
+      onLine, routeById: (id) => RBY[id],
       idle: () => new Promise((res) => { if (!inFlight && !queued) res(); else idleWaiters.push(res); }),
     };
     map.touchZoomRotate.disableRotation();
