@@ -129,10 +129,12 @@
 
   // Local flat coordinates in meters around Seattle, shared with the geometry engine (web/geom.js)
   const { LAT0, LON0, KX, KY, MPP0, toM, cumLen } = KCTMGeom;
-  // line units (feature property) -> pixels, following the zoom continuously (times k). The
-  // lanes are laid out at quarter-zoom steps, but the widths never jump between them.
-  const px = (prop, k = 1) => ["interpolate", ["linear"], ["zoom"],
-    ...UNIT.flatMap(([z, u]) => [z, ["*", ["get", prop], k * u * THICK[settings.thickness]]])];
+  // line units (feature property) -> pixels (times k). Each feature carries zu, the pixels per
+  // unit at zoom 0 of the layout it came from, so its width grows and shrinks exactly with its
+  // lanes' spacing until the next layout (which follows the zoom closely) replaces it: lines
+  // that touch keep touching while you zoom.
+  const px = (prop, k = 1) => ["interpolate", ["exponential", 2], ["zoom"],
+    0, ["*", ["get", prop], ["get", "zu"], k], 24, ["*", ["get", prop], ["get", "zu"], k * 2 ** 24]];
 
   // ---------------------------------------------------------------- base map palette
   const BASE = {
@@ -466,7 +468,7 @@
           "text-radial-offset": 0.8, "text-max-width": 9, "text-optional": true, "text-padding": 6 },
         paint: { "text-color": P.label, "text-halo-color": P.halo, "text-halo-width": 1.4 } },
       { id: "stations", type: "circle", source: "stations",
-        filter: ["any", ["==", ["get", "major"], 1], [">=", ["zoom"], 12.5]],
+        filter: ["any", ["==", ["get", "major"], 1], [">=", ["zoom"], 14], ["all", ["==", ["get", "late"], 0], [">=", ["zoom"], 12.5]]],
         paint: {
           // sized to the Link line: a little wider than the line it sits on (about 1.4x), so it
           // reads as a station without turning into a blob
@@ -584,9 +586,13 @@
     map.getSource("net").setData({ type: "FeatureCollection", features: m.feats });
     if (hoverKey) focusRoutes(hoverRoutes, true);
     map.getSource("sel").setData({ type: "FeatureCollection", features: m.selFeats });
-    map.getSource("netlabels").setData({ type: "FeatureCollection", features: m.labels });
-    map.getSource("sellabels").setData({ type: "FeatureCollection", features: m.selLabels });
-    refreshStations();
+    const still = !map.isZooming();
+    if (still || m.zs !== labelStep || m.zs == null) {
+      labelStep = m.zs;
+      map.getSource("netlabels").setData({ type: "FeatureCollection", features: m.labels });
+      map.getSource("sellabels").setData({ type: "FeatureCollection", features: m.selLabels });
+      refreshStations();
+    }
     // the selected route's stops sit on its drawn line (which moves with the lanes as you zoom)
     if (selected && selected.type === "route" && m.selIdx === LINEIDX[selected.id]) {
       const r = RBY[selected.id];
@@ -604,7 +610,7 @@
     return { local: f, peak: Math.max(0.5, Math.min(1, f + 0.15) * 0.8), shuttle: f, dart: f };
   }
   function tierFor(z) { const t = BUS_TIERS[settings.busDetail]; return z >= t[2] ? 2 : z >= t[1] ? 1 : 0; }
-  let curStep = null, lastBuild = 0, buildTimer = null, builtView = null, lastFeats = [], lastSelFeats = [];
+  let curStep = null, lastZ = -1, labelStep = null, lastBuild = 0, buildTimer = null, builtView = null, lastFeats = [], lastSelFeats = [];
   // The area last drawn (meters): the view plus a wide margin, so panning stays smooth.
   function viewBox(margin) {
     const b = map.getBounds();
@@ -623,13 +629,15 @@
   function rebuild() {
     if (!map || !map.getSource("net") || (!worker && !engine)) return;
     const zNow = map.getZoom();
-    const z = curStep = zStep(zNow);
+    const zs = curStep = zStep(zNow);
+    // lanes are laid out for (nearly) the zoom on screen, so they follow a pinch closely
+    const z = lastZ = Math.max(9, Math.min(19, Math.round(zNow * 50) / 50));
     lastBuild = performance.now();
     const u = interp(UNIT, z) * THICK[settings.thickness];
     const tier = tierFor(zNow);
     const keyOn = {};
     for (const k of Object.keys(CAT)) keyOn[k] = (k === "sounder" ? enabledCat("sounder") || enabledCat("amtrak") : enabledCat(CAT[k].base || k)) && CAT[k].tier <= tier;
-    const p = { z, zNow, u, capU: interp(CAP_PX, z) / u, keyOn,
+    const p = { z, zs, zNow, u, capU: interp(CAP_PX, z) / u, keyOn,
       selIdx: selected && selected.type === "route" ? LINEIDX[selected.id] : -1,
       view: (builtView = viewBox(0.75)), tags: tagSpacing(TAG_DENSITY[settings.tags], zNow), theme: theme[0], colors: netColors(theme),
       wscale: minorScale(zNow) };
@@ -641,9 +649,13 @@
     } else if (inFlight) queued = msg;
     else send(msg);
   }
+  // While zooming, ask for a new layout as soon as the zoom has moved a little: the worker takes
+  // one request at a time and newer ones replace waiting ones, so it keeps up as best it can.
   function onZoom() {
-    if (zStep(map.getZoom()) === curStep) return;
-    const wait = 140 - (performance.now() - lastBuild);
+    const zNow = map.getZoom();
+    if (Math.abs(zNow - lastZ) < 0.04 && zStep(zNow) === curStep) return;
+    if (worker) { clearTimeout(buildTimer); rebuild(); return; }
+    const wait = 140 - (performance.now() - lastBuild); // laying out on the page: not every frame
     clearTimeout(buildTimer);
     if (wait <= 0) rebuild(); else buildTimer = setTimeout(rebuild, wait);
   }
@@ -734,7 +746,11 @@
     return { type: "FeatureCollection", features: STOPS.stations.filter((s) => s.routes.some((id) => RBY[id] && enabledCat(RBY[id].cat))).map((s) => {
       const rs = s.routes.map((id) => RBY[id]).filter(Boolean);
       const cats = new Set(rs.map((r) => r.cat));
-      const major = [...cats].some((c) => majorCats.has(c)) || cats.has("ferry") || cats.has("watertaxi");
+      // the T Line in Tacoma is short and its stations close together: zoomed out they'd be a
+      // cluster of dots and names on a tiny line, so its stations only show once you're close
+      const tOnly = cats.has("link") && rs.filter((r) => r.cat === "link").every((r) => r.label === "T")
+        && ![...cats].some((c) => c !== "link" && (majorCats.has(c) || c === "ferry" || c === "watertaxi"));
+      const major = !tOnly && ([...cats].some((c) => majorCats.has(c)) || cats.has("ferry") || cats.has("watertaxi"));
       let stroke = BASE[theme].stationStroke;
       if (!major && cats.has("streetcar")) stroke = LINE[theme].streetcar;
       if (!cats.has("link") && (cats.has("ferry") || cats.has("watertaxi"))) stroke = LINE[theme].ferry;
@@ -742,9 +758,9 @@
       // Link stations take their line's color; stations of more than one Link line stay neutral
       const linkLines = new Set(rs.filter((r) => r.cat === "link").map(dkey));
       if (linkLines.size === 1) stroke = LINE[theme][[...linkLines][0]];
-      const size = cats.has("link") ? (rs.filter((r) => r.cat === "link").length > 1 ? 1.15 : 1) : major ? 0.95 : 0.7;
+      const size = tOnly ? 0.8 : cats.has("link") ? (rs.filter((r) => r.cat === "link").length > 1 ? 1.15 : 1) : major ? 0.95 : 0.7;
       const snap = rs.length && rs.every((r) => r.cat === "streetcar") ? "streetcar" : "";
-      return { type: "Feature", properties: { id: s.id, name: s.name, major: major ? 1 : 0, size, stroke, snap },
+      return { type: "Feature", properties: { id: s.id, name: s.name, major: major ? 1 : 0, late: tOnly ? 1 : 0, size, stroke, snap },
         geometry: { type: "Point", coordinates: [s.lon, s.lat] } };
     }) };
   }
@@ -863,6 +879,7 @@
   }
   const wsfDate = (x) => { const m = /Date\((\d+)/.exec(String(x || "")); return m ? +m[1] : 0; };
   const wsf = { vessels: new Map(), got: 0 };
+  const wsfState = () => wsf; // for the test scripts
   async function pollWsf() {
     if (Date.now() - wsf.got < 15000) return;
     wsf.got = Date.now();
@@ -948,8 +965,8 @@
   }
   // how much it matters: a trip or service that isn't running, a change to how it runs, or a notice
   function alertLevel(text, effect) {
-    if ([1, 2, 3].includes(effect) || /\b(cancel+ed|cancel+ations?|suspended|no service|not (be )?(running|operating|serving)|out of service|significant delays?|major delays?|disrupt)/i.test(text)) return 2;
-    if ([4, 6, 9].includes(effect) || /\b(detour|re-?rout|relocat|closed|closure|moved|temporar|skip|bypass|delay|reduced|shuttle)/i.test(text)) return 1;
+    if ([1, 2, 3].includes(effect) || /\b(cancel+ed|cancel+ations?|suspended|no service|not (be )?(running|operating|serving)|out of service|significant delays?|major delays?|disrupt|tie[- ]?up|tied up)/i.test(text)) return 2;
+    if ([4, 6, 9].includes(effect) || /\b(detour|re-?rout|relocat|closed|closure|moved|temporar|skip|bypass|delay|reduced|shuttle|unavailable)/i.test(text)) return 1;
     return 0;
   }
   // Agency feed alerts -> { id, agency, title, desc, url, level, start, end, routes, stops }
@@ -2415,7 +2432,7 @@
     });
     map.on("zoom", onZoom);
     map.on("moveend", onMoveEnd);
-    map.on("zoomend", () => { if (zStep(map.getZoom()) !== curStep) rebuild(); renderLive(); });
+    map.on("zoomend", () => { if (Math.abs(map.getZoom() - lastZ) > 0.005 || labelStep !== curStep) rebuild(); renderLive(); });
     document.addEventListener("keydown", (e) => {
       if (e.key !== "Escape" || e.target.closest("input")) return;
       if (popup) closePopup();
@@ -2714,7 +2731,7 @@
     window.__map = map; // handy for debugging from the console
     window.__atlas = {
       rebuild, timeRebuild: () => { const t = performance.now(); rebuild(); return performance.now() - t; },
-      inWorker: () => !!worker, lastBuildMs: () => lastBuildMs, engineInit, lastParams: () => lastParams, lastFeats: () => lastFeats, liveState: () => liveState(), alerts: () => alerts,
+      inWorker: () => !!worker, lastBuildMs: () => lastBuildMs, engineInit, lastParams: () => lastParams, lastFeats: () => lastFeats, liveState: () => liveState(), alerts: () => alerts, wsfState: () => wsfState(),
       idle: () => new Promise((res) => { if (!inFlight && !queued) res(); else idleWaiters.push(res); }),
     };
     map.touchZoomRotate.disableRotation();

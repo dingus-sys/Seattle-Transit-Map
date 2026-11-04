@@ -322,7 +322,13 @@ const KCTMGeom = (() => {
     // One view. p: { z (zoom step), zNow, u (px per line unit), capU, keyOn {key: bool}, selIdx,
     //   view [x0, y0, x1, y1] in meters, tags { gap, every, busZ }, theme ("l"/"d"), colors {key: css} }
     function build(p) {
-      const { z, zNow, u, capU, keyOn, selIdx } = p;
+      // z: the zoom the lanes are laid out for (follows the map closely while it zooms); zs: its
+      // quarter step, for what should stay put while zooming (simplified shapes, tag spacing)
+      const { z, zNow, u, capU, keyOn, selIdx } = p, zs = p.zs != null ? p.zs : z;
+      // every feature carries zu: pixels per line unit at zoom 0 for this layout, so the map can
+      // size lines from the same zoom their lanes were laid out for (no gaps opening between them
+      // while you zoom, before the next layout arrives)
+      const zu = u / 2 ** z;
       const S = u * MPP0 / 2 ** z; // meters per unit at this zoom
       // line width per service type; all-day and rush-hour buses are drawn slimmer when zoomed out
       const W = (v) => CAT[v].w * ((p.wscale && p.wscale[v]) || 1);
@@ -332,7 +338,7 @@ const KCTMGeom = (() => {
       // 1. each segment in (or near) view: which corridors show, their lanes and squeeze
       const V = p.view;
       const lay = new Array(EDGES.length);
-      const mpp = MPP0 / 2 ** z;
+      const mpp = MPP0 / 2 ** zs;
       for (const E of EDGES) {
         if (E.bb[2] < V[0] || E.bb[0] > V[2] || E.bb[3] < V[1] || E.bb[1] > V[3]) { lay[E.k] = null; continue; }
         const keys = E.order.filter((v) => keyOn[v] || (v === selKey && E.l.includes(selIdx)));
@@ -365,7 +371,7 @@ const KCTMGeom = (() => {
           x += w + GAP;
         }
         const tol = 1.0 * mpp;
-        const ck = `${z}`;
+        const ck = `${zs}`;
         let simp = E.simp.get(ck);
         if (!simp) { simp = simplify(E.pts, tol); E.simp.set(ck, simp); }
         lay[E.k] = { keys, s, T: T * s, pos, shift: 0, simp, wk, rl, sp, sw };
@@ -426,7 +432,7 @@ const KCTMGeom = (() => {
             drawPath(keyLane(v), run, lay, S, (k, coords) => {
               if (coords.length < 2) return;
               const Lo = lay[run[k].E.k], w = Lo.wk.get(v);
-              feats.push({ type: "Feature", properties: { r: -1, cat: v, e: run[k].E.k, wm: w + 0.14, cm: w + 0.55, hm: 0, sh: 0, ws: w * S, n: Lo.rl.get(v).length,
+              feats.push({ type: "Feature", properties: { r: -1, cat: v, e: run[k].E.k, zu, wm: w + 0.14, cm: w + 0.55, hm: 0, sh: 0, ws: w * S, n: Lo.rl.get(v).length,
                 g: c.group, c: color(v), s: 20 - c.prio, d: c.dash ? 1 : 0, h: 0, ar: 0 }, geometry: { type: "LineString", coordinates: coords.map(toLL) } });
             }, true);
           }
@@ -446,7 +452,7 @@ const KCTMGeom = (() => {
               // one strand per street carries the corridor's soft shadow and its one-way arrows,
               // so they show once however many routes share it
               const rep = j === Math.floor((n - 1) / 2);
-              const pr = { r: i, cat: v, e: st.E.k, wm: w + 0.14 * s, cm: w + 0.55 * s,
+              const pr = { r: i, cat: v, e: st.E.k, zu, wm: w + 0.14 * s, cm: w + 0.55 * s,
                 // the glass highlight only on a line of one route: a wide street line is one solid color
                 hm: n === 1 || c.base === "link" ? w * hr : 0, sh: rep ? (Lo.wk.get(v) + 0.55) * s : 0, ws: w * S, n: c.base === "link" ? 1 : n,
                 g: c.group, c: color(v), s: 20 - c.prio, d: c.dash ? 1 : 0, h: HMODE[c.inner] || 0,
@@ -472,14 +478,14 @@ const KCTMGeom = (() => {
           for (const run of runs(ch, selIdx)) {
             drawPath(strand(selIdx), run, lay, S, (k, coords) => {
               if (coords.length < 2) return;
-              selFeats.push({ type: "Feature", properties: { r: selIdx, cat: selKey, e: run[k].E.k, c: col, d: c.dash ? 1 : 0, ar: c.group === "water" ? 0 : arrow(run[k].E.dirOf(selIdx), run[k].fwd),
+              selFeats.push({ type: "Feature", properties: { r: selIdx, cat: selKey, e: run[k].E.k, zu, c: col, d: c.dash ? 1 : 0, ar: c.group === "water" ? 0 : arrow(run[k].E.dirOf(selIdx), run[k].fwd),
                 wm: c.w + 0.9, cm: c.w + 2.6, gm: c.w + 7, hm: (c.w + 0.9) * 0.3 },
               geometry: { type: "LineString", coordinates: coords.map(toLL) } });
             }, c.group === "water", false, easeAt);
           }
         }
       }
-      last = { lay, S, z, W, easeAt };
+      last = { lay, S, z, W, easeAt, zu };
 
       // 4. route-number tags. Connected blocks carrying the same routes form one stretch; a
       //    stretch gets one tag (on its longest block), plus repeats along long blocks, and the
@@ -560,13 +566,13 @@ const KCTMGeom = (() => {
           }
         }
       }
-      return { feats, selFeats, labels, selLabels, selIdx };
+      return { feats, selFeats, labels, selLabels, selIdx, zs };
     }
     // Paths of routes in the last view, in their lanes, exactly over their corridor lines (for
     // hover previews).
     function routePaths(idxs) {
       if (!last) return [];
-      const { lay, S, W, easeAt } = last, out = [];
+      const { lay, S, W, easeAt, zu } = last, out = [];
       for (const idx of idxs) {
         if (!LINES[idx]) continue;
         const v = VKEY(LINES[idx].cat), c = CAT[v];
@@ -577,7 +583,7 @@ const KCTMGeom = (() => {
             drawPath((Lo) => [Lo.sp.get(idx), Lo.sw.get(idx) / 2], run, lay, S, (k, coords) => {
               if (coords.length < 2) return;
               const Lo = lay[run[k].E.k], w = wide ? Math.min(Lo.wk.get(v), W(v)) * Lo.s : Lo.sw.get(idx);
-              out.push({ type: "Feature", properties: { r: idx, cat: v, e: run[k].E.k, d: c.dash ? 1 : 0,
+              out.push({ type: "Feature", properties: { r: idx, cat: v, e: run[k].E.k, zu, d: c.dash ? 1 : 0,
                 ar: c.group === "water" ? 0 : arrow(run[k].E.dirOf(idx), run[k].fwd), wm: w + 0.14, cm: w + 0.55 },
               geometry: { type: "LineString", coordinates: coords.map(toLL) } });
             }, c.group === "water", false, easeAt);
