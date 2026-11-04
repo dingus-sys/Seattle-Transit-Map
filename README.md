@@ -124,9 +124,18 @@ it, the missing stretch is drawn from the route's shape, so no route breaks off 
 at two points a few dozen meters apart (often a freeway and its ramps), and a route only uses
 the short link between them to get across, the link is folded into one junction, so the route
 crosses in one clean line instead of jogging or hopping into the other line's bundle; and a
-route is taken off any short dead-end piece next to a junction where it really turns. In the
-browser, the routes inside each street's line are put in the order that best matches the
-streets they come from and go on to, so strands cross each other as little as possible.
+route is taken off any short dead-end piece next to a junction where it really turns. A small knot of short links at a freeway (a freeway
+station with its ramps, a park & ride loop) becomes one junction, and where a busy straight
+line passes a junction that was placed on a street beside it, the junction moves onto the
+line instead of the line dipping to it. In the browser, the routes inside each street's line
+are put in the order that best matches the streets they come from and go on to, so strands
+cross each other as little as possible, and once you're zoomed in a hairline of the
+background shows between routes sharing a street.
+
+The base map shows highway numbers (Interstate, US and state routes) now and then along each
+freeway, and on the website, where the full map tiles are available, places to find your
+way by: parks, schools and colleges, museums, the zoo, hospitals, stadiums and sights, each
+with a small symbol, more of them as you zoom in.
 
 In the browser, `web/geom.js` lays out each view: every route is one continuous strand,
 corners are rounded, each route keeps its place across the street through junctions (whole

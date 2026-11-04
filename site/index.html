@@ -1432,6 +1432,15 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
   // that touch keep touching while you zoom.
   const px = (prop, k = 1) => ["interpolate", ["exponential", 2], ["zoom"],
     0, ["*", ["get", prop], ["get", "zu"], k], 24, ["*", ["get", prop], ["get", "zu"], k * 2 ** 24]];
+  // A route's strand, a hair narrower than its lane once you're zoomed in, so a fine line of the
+  // background shows between routes sharing a street (about a pixel; never more than a third of
+  // a thin strand). Zoomed out the strands touch.
+  const pxStrand = (prop) => ["interpolate", ["exponential", 2], ["zoom"],
+    ...[0, 12, 13, 14, 15, 16, 17, 18, 19, 20, 24].flatMap((z) => {
+      const b = ["*", ["get", prop], ["get", "zu"], 2 ** z];
+      const g = z <= 12 || z >= 24 ? 0 : (z === 13 ? 0.55 : 1) * (0.85 + 0.14 * interp(UNIT, z));
+      return [z, g ? ["max", ["*", b, 0.7], ["-", b, g]] : b];
+    })];
 
   // ---------------------------------------------------------------- base map palette
   const BASE = {
@@ -1668,7 +1677,7 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
         const f = ["==", ["get", "g"], g];
         L.push({ id: `line-${g}`, type: "line", source: "net", filter: ["all", f, ["==", ["get", "d"], 0]],
           layout: { "line-cap": "round", "line-join": "round", "line-sort-key": ["get", "s"] },
-          paint: { "line-color": ["get", "c"], "line-width": px("wm"), "line-opacity": LINE_OP } });
+          paint: { "line-color": ["get", "c"], "line-width": pxStrand("wm"), "line-opacity": LINE_OP } });
         L.push({ id: `dash-${g}`, type: "line", source: "net", filter: ["all", f, ["==", ["get", "d"], 1]],
           layout: { "line-join": "round" },
           paint: { "line-color": ["get", "c"], "line-width": px("wm"), "line-dasharray": [2.2, 1.3], "line-opacity": LINE_OP } });
@@ -1733,6 +1742,101 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
   // what a vehicle is, for its badge
   const vehKind = (r) => (["link", "sounder", "amtrak"].includes(r.cat) ? "rail" : ["streetcar", "monorail"].includes(r.cat) ? "tram"
     : ["ferry", "watertaxi"].includes(r.cat) ? "boat" : "bus");
+  // ---------------------------------------------------------------- places and highway signs
+  // So you can find your way: parks, schools and colleges, museums, the zoo, hospitals, stadiums
+  // and sights, each with a small symbol, more of them as you zoom in (the most notable first);
+  // and the highway numbers, now and then along each freeway, for anyone who isn't from here.
+  const POI_KIND = {
+    zoo: "zoo", aquarium: "zoo", museum: "museum", art_gallery: "museum", stadium: "stadium", sports_centre: "stadium",
+    college: "school", university: "school", school: "school", kindergarten: "school", library: "library",
+    hospital: "hospital", park: "park", garden: "park", nature_reserve: "park", attraction: "sight", viewpoint: "sight",
+    theatre: "sight", castle: "sight", monument: "sight", town_hall: "civic", courthouse: "civic", ferry_terminal: "ferry",
+  };
+  const POI_COLOR = { park: "#3f8f43", school: "#a5672a", museum: "#8a4fb5", zoo: "#2f8f6b", hospital: "#d0213b", stadium: "#3c6fb5",
+    library: "#7a5a2f", sight: "#c2571a", civic: "#5b6475", ferry: "#3c78b4" };
+  const POI_COLOR_D = { park: "#7fcf7f", school: "#e0a462", museum: "#c89af0", zoo: "#68d3a6", hospital: "#ff6b7f", stadium: "#7fa9ef",
+    library: "#d0ac74", sight: "#f39a5c", civic: "#aab3c4", ferry: "#7aa7d1" };
+  function poiLayers(P) {
+    const dark = theme === "dark", col = dark ? POI_COLOR_D : POI_COLOR;
+    const kind = ["match", ["get", "subclass"], ...Object.entries(POI_KIND).flat(), ["match", ["get", "class"], ...Object.entries(POI_KIND).flat(), ""]];
+    const color = ["match", kind, ...Object.entries(col).flat(), P.label];
+    const rank = ["coalesce", ["get", "rank"], 30];
+    return [
+      { id: "poi", type: "symbol", source: "base", "source-layer": "poi", minzoom: 13,
+        // the busier it is around, the fewer: notable places from 13, the rest as you zoom in
+        filter: ["all", ["!=", kind, ""], ["has", "name"],
+          ["any", [">=", ["zoom"], 16], ["all", [">=", ["zoom"], 15], ["<=", rank, 14]], ["all", [">=", ["zoom"], 14], ["<=", rank, 6]], ["<=", rank, 3]]],
+        layout: { "icon-image": ["concat", "poi:", kind, ":", dark ? "d" : "l"], "icon-size": ["interpolate", ["linear"], ["zoom"], 13, 0.85, 17, 1],
+          "text-field": ["get", "name"], "text-font": F_REG, "text-size": ["interpolate", ["linear"], ["zoom"], 13, 10.5, 17, 12],
+          "text-anchor": "left", "text-offset": [0.95, 0], "text-max-width": 8, "symbol-sort-key": rank, "text-padding": 4, "icon-padding": 3 },
+        paint: { "text-color": color, "text-halo-color": P.halo, "text-halo-width": 1.5, "text-opacity": 0.92 } },
+      // highway numbers: Interstate, US and state routes, sparsely
+      { id: "shields", type: "symbol", source: "base", "source-layer": "transportation_name", minzoom: 9,
+        filter: ["all", ["in", ["get", "network"], ["literal", ["us-interstate", "us-highway", "us-state"]]], ["has", "ref"],
+          ["<=", ["length", ["to-string", ["get", "ref"]]], 4]],
+        layout: { "symbol-placement": "line", "symbol-spacing": ["interpolate", ["linear"], ["zoom"], 9, 260, 13, 520, 16, 800],
+          "icon-image": ["concat", "shield:", ["get", "network"], ":", ["to-string", ["get", "ref"]]], "icon-rotation-alignment": "viewport",
+          "icon-size": ["interpolate", ["linear"], ["zoom"], 9, 0.72, 13, 0.85, 16, 0.95], "icon-padding": 30, "symbol-avoid-edges": true } },
+    ];
+  }
+  // a small round symbol for a place: white figure on its color
+  function drawPoiIcon(id) {
+    const [, kind, th] = id.split(":");
+    const color = (th === "d" ? POI_COLOR_D : POI_COLOR)[kind] || "#777";
+    const dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1)), S = 18 * dpr, c = S / 2, R = 7.4 * dpr;
+    const cv = document.createElement("canvas"); cv.width = cv.height = S;
+    const x = cv.getContext("2d");
+    x.beginPath(); x.arc(c, c, R + 1.3 * dpr, 0, Math.PI * 2); x.fillStyle = th === "d" ? "#1c1c1e" : "#fff"; x.fill();
+    x.beginPath(); x.arc(c, c, R, 0, Math.PI * 2); x.fillStyle = color; x.fill();
+    x.save(); x.translate(c, c); x.scale(R * 0.62, R * 0.62); x.fillStyle = "#fff"; x.strokeStyle = "#fff"; x.lineCap = "round"; x.lineJoin = "round";
+    const P = (pts) => { x.beginPath(); x.moveTo(pts[0][0], pts[0][1]); for (const q of pts.slice(1)) x.lineTo(q[0], q[1]); x.closePath(); x.fill(); };
+    const dot = (a, b, r) => { x.beginPath(); x.arc(a, b, r, 0, Math.PI * 2); x.fill(); };
+    if (kind === "park") { P([[0, -0.95], [0.75, 0.25], [-0.75, 0.25]]); x.fillRect(-0.13, 0.2, 0.26, 0.7); }
+    else if (kind === "school") { P([[0, -0.75], [1, -0.25], [0, 0.25], [-1, -0.25]]); x.fillRect(-0.55, -0.05, 1.1, 0.55); x.fillRect(0.82, -0.25, 0.14, 0.75); }
+    else if (kind === "museum") { P([[0, -0.95], [0.95, -0.4], [-0.95, -0.4]]); for (const a of [-0.65, -0.2, 0.25]) x.fillRect(a, -0.3, 0.38, 0.9); x.fillRect(-0.95, 0.65, 1.9, 0.25); }
+    else if (kind === "zoo") { dot(0, 0.35, 0.45); dot(-0.62, -0.2, 0.22); dot(-0.22, -0.62, 0.22); dot(0.22, -0.62, 0.22); dot(0.62, -0.2, 0.22); }
+    else if (kind === "hospital") { x.fillRect(-0.22, -0.8, 0.44, 1.6); x.fillRect(-0.8, -0.22, 1.6, 0.44); }
+    else if (kind === "stadium") { x.lineWidth = 0.28; x.beginPath(); x.ellipse(0, 0, 0.85, 0.55, 0, 0, Math.PI * 2); x.stroke(); dot(0, 0, 0.22); }
+    else if (kind === "library") { x.fillRect(-0.85, -0.65, 0.75, 1.3); x.fillRect(0.1, -0.65, 0.75, 1.3); }
+    else if (kind === "ferry") { P([[-0.9, 0.05], [0.9, 0.05], [0.6, 0.55], [-0.6, 0.55]]); x.fillRect(-0.45, -0.45, 0.8, 0.45); }
+    else if (kind === "civic") { P([[0, -0.9], [0.9, -0.35], [-0.9, -0.35]]); x.fillRect(-0.7, -0.25, 1.4, 0.9); }
+    else { // a sight: a star
+      x.beginPath(); for (let i = 0; i < 10; i++) { const r = i % 2 ? 0.42 : 1, a = -Math.PI / 2 + i * Math.PI / 5; x.lineTo(r * Math.cos(a), r * Math.sin(a)); } x.closePath(); x.fill();
+    }
+    x.restore();
+    if (!map.hasImage(id)) map.addImage(id, { width: S, height: S, data: x.getImageData(0, 0, S, S).data }, { pixelRatio: dpr });
+  }
+  // a highway number: Interstate (blue and red shield), US route (white shield), state route (white oval)
+  function drawShield(id) {
+    const [, net, ref] = id.split(":");
+    const dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+    const font = (px) => `700 ${px * dpr}px -apple-system, "SF Pro Text", "Helvetica Neue", Arial, sans-serif`;
+    const probe = document.createElement("canvas").getContext("2d");
+    probe.font = font(11);
+    const tw = probe.measureText(ref).width / dpr;
+    const w = Math.max(net === "us-state" ? 26 : 22, tw + (net === "us-state" ? 12 : 9)), h = net === "us-state" ? 17 : 21;
+    const W = Math.ceil((w + 4) * dpr), H = Math.ceil((h + 4) * dpr);
+    const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+    const x = cv.getContext("2d");
+    x.scale(dpr, dpr); x.translate(2, 2);
+    const shield = () => { x.beginPath(); x.moveTo(0, 2); x.quadraticCurveTo(w / 2, -1.5, w, 2); x.lineTo(w, h * 0.5); x.quadraticCurveTo(w, h * 0.85, w / 2, h); x.quadraticCurveTo(0, h * 0.85, 0, h * 0.5); x.closePath(); };
+    x.shadowColor = "rgba(0,0,0,.25)"; x.shadowBlur = 2; x.shadowOffsetY = 0.5;
+    if (net === "us-interstate") {
+      shield(); x.fillStyle = "#fff"; x.fill(); x.shadowColor = "transparent";
+      x.save(); x.translate(w / 2, h / 2); x.scale((w - 2.4) / w, (h - 2.4) / h); x.translate(-w / 2, -h / 2); shield(); x.clip();
+      x.fillStyle = "#1d4ea3"; x.fillRect(0, 0, w, h); x.fillStyle = "#c8252c"; x.fillRect(0, 0, w, h * 0.26); x.restore();
+      x.fillStyle = "#fff";
+    } else if (net === "us-highway") {
+      shield(); x.fillStyle = "#fff"; x.fill(); x.shadowColor = "transparent"; x.lineWidth = 1.3; x.strokeStyle = "#222"; x.stroke();
+      x.fillStyle = "#111";
+    } else {
+      x.beginPath(); x.ellipse(w / 2, h / 2, w / 2, h / 2, 0, 0, Math.PI * 2); x.fillStyle = "#fff"; x.fill(); x.shadowColor = "transparent";
+      x.lineWidth = 1.2; x.strokeStyle = "#2b6b3a"; x.stroke(); x.fillStyle = "#1f4f2b";
+    }
+    x.font = font(11).replace(/\d+(\.\d+)?px/, `${11}px`); x.textAlign = "center"; x.textBaseline = "middle";
+    x.fillText(ref, w / 2, h / 2 + (net === "us-state" ? 0.5 : 1.5));
+    if (!map.hasImage(id)) map.addImage(id, { width: W, height: H, data: x.getImageData(0, 0, W, H).data }, { pixelRatio: dpr });
+  }
   function liveLayers(P) {
     return [
       // which way it's heading: a small pointer that turns with the vehicle...
@@ -2080,12 +2184,13 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
     if (!map || !map.isStyleLoaded()) return;
     const P = BASE[theme];
     netDim = 1; // the loop below resets every layer to its normal look
-    for (const set of [baseLayers(P), transitLayers(P), areaLayers(P), stopLayers(P), liveLayers(P)]) {
+    for (const set of [baseLayers(P), transitLayers(P), areaLayers(P), poiLayers(P), stopLayers(P), liveLayers(P)]) {
       for (const L of set) {
         if (!map.getLayer(L.id)) continue;
         for (const [k, v] of Object.entries(L.paint || {})) map.setPaintProperty(L.id, k, v);
       }
     }
+    for (const L of poiLayers(P)) if (map.getLayer(L.id) && L.layout && L.layout["icon-image"]) map.setLayoutProperty(L.id, "icon-image", L.layout["icon-image"]);
     refreshStations();
     rebuild();
     applySelectionStyle();
@@ -2166,7 +2271,8 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
   function jsonp(url, ms = 12000) {
     return new Promise((ok, fail) => {
       const cb = `__kctm_jp${++jsonpSeq}`, el = document.createElement("script");
-      const done = (f, v) => { clearTimeout(t); delete window[cb]; el.remove(); f(v); };
+      // a reply that comes after we've given up still finds a (do-nothing) callback
+      const done = (f, v) => { clearTimeout(t); window[cb] = () => {}; el.remove(); f(v); };
       const t = setTimeout(() => done(fail, new Error("timeout")), ms);
       window[cb] = (data) => done(ok, data);
       el.onerror = () => done(fail, new Error("load"));
@@ -2446,21 +2552,34 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
     // OneBusAway agencies, then agencies with their own open feed (Intercity Transit)
     // (ferries come from the REST feed, which says which route each boat is on)
     const restPos = new Set(LIVE.rest || []);
-    const sources = LIVE.agencies.map((a) => [a, restPos.has(a)
+    // each round starts one agency further along, so if the API asks us to slow down part-way,
+    // it isn't always the same agencies (the ferries, at the end) that miss out
+    const ags = LIVE.agencies.slice(), turn = (live.round = (live.round || 0) + 1) % ags.length;
+    const oba = ags.slice(turn).concat(ags.slice(0, turn));
+    const sources = oba.map((a) => [a, restPos.has(a)
       ? `${LIVE.status}/${a}.json?key=${encodeURIComponent(LIVE.key)}&includeReferences=true`
       : `${LIVE.base}/${a}.pb?key=${encodeURIComponent(LIVE.key)}`, true, restPos.has(a)])
       .concat((LIVE.feeds || []).map((f) => [f.agency, f.url, false, false]));
     if (LIVE.wsf && wsfOn()) pollWsf(); // vessel details from WSF itself, when we have its access code
-    for (const [a, url, oba, rest] of sources) {
+    let slowed = false;
+    for (const [a, url, isOba, rest] of sources) {
+      if (isOba && slowed) continue; // told to slow down: skip the rest of OneBusAway this round
       try {
         const r = await fetch(url, { cache: "no-store" });
-        if (r.status === 429 && oba) { live.pauseUntil = Date.now() + 60000; break; }
+        if (r.status === 429 && isOba) { live.pauseUntil = Date.now() + 60000; slowed = true; continue; }
         if (!r.ok) throw new Error(String(r.status));
-        res.push({ status: "fulfilled", value: [a, rest ? restVehicles(a, await r.json()) : parseVehicles(new Uint8Array(await r.arrayBuffer()))] });
+        let list;
+        if (rest) {
+          const j = await r.json();
+          // OneBusAway's REST answers "too many requests" inside a normal response
+          if (j && j.code === 429) { live.pauseUntil = Date.now() + 60000; slowed = true; continue; }
+          list = restVehicles(a, j);
+        } else list = parseVehicles(new Uint8Array(await r.arrayBuffer()));
+        res.push({ status: "fulfilled", value: [a, list] });
       } catch (e) {
         res.push({ status: "rejected", reason: e });
       }
-      await new Promise((ok) => setTimeout(ok, 250));
+      await new Promise((ok) => setTimeout(ok, isOba ? 350 : 100));
     }
     // on time or late: one agency's vehicle status per round (King County Metro every other round)
     if (LIVE.status && Date.now() >= live.pauseUntil) {
@@ -2486,25 +2605,31 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
       if (x.status !== "fulfilled") continue;
       ok++;
       const [a, list] = x.value, seen = new Set();
+      live.fresh = live.fresh || {};
+      live.fresh[a] = Date.now();
       for (const v of list) {
-        if (!v.route || (v.ts && wall - v.ts > 300)) continue;
-        const r = RTMAP.get(`${a}_${v.route}`);
-        if (!r || LINEIDX[r.id] == null) continue;
-        const id = `${a}_${v.id || v.trip}`, to = [v.lon, v.lat];
-        seen.add(id);
-        const prev = live.vehicles.get(id);
-        // Washington State Ferries' boats go by name (OneBusAway's vehicle number is WSF's vessel id)
-        const name = a === "95" && WSF_VESSELS[v.id] ? WSF_VESSELS[v.id] : "";
-        if (prev) {
-          const from = vehPos(prev, now), d = geoDist(from, to);
-          const b = v.bearing != null && v.bearing > 0 ? v.bearing : d > 12 ? geoBearing(from, to) : prev.b;
-          Object.assign(prev, { from, to, t0: now, r, b, ts: v.ts, label: v.label || prev.label, vid: v.id, name, head: v.head || prev.head });
-        } else {
-          live.vehicles.set(id, { id, agency: a, from: to, to, t0: now, r, b: v.bearing > 0 ? v.bearing : -1, ts: v.ts, label: v.label, vid: v.id, name, head: v.head });
-        }
+        try {
+          if (!v.route || (v.ts && wall - v.ts > 300)) continue;
+          const r = RTMAP.get(`${a}_${v.route}`);
+          if (!r || LINEIDX[r.id] == null) continue;
+          const id = `${a}_${v.id || v.trip}`, to = [v.lon, v.lat];
+          seen.add(id);
+          const prev = live.vehicles.get(id);
+          // Washington State Ferries' boats go by name (OneBusAway's vehicle number is WSF's vessel id)
+          const name = a === "95" && WSF_VESSELS[v.id] ? WSF_VESSELS[v.id] : "";
+          if (prev) {
+            const from = vehPos(prev, now), d = geoDist(from, to);
+            const b = v.bearing != null && v.bearing > 0 ? v.bearing : d > 12 ? geoBearing(from, to) : prev.b;
+            Object.assign(prev, { from, to, t0: now, r, b, ts: v.ts, label: v.label || prev.label, vid: v.id, name, head: v.head || prev.head });
+          } else {
+            live.vehicles.set(id, { id, agency: a, from: to, to, t0: now, r, b: v.bearing > 0 ? v.bearing : -1, ts: v.ts, label: v.label, vid: v.id, name, head: v.head });
+          }
+        } catch (e) { /* one odd report doesn't stop the rest */ }
       }
       for (const [id, v] of live.vehicles) if (v.agency === a && !seen.has(id)) live.vehicles.delete(id);
     }
+    // an agency we haven't heard from in three minutes: its vehicles are out of date, drop them
+    for (const [id, v] of live.vehicles) if (live.fresh && Date.now() - (live.fresh[v.agency] || 0) > 180000) live.vehicles.delete(id);
     live.error = ok === 0;
     if (ok) live.last = Date.now();
     renderLive(now);
@@ -4017,7 +4142,7 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
           vehicles: { type: "geojson", data: empty },
           mask: { type: "geojson", data: maskGeoJSON() },
         },
-        layers: [...baseLayers(P), ...areaLayers(P), ...transitLayers(P), ...stopLayers(P), ...liveLayers(P)],
+        layers: [...baseLayers(P), ...areaLayers(P), ...transitLayers(P), ...poiLayers(P), ...stopLayers(P), ...liveLayers(P)],
       },
       bounds: narrow ? [[-122.42, 47.54], [-122.17, 47.72]] : [[-122.44, 47.50], [-122.10, 47.77]],
       fitBoundsOptions: { padding: narrow ? { top: 20, bottom: 150, left: 10, right: 10 } : { top: 30, bottom: 30, left: 420, right: 80 } },
@@ -4035,6 +4160,8 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
     map.on("styleimagemissing", (e) => {
       if (e.id.startsWith("veh:") || e.id.startsWith("vdir:")) drawVehicle(e.id);
+      else if (e.id.startsWith("poi:")) drawPoiIcon(e.id);
+      else if (e.id.startsWith("shield:")) drawShield(e.id);
       else if (e.id.startsWith("b:")) drawBadge(e.id);
       else if (e.id.startsWith("arr:")) drawArrow(e.id);
     });

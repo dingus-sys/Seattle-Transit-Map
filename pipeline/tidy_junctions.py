@@ -14,6 +14,15 @@ Two leftovers of tracing routes onto streets make intersections look broken on t
    pops out and stops. A route is taken off a short segment whose far end leads nowhere for it
    while the route goes on elsewhere at the near end.
 
+3. A knotted interchange. A freeway station or interchange where buses ramp on and off, loop
+   through a park & ride and turn back is traced as a knot of short links that draws as blobs
+   and loops. A small knot of short links on a freeway, which loops back on itself or which a
+   route winds through, becomes one junction.
+
+4. A corridor bent into a junction. Where a busy straight line (often a freeway) passes a
+   junction that was placed on a street beside it, the whole bundle dips to the junction and
+   back. The junction is moved onto the corridor's own line, and the side streets bend to it.
+
 Run after build_graph.py; running it again changes nothing.
 """
 import json
@@ -32,6 +41,9 @@ KY = 110574
 JOG_MAX = 60.0      # longest link that can be folded (m)
 STUB_MAX = 80.0     # longest piece a route can be taken off (m)
 RIDE_MAX = 50.0     # longest link a route can just borrow to cross another line (m)
+KNOT_LINK = 160.0   # links in a knotted interchange are shorter than this (m)
+KNOT_SIZE = 280.0   # and the whole knot fits in this (m)
+BEND_MAX = 75.0     # farthest a junction moves onto its corridor's line (m)
 
 
 def to_m(c):
@@ -96,6 +108,48 @@ def main():
         p = edges[k]["p"]
         return p if end == 0 else p[::-1]
 
+    def move_end(j, end, M):
+        """move edge j's `end` onto M, easing back to the old line over a short stretch"""
+        p = edges[j]["p"] if end == 0 else edges[j]["p"][::-1]
+        v = (M[0] - p[0][0], M[1] - p[0][1])
+        T = max(40.0, 1.6 * math.hypot(*v))
+        T = min(T, 0.6 * length(p)) if length(p) > 1 else T
+        out, acc = [], 0.0
+        for i, pt in enumerate(p):
+            if i:
+                acc += math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1])
+            w = 0.5 * (1 + math.cos(math.pi * acc / T)) if acc < T else 0.0
+            out.append((pt[0] + v[0] * w, pt[1] + v[1] * w))
+        out[0] = M
+        edges[j]["p"] = out if end == 0 else out[::-1]
+
+    # freeways (from build_graph's mask), to tell an interchange from a city street grid
+    fw_grid, CELL = defaultdict(list), 250.0
+    fw_path = os.path.join(HERE, "freeways.json")
+    if os.path.exists(fw_path):
+        for ln in json.load(open(fw_path))["lines"]:
+            q = [to_m(c) for c in ln]
+            for i in range(len(q) - 1):
+                a, b = q[i], q[i + 1]
+                for gx in range(int(min(a[0], b[0]) // CELL), int(max(a[0], b[0]) // CELL) + 1):
+                    for gy in range(int(min(a[1], b[1]) // CELL), int(max(a[1], b[1]) // CELL) + 1):
+                        fw_grid[(gx, gy)].append((a, b))
+
+    def to_freeway(pt):
+        best = 1e9
+        gx, gy = int(pt[0] // CELL), int(pt[1] // CELL)
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for a, b in fw_grid.get((gx + dx, gy + dy), ()):
+                    vx, vy = b[0] - a[0], b[1] - a[1]
+                    L2 = vx * vx + vy * vy or 1.0
+                    t = max(0.0, min(1.0, ((pt[0] - a[0]) * vx + (pt[1] - a[1]) * vy) / L2))
+                    best = min(best, math.hypot(a[0] + t * vx - pt[0], a[1] + t * vy - pt[1]))
+        return best
+
+    def node_pt(n):
+        return (n[1], n[2])
+
     # 1. fold split crossings
     folded = 0
     for _ in range(6):
@@ -146,27 +200,148 @@ def main():
             M = point_at(e["p"], L / 2)
             for node in (na, nb):
                 for j, end in at[node]:
-                    if j == k or edges[j] is None:
-                        continue
-                    p = edges[j]["p"] if end == 0 else edges[j]["p"][::-1]
-                    v = (M[0] - p[0][0], M[1] - p[0][1])
-                    T = max(40.0, 1.6 * math.hypot(*v))
-                    T = min(T, 0.6 * length(p)) if length(p) > 1 else T
-                    # move the end onto the new junction, easing back to the old line over T meters
-                    out, acc = [], 0.0
-                    for i, pt in enumerate(p):
-                        if i:
-                            acc += math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1])
-                        w = 0.5 * (1 + math.cos(math.pi * acc / T)) if acc < T else 0.0
-                        out.append((pt[0] + v[0] * w, pt[1] + v[1] * w))
-                    out[0] = M
-                    edges[j]["p"] = out if end == 0 else out[::-1]
+                    if j != k and edges[j] is not None:
+                        move_end(j, end, M)
             edges[k] = None
             folded += 1
         # a short loop left behind (two links between the same pair of junctions)
         for j, e in enumerate(edges):
             if e is not None and nkey(e, 0) == nkey(e, 1) and length(e["p"]) < 150:
                 edges[j] = None
+
+    # 3. knotted interchanges
+    knots, centers = 0, set()
+    at = index()
+    adj = defaultdict(list)
+    for k, e in enumerate(edges):
+        if e is None or e["lay"] != "s" or length(e["p"]) > KNOT_LINK:
+            continue
+        na, nb = nkey(e, 0), nkey(e, 1)
+        if na != nb:
+            adj[na].append((nb, k))
+            adj[nb].append((na, k))
+    seen = set()
+    for n0 in list(adj):
+        if n0 in seen:
+            continue
+        comp, inner, todo = {n0}, set(), [n0]
+        while todo:
+            n = todo.pop()
+            for m, k in adj[n]:
+                inner.add(k)
+                if m not in comp:
+                    comp.add(m)
+                    todo.append(m)
+        seen |= comp
+        if not 3 <= len(comp) <= 8:
+            continue
+        pts = [node_pt(n) for n in comp]
+        if max(math.hypot(a[0] - b[0], a[1] - b[1]) for a in pts for b in pts) > KNOT_SIZE:
+            continue
+        if min(to_freeway(q) for q in pts) > 45:
+            continue  # not at a freeway: a city block, leave it be
+        uses = defaultdict(int)
+        for k in inner:
+            for r in edges[k]["l"]:
+                uses[r] += 1
+        if not (len(inner) >= len(comp) or max(uses.values(), default=0) >= 3):
+            continue  # a plain chain of junctions, not a knot
+        M = (sum(q[0] for q in pts) / len(pts), sum(q[1] for q in pts) / len(pts))
+        centers.add(("s", round(M[0], 1), round(M[1], 1)))
+        for k in inner:
+            edges[k] = None
+        for n in comp:
+            for j, end in at[n]:
+                if edges[j] is not None:
+                    move_end(j, end, M)
+        knots += 1
+    # links that now start and end at the same junction (a loop through a park & ride)
+    at = index()
+    for j, e in enumerate(edges):
+        if e is not None and nkey(e, 0) == nkey(e, 1) and length(e["p"]) < 800:
+            edges[j] = None
+    # two links between a knot's new junction and the same neighbor, side by side (two ramps
+    # that now meet in one place): one link carrying both. Elsewhere, two links between the same
+    # junctions are usually a one-way pair on two streets, and stay as they are.
+    merged = 0
+    pairs = {}
+    for j, e in enumerate(edges):
+        if e is None:
+            continue
+        a, b = nkey(e, 0), nkey(e, 1)
+        if a not in centers and b not in centers:
+            continue
+        key = (a, b) if a <= b else (b, a)
+        if key in pairs:
+            i = pairs[key]
+            f = edges[i]
+            if max(length(e["p"]), length(f["p"])) <= 1.35 * min(length(e["p"]), length(f["p"])):
+                same = nkey(f, 0) == a
+                for r, d in zip(e["l"], e["d"]):
+                    if r in f["l"]:
+                        fi = f["l"].index(r)
+                        dd = d if same else {1: 2, 2: 1}.get(d, 0)
+                        if f["d"][fi] != dd:
+                            f["d"][fi] = 0
+                    else:
+                        f["l"].append(r)
+                        f["d"].append(d if same else {1: 2, 2: 1}.get(d, 0))
+                edges[j] = None
+                merged += 1
+                continue
+        pairs[key] = j
+
+    # 4. corridors bent into a junction
+    bent = 0
+    for _ in range(2):
+        at = index()
+        for n, ends in list(at.items()):
+            if n[0] != "s" or len(ends) < 3 or any(edges[j] is None for j, _ in ends):
+                continue
+            best = None
+            for x in range(len(ends)):
+                for y in range(x + 1, len(ends)):
+                    (j1, e1), (j2, e2) = ends[x], ends[y]
+                    shared = set(edges[j1]["l"]) & set(edges[j2]["l"])
+                    if len(shared) < 2:
+                        continue
+                    p1, p2 = leaving(j1, e1), leaving(j2, e2)
+                    L1, L2 = length(p1), length(p2)
+                    if min(L1, L2) < 120:
+                        continue
+                    A, B = point_at(p1, min(150.0, 0.6 * L1)), point_at(p2, min(150.0, 0.6 * L2))
+                    o = node_pt(n)
+                    fa = ((A[0] - o[0]), (A[1] - o[1])); fb = ((B[0] - o[0]), (B[1] - o[1]))
+                    na_, nb_ = math.hypot(*fa) or 1, math.hypot(*fb) or 1
+                    if (fa[0] * fb[0] + fa[1] * fb[1]) / (na_ * nb_) > -0.85:
+                        continue  # not a straight line through the junction
+                    if not best or len(shared) > best[0]:
+                        best = (len(shared), j1, e1, j2, e2, A, B)
+            if not best:
+                continue
+            _, j1, e1, j2, e2, A, B = best
+            o = node_pt(n)
+            vx, vy = B[0] - A[0], B[1] - A[1]
+            L2 = vx * vx + vy * vy or 1.0
+            t = max(0.0, min(1.0, ((o[0] - A[0]) * vx + (o[1] - A[1]) * vy) / L2))
+            P = (A[0] + t * vx, A[1] + t * vy)
+            dv = math.hypot(P[0] - o[0], P[1] - o[1])
+            if dv < 8 or dv > BEND_MAX:
+                continue
+            # only a real kink: the line turns sharply right at the junction (a curving street,
+            # whose junction sits on its curve, is left alone)
+            kinked = False
+            for j, e, far in ((j1, e1, A), (j2, e2, B)):
+                near = out_dir(leaving(j, e), 25.0)
+                fx, fy = far[0] - o[0], far[1] - o[1]
+                fl = math.hypot(fx, fy) or 1
+                if near[0] * fx / fl + near[1] * fy / fl < math.cos(math.radians(20)):
+                    kinked = True
+            if not kinked:
+                continue
+            for j, e in ends:
+                move_end(j, e, P)
+            bent += 1
 
     # 2. route stubs
     removed = 0
@@ -200,8 +375,15 @@ def main():
         out.append(rec)
     net["edges"] = out
     json.dump(net, open(path, "w"), separators=(",", ":"))
-    print(f"tidy junctions: {folded} split crossings folded, {removed} route stubs removed, {len(out)} edges")
+    print(f"tidy junctions: {folded} split crossings folded, {knots} knotted interchanges made one junction "
+          f"({merged} side-by-side links merged), {bent} corridors straightened through a junction, "
+          f"{removed} route stubs removed, {len(out)} edges")
+    return folded + knots + merged + bent + removed
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # one change can make room for another (a straightened corridor lines up a crossing): go
+    # again until nothing changes
+    for _ in range(4):
+        if not main():
+            break
