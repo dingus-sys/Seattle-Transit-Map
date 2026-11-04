@@ -39,9 +39,11 @@ jobs:
           fi
       - name: Add the ferry access code (from the WSF_ACCESS_CODE repository secret)
         env:
-          WSF_ACCESS_CODE: ${{ secrets.WSF_ACCESS_CODE }}
+          # a repository secret, or a repository variable of the same name
+          WSF_ACCESS_CODE: ${{ secrets.WSF_ACCESS_CODE || vars.WSF_ACCESS_CODE }}
         run: |
           # without one the placeholder is cleared and ferries come from OneBusAway alone
+          if [ -z "$WSF_ACCESS_CODE" ]; then echo "No WSF_ACCESS_CODE secret or variable: ferry bulletins stay off."; fi
           sed -i "s/__WSF_ACCESS_CODE__/${WSF_ACCESS_CODE}/" site/index.html
       - uses: actions/upload-pages-artifact@v3
         with:
