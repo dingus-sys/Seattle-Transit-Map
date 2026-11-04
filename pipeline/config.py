@@ -21,10 +21,11 @@ REGION = {
     "north": 48.08,
 }
 
-# The Amtrak Cascades line runs on past the map's edges, so it (and its stations) is kept out to
-# here: up to Mount Vernon in the north and Chehalis in the south. Nothing else is, so the buses
-# and the rest of the map stop at REGION as before.
-RAIL_REGION = {"west": -123.10, "south": 46.62, "east": -121.70, "north": 48.45}
+# The Amtrak Cascades line runs on past the map's edges, so it is kept out to here: well beyond
+# where the map lets you pan (REGION plus 0.4 degrees east-west and 0.3 north-south), so the line
+# runs off the edge of the screen instead of stopping in view. Nothing else is: the buses and the
+# rest of the map stop at REGION as before.
+RAIL_REGION = {"west": -123.20, "south": 46.50, "east": -121.70, "north": 48.50}
 
 # Wider, low-detail context ring for the zoomed-out view.
 CONTEXT = {"west": -123.40, "south": 46.75, "east": -121.20, "north": 48.40}

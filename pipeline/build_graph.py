@@ -396,6 +396,53 @@ def smooth(g):
         e["c"] = chaikin(c, 2) if len(c) > 2 else c
 
 
+def split_at_line_ends(g, routes, near=None):
+    """Trains: where a line ends partway along a stretch that another line carries on along
+    (Sounder N at Everett, where Amtrak goes on north), split the stretch there. Otherwise the
+    line that ends covers most of the stretch and is drawn on past its last station."""
+    from shapely.geometry import Point
+    near = near or SNAP
+    split = 0
+    for slug, rg in routes.items():
+        for part in getattr(rg, "geoms", [rg]):
+            for pt in (part.coords[0], part.coords[-1]):
+                P = Point(pt)
+                best = None
+                for eid, e in g.edges.items():
+                    line = LineString(e["c"])
+                    d = line.distance(P)
+                    if d < near and (best is None or d < best[0]):
+                        best = (d, eid, line)
+                if best is None:
+                    continue
+                _, eid, line = best
+                at = line.project(P)
+                if at < 200 or at > line.length - 200:
+                    continue  # already ends near a junction
+                e = g.edges[eid]
+                coords, first, acc = e["c"], [], 0.0
+                q = line.interpolate(at)
+                rest = None
+                for i, c in enumerate(coords):
+                    if i:
+                        acc += math.dist(coords[i - 1], c)
+                    if acc < at:
+                        first.append(c)
+                    else:
+                        rest = coords[i:]
+                        break
+                if not first or not rest:
+                    continue
+                nid = max(g.pos) + 1
+                g.pos[nid] = (q.x, q.y)
+                a, b = e["a"], e["b"]
+                g.remove(eid)
+                g.add(a, nid, first + [(q.x, q.y)])
+                g.add(nid, b, [(q.x, q.y)] + list(rest))
+                split += 1
+    return split
+
+
 def assign_lines(g, routes, mask=None):
     eids = list(g.edges)
     geoms = [LineString(g.edges[k]["c"]) for k in eids]
@@ -1138,6 +1185,8 @@ def build_layer(routes, rank, name, mask=None):
     contract_short(g, 22.0)  # junctions closer than ~22 m become one (city blocks are 60 m+)
     merge_chains(g)
     smooth(g)
+    if name == "rail":
+        split_at_line_ends(g, routes)
     assign_lines(g, routes, mask)
     merge_chains(g, same=lambda e1, e2: e1["lines"] == e2["lines"])
     for eid in [k for k, e in g.edges.items() if e["a"] == e["b"] and g.length(k) < 150]:
