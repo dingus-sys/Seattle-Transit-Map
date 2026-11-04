@@ -55,6 +55,8 @@ SNAP = R + 7   # distance at which a route is considered to use an edge
 # distance scale of the cleanup steps (stubs, gaps, loose ends): kept from the wide-band days,
 # since agency shapes that couldn't be matched still sit up to ~15 m off their street
 RC = 15.0
+# the biggest side-by-side detour in town that gets folded into one line (collapse_bubbles), in meters
+TOWN_BUBBLE_LEN, TOWN_BUBBLE_SEP = 900.0, 130.0
 
 fwd = Transformer.from_crs(4326, 32610, always_xy=True)
 inv = Transformer.from_crs(32610, 4326, always_xy=True)
@@ -668,8 +670,10 @@ def collapse_bubbles(g, mask=None):
     interchange, a loop ramp, a pair of parallel carriageways) the network has a "bubble": two
     paths between the same junctions. When the second path carries every route of the first,
     the first is dropped and its routes move over. Near freeways bubbles up to 1.2 km long and
-    160 m wide are folded; elsewhere only tiny ones (500 m, 60 m), so real one-way street pairs
-    in town stay apart."""
+    160 m wide are folded. In town they are folded up to 900 m long and 130 m apart: a block or
+    a bit more, so a one-way pair or a route that takes the next street over for a stretch is
+    drawn as one bundle on the busier street instead of two lines that part and rejoin. (Wider
+    pairs, such as 2nd and 4th Ave, stay apart.)"""
     import heapq
     near_fwy = mask.buffer(150) if mask is not None else None
     folded = 0
@@ -686,7 +690,7 @@ def collapse_bubbles(g, mask=None):
                 continue
             line = LineString(e["c"])
             fwy = near_fwy is not None and near_fwy.contains(line.interpolate(0.5, normalized=True))
-            max_len, max_sep = (1200.0, 160.0) if fwy else (500.0, 60.0)
+            max_len, max_sep = (1200.0, 160.0) if fwy else (TOWN_BUBBLE_LEN, TOWN_BUBBLE_SEP)
             if L > max_len:
                 continue
             limit = 1.6 * L + 100

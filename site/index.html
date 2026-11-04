@@ -3140,7 +3140,9 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
   function snapStops(stopFeats, lineFeats, mode) {
     if (!lineFeats || !lineFeats.length) return [];
     const ix = segIndex(lineFeats), mpp = MPP0 / 2 ** map.getZoom();
-    const maxD = mode === "route" ? Math.max(45, 24 * mpp) : Math.max(30, 13 * mpp);
+    // a selected route's own stops reach out further: where a one-way pair is drawn as one bundle,
+    // the stops of the street that was folded into it sit a block away from the line
+    const maxD = mode === "route" ? Math.max(140, 24 * mpp) : Math.max(30, 13 * mpp);
     const endTol = Math.max(20, 10 * mpp);
     const out = [];
     for (const f of stopFeats) {
