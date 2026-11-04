@@ -33,7 +33,7 @@ from skan import Skeleton
 from skimage.morphology import skeletonize
 
 sys.path.insert(0, os.path.dirname(__file__))
-from config import CACHE, REGION, SITE  # noqa: E402
+from config import CACHE, RAIL_REGION, REGION, SITE  # noqa: E402
 
 # Networks built separately, so trains in tunnels (Link under 3rd Ave, Sounder under
 # 4th Ave) and ferries at the docks are not bundled with the buses on the street above.
@@ -144,18 +144,67 @@ def load_routes():
     meta = json.load(open(os.path.join(SITE, "data", "routes.json")))
     rank = {r["id"]: i for i, r in enumerate(meta["routes"])}
     region = box(REGION["west"], REGION["south"], REGION["east"], REGION["north"])
-    routes = {}
+    rail_box = box(RAIL_REGION["west"], RAIL_REGION["south"], RAIL_REGION["east"], RAIL_REGION["north"])
+    routes, beyond = {}, {}
     for slug, s in shapes.items():
-        parts = []
+        parts, outer = [], []
         for line in s["lines"]:
-            g = LineString(line).intersection(region)
+            ls = LineString(line)
+            g = ls.intersection(region)
             for p in getattr(g, "geoms", [g]):
                 if p.geom_type == "LineString" and len(p.coords) > 1:
                     xs, ys = fwd.transform(*zip(*p.coords))
                     parts.append(LineString(list(zip(xs, ys))))
+            if s["cat"] == "amtrak":
+                # the Cascades line carries on past the map's edge, out to RAIL_REGION
+                g = ls.intersection(rail_box).difference(region)
+                for p in getattr(g, "geoms", [g]):
+                    if p.geom_type == "LineString" and len(p.coords) > 1:
+                        xs, ys = fwd.transform(*zip(*p.coords))
+                        outer.append(LineString(list(zip(xs, ys))))
         if parts:
             routes[slug] = (layer_of(s["cat"]), MultiLineString(parts))
-    return routes, rank
+        if outer:
+            beyond[slug] = outer
+    return routes, rank, beyond
+
+
+def extend_rail(out_edges, beyond, li):
+    """The Cascades line past the map's edge, drawn straight from its own shape (the track is
+    alone out there: no street network, no bundles to untangle). Each piece is joined to the end
+    of the same line inside the map, so the line runs on without a break."""
+    from math import hypot
+    added = 0
+    for slug, pieces in beyond.items():
+        if slug not in li:
+            continue
+        here = li[slug]
+        ends = [(tuple(e["c"][0]), e) for e in out_edges if here in e["l"]] + [(tuple(e["c"][-1]), e) for e in out_edges if here in e["l"]]
+        from shapely.ops import unary_union
+        kept = []
+        for part in sorted(pieces, key=lambda p: -p.length):
+            part = part.simplify(8)
+            if part.length < 200:
+                continue
+            # the same track again (the other direction, or a shape that stops elsewhere): once is enough
+            if kept and part.difference(unary_union(kept).buffer(60)).length < 0.2 * part.length:
+                continue
+            kept.append(part)
+            c = list(part.coords)
+            lon, lat = inv.transform(*zip(*c))
+            coords = [[round(x, 5), round(y, 5)] for x, y in zip(lon, lat)]
+            # join each end of the piece to the nearest end of an edge already on this line
+            for k in (0, -1):
+                px, py = fwd.transform(*coords[k])
+                best = min(((hypot(px - fwd.transform(*q)[0], py - fwd.transform(*q)[1]), q) for q, _ in ends), default=None)
+                if best and best[0] < 3000:
+                    coords[k] = list(best[1])
+            dedup = [coords[0]] + [c2 for p2, c2 in zip(coords, coords[1:]) if c2 != p2]
+            if len(dedup) < 2:
+                continue
+            out_edges.append({"c": dedup, "l": [here]})
+            added += 1
+    print(f"  rail: {added} stretches added past the map's edge", flush=True)
 
 
 def rasterize(routes, mask=None):
@@ -1141,7 +1190,7 @@ def water_direct(routes):
 
 
 def main():
-    all_routes, rank = load_routes()
+    all_routes, rank, beyond = load_routes()
     mask = freeway_mask()
     print("freeway mask:", "none" if mask is None else f"{mask.area / 1e6:.1f} km²", flush=True)
     print(f"{len(all_routes)} routes clipped to region")
@@ -1170,6 +1219,7 @@ def main():
             if any(d):
                 rec["d"] = d
             out_edges.append(rec)
+    extend_rail(out_edges, beyond, li)
     out = {"lines": lines, "edges": out_edges}
     path = os.path.join(SITE, "data", "network.json")
     json.dump(out, open(path, "w"), separators=(",", ":"))

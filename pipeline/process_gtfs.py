@@ -22,7 +22,7 @@ import pandas as pd
 from shapely.geometry import LineString, box
 
 sys.path.insert(0, os.path.dirname(__file__))
-from config import CACHE, FEEDS, REGION, SITE  # noqa: E402
+from config import CACHE, FEEDS, RAIL_REGION, REGION, SITE  # noqa: E402
 
 FEED_DIR = os.path.join(CACHE, "gtfs", "feeds")
 EXT = os.path.join(CACHE, "ext")
@@ -282,7 +282,10 @@ def main():
         wk = per_day["weekday"] if len(per_day["weekday"]) else max(per_day.values(), key=len)
 
         # Representative shapes: busiest shape per direction, plus variants carrying
-        # at least 15% of the route's trips (covers branches and one-way couplets).
+        # at least 15% of the route's trips (covers branches and one-way couplets). Amtrak
+        # keeps every shape that runs: the Cascades line has a few long-distance variants (to
+        # Vancouver, to Eugene) of two or three trips each, and each one reaches track the
+        # others don't.
         sc = Counter(zip(wk.shape_id, wk.direction_id))
         total = sum(sc.values())
         chosen, best_dir = [], {}
@@ -292,7 +295,7 @@ def main():
             if d not in best_dir:
                 best_dir[d] = sid
                 chosen.append((sid, n))
-            elif n >= 0.15 * total and sid not in [c[0] for c in chosen]:
+            elif (n >= 0.15 * total or aid == "51") and sid not in [c[0] for c in chosen]:
                 chosen.append((sid, n))
         geoms = [shapes[s] for s, _ in chosen if len(shapes[s]) > 1]
         if r.route_type == "3":
@@ -448,10 +451,14 @@ def main():
             continue
         s = stops_idx.loc[sid]
         lon, lat = float(s.stop_lon), float(s.stop_lat)
-        if not (REGION["west"] - pad <= lon <= REGION["east"] + pad and REGION["south"] - pad <= lat <= REGION["north"] + pad):
-            continue
         rl = sorted(rset, key=lambda x: rank_of[x])
         cats = {cat_of[x] for x in rl}
+        inside = REGION["west"] - pad <= lon <= REGION["east"] + pad and REGION["south"] - pad <= lat <= REGION["north"] + pad
+        # the Cascades line's stations carry on past the map's edge (to Mount Vernon and Chehalis)
+        if not inside and "amtrak" in cats:
+            inside = RAIL_REGION["west"] <= lon <= RAIL_REGION["east"] and RAIL_REGION["south"] <= lat <= RAIL_REGION["north"]
+        if not inside:
+            continue
         parent = s.parent_station
         if cats & rail_cats or cats & {"ferry", "watertaxi"}:
             kind = "rail" if cats & rail_cats else "ferry"
@@ -532,6 +539,7 @@ def main():
         "categories": CATEGORIES,
         "feeds": versions,
         "region": REGION,
+        "rail_region": RAIL_REGION,
     }
     json.dump({"meta": meta, "routes": out_routes, "stopNames": names},
               open(os.path.join(DATA, "routes.json"), "w"), separators=(",", ":"))
