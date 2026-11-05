@@ -469,18 +469,34 @@ def main():
     print(f"{len(roads)} road pieces near routes ({time.time() - t0:.0f}s)", flush=True)
     G = Graph(node_pieces(roads))
     print(f"graph built ({time.time() - t0:.0f}s); matching {len(items)} shapes", flush=True)
-    from multiprocessing import Pool
+    import multiprocessing
     res = {}
     stats = defaultdict(int)
     used_edges = set()
-    with Pool(4) as pool:
-        for k, (slug, idx, m, why, used) in enumerate(pool.imap_unordered(work, items, chunksize=2)):
+    # The workers need the street graph G built above. Forked workers inherit it; workers started
+    # fresh (the default on macOS, and on Linux from Python 3.14) would see G = None and every
+    # match would fail, quietly leaving every route on the agencies' rough shapes. So fork where
+    # the system can, and otherwise match in this one process.
+    if "fork" in multiprocessing.get_all_start_methods():
+        pool = multiprocessing.get_context("fork").Pool(4)
+        results = pool.imap_unordered(work, items, chunksize=2)
+    else:
+        pool = None
+        results = map(work, items)
+    try:
+        for k, (slug, idx, m, why, used) in enumerate(results):
             stats[why.split()[0]] += 1
             if m:
                 res[(slug, idx)] = m
                 used_edges.update(used)
             if (k + 1) % 100 == 0:
                 print(f"  {k + 1}/{len(items)} ({time.time() - t0:.0f}s) {dict(stats)}", flush=True)
+    finally:
+        if pool is not None:
+            pool.close()
+            pool.join()
+    if stats.get("error"):
+        print(f"WARNING: {stats['error']} shapes failed to match with an error", flush=True)
     out = {}
     for slug, s in shapes.items():
         lines = [res.get((slug, i), line) for i, line in enumerate(s["lines"])]

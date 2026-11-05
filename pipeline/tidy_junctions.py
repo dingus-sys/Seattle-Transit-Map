@@ -23,6 +23,11 @@ Two leftovers of tracing routes onto streets make intersections look broken on t
    junction that was placed on a street beside it, the whole bundle dips to the junction and
    back. The junction is moved onto the corridor's own line, and the side streets bend to it.
 
+5. A triangle of junctions. Where a diagonal street meets a grid (Yesler Way, 4th Ave S and
+   Prefontaine Pl S), three junctions a block apart are all joined to each other by short links.
+   Bundles running along different sides of it draw as a knot, and a route crossing it jogs.
+   Such a triangle (every side under TRI_LINK) becomes one junction at its middle, like a knot.
+
 Run after build_graph.py; running it again changes nothing.
 """
 import json
@@ -44,6 +49,7 @@ RIDE_MAX = 50.0     # longest link a route can just borrow to cross another line
 KNOT_LINK = 160.0   # links in a knotted interchange are shorter than this (m)
 KNOT_SIZE = 280.0   # and the whole knot fits in this (m)
 BEND_MAX = 75.0     # farthest a junction moves onto its corridor's line (m)
+TRI_LINK = 100.0    # a triangle of junctions all closer than this becomes one junction (m)
 
 
 def to_m(c):
@@ -255,6 +261,37 @@ def main():
                 if edges[j] is not None:
                     move_end(j, end, M)
         knots += 1
+    # 5. triangles of junctions a block apart (a diagonal street meeting a grid)
+    triangles = 0
+    at = index()
+    near = defaultdict(dict)
+    for k, e in enumerate(edges):
+        if e is None or e["lay"] != "s" or length(e["p"]) > TRI_LINK:
+            continue
+        na, nb = nkey(e, 0), nkey(e, 1)
+        if na != nb:
+            near[na][nb] = k
+            near[nb][na] = k
+    done = set()
+    for a in list(near):
+        for b in list(near[a]):
+            for c in list(near[b]):
+                if c == a or a not in near[c] or {a, b, c} & done:
+                    continue
+                inner = {near[a][b], near[b][c], near[c][a]}
+                if any(edges[k] is None for k in inner):
+                    continue
+                pts = [node_pt(n) for n in (a, b, c)]
+                M = (sum(q[0] for q in pts) / 3, sum(q[1] for q in pts) / 3)
+                centers.add(("s", round(M[0], 1), round(M[1], 1)))
+                for k in inner:
+                    edges[k] = None
+                for n in (a, b, c):
+                    for j, end in at[n]:
+                        if edges[j] is not None:
+                            move_end(j, end, M)
+                done |= {a, b, c}
+                triangles += 1
     # links that now start and end at the same junction (a loop through a park & ride)
     at = index()
     for j, e in enumerate(edges):
@@ -375,10 +412,11 @@ def main():
         out.append(rec)
     net["edges"] = out
     json.dump(net, open(path, "w"), separators=(",", ":"))
+    print(f"tidy junctions: {triangles} small triangles made one junction")
     print(f"tidy junctions: {folded} split crossings folded, {knots} knotted interchanges made one junction "
           f"({merged} side-by-side links merged), {bent} corridors straightened through a junction, "
           f"{removed} route stubs removed, {len(out)} edges")
-    return folded + knots + merged + bent + removed
+    return folded + knots + triangles + merged + bent + removed
 
 
 if __name__ == "__main__":

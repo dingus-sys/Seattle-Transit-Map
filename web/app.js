@@ -56,12 +56,12 @@
   const LINE = {
     light: {
       link: "#1d3f86", link1: "#28813f", link2: "#0072a8", linkT: "#e57a00", sounder: "#4b5563", streetcar: "#e8772e", monorail: "#8a8f98", rapidride: "#d0213b",
-      swift: "#1f6fe0", frequent: "#0a9b7b", local: "#3f8ee0", peak: "#a9824b", shuttle: "#e3a118",
+      swift: "#1f6fe0", frequent: "#0a9b7b", local: "#3f8ee0", peak: "#6f9a0c", shuttle: "#e3a118",
       dart: "#c0508a", watertaxi: "#1690ad", ferry: "#3d6fa8",
     },
     dark: {
       link: "#86a8f2", link1: "#4cc46a", link2: "#4ab3e8", linkT: "#ffa94d", sounder: "#a3acb9", streetcar: "#ff9450", monorail: "#b5bac2", rapidride: "#ff5468",
-      swift: "#5b9bff", frequent: "#2fd3a6", local: "#6eaef5", peak: "#d1a86c", shuttle: "#ffc44d",
+      swift: "#5b9bff", frequent: "#2fd3a6", local: "#6eaef5", peak: "#b8e04a", shuttle: "#ffc44d",
       dart: "#ea7ab5", watertaxi: "#45c1e3", ferry: "#7aa6dc",
     },
   };
@@ -1466,7 +1466,10 @@
     const sel = selected && selected.type === "route" && selected.id === r.id;
     const ix = sel ? (vehIxSel = vehIxSel || segIndex(lastSelFeats)) : (vehIx = vehIx || segIndex(lastFeats));
     const mpp = MPP0 / 2 ** map.getZoom();
-    const hit = nearestOn(ix, toM(pos[0], pos[1]), Math.max(40, 26 * mpp),
+    // a boat only ever sails its own lane, so it goes onto it from any distance (a position report
+    // can be a long way off the drawn line, which put boats in open water); on land, only when close
+    const reach = CAT[key].group === "water" ? 8000 : Math.max(40, 26 * mpp);
+    const hit = nearestOn(ix, toM(pos[0], pos[1]), reach,
       sel ? null : (pr) => (pr.r >= 0 ? pr.r === i : pr.cat === key && EDGES[pr.e] && EDGES[pr.e].l.includes(i)));
     if (!hit) return [pos, b];
     let hb = (Math.atan2(hit.dir[0], hit.dir[1]) * 180 / Math.PI + 360) % 360;
@@ -1815,7 +1818,9 @@
   function snapStops(stopFeats, lineFeats, mode) {
     if (!lineFeats || !lineFeats.length) return [];
     const ix = segIndex(lineFeats), mpp = MPP0 / 2 ** map.getZoom();
-    const maxD = mode === "route" ? Math.max(45, 24 * mpp) : Math.max(30, 13 * mpp);
+    // a selected route's own stops reach out further: where a one-way pair is drawn as one bundle,
+    // the stops of the street that was folded into it sit a block away from the line
+    const maxD = mode === "route" ? Math.max(140, 24 * mpp) : Math.max(30, 13 * mpp);
     const endTol = Math.max(20, 10 * mpp);
     const out = [];
     for (const f of stopFeats) {
@@ -1965,14 +1970,16 @@
   }
   async function loadStopDepartures(obaId) {
     try {
+      // no includeReferences=false here: on this server it makes the answer a bare "null"
       const r = await fetch(`${LIVE.deps}/${encodeURIComponent(obaId)}.json?key=${encodeURIComponent(LIVE.key)}`
-        + "&includeReferences=false&minutesBefore=0&minutesAfter=90", { cache: "no-store" });
+        + "&minutesBefore=0&minutesAfter=90", { cache: "no-store" });
       if (r.status === 429) { depCache.pause = Date.now() + 60000; return; }
       if (!r.ok) throw new Error(String(r.status));
       const j = await r.json();
       if (j && j.code === 429) { depCache.pause = Date.now() + 60000; return; }
-      const entry = (j && j.data && j.data.entry) || {};
-      depCache.byStop.set(obaId, { got: Date.now(), list: (entry.arrivalsAndDepartures || []).map(readDeparture).filter(Boolean) });
+      // anything that isn't a proper answer is "no answer" (the timetable stays), never "no departures"
+      if (!j || j.code !== 200 || !j.data || !j.data.entry || !Array.isArray(j.data.entry.arrivalsAndDepartures)) throw new Error("no answer");
+      depCache.byStop.set(obaId, { got: Date.now(), list: j.data.entry.arrivalsAndDepartures.map(readDeparture).filter(Boolean) });
     } catch (e) {
       // the timetable still answers; don't ask again for this stop straight away
       depCache.byStop.set(obaId, { got: Date.now(), list: null });
@@ -3082,6 +3089,7 @@
       inWorker: () => !!worker, lastBuildMs: () => lastBuildMs, engineInit, lastParams: () => lastParams, lastFeats: () => lastFeats, liveState: () => liveState(), alerts: () => alerts, wsfState: () => wsfState(),
       vehicleLines, vehicleOccupancy, occCode,
       obaStop, readDeparture, liveDepartures, depRowsHTML, depCache: () => depCache, stopCard, ensureDepartures,
+      onLine, routeById: (id) => RBY[id],
       idle: () => new Promise((res) => { if (!inFlight && !queued) res(); else idleWaiters.push(res); }),
     };
     map.touchZoomRotate.disableRotation();
