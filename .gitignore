@@ -3,6 +3,12 @@ __pycache__/
 .cache/
 pipeline/local_secrets.json
 *.zip
+# the page, built from web/ by pipeline/build_site.py (the Pages workflow builds it on deploy)
 site/artifact.html
+site/index.html
+site/app.js
+site/app.css
+site/geom.js
+site/logos/
 shots/
 vid2/

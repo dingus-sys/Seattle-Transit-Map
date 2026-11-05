@@ -30,10 +30,12 @@ pipeline/         Python build steps (run in this order by build_all.py)
   build_areas.py    DART areas, Access area, Metro Flex zones
   match_shapes.py   snaps every bus and streetcar route onto the real street network
   build_graph.py    the shared-corridor network and ribbon order
-  build_site.py     assembles web/ into site/index.html (+ artifact.html)
+  build_site.py     builds the page from web/: site/index.html with app.js, app.css, geom.js
+                    and logos/ beside it (+ artifact.html, one self-contained file)
 web/              page template, styles, app script and geom.js (the line geometry engine)
-site/             the finished static site (this is what gets published)
-.github/workflows pages.yml publishes site/; refresh-data.yml rebuilds data weekly
+site/             the finished static site (this is what gets published); its data/, tiles/
+                  and fonts/ are committed, the page files are built on deploy
+.github/workflows pages.yml builds the page and publishes site/; refresh-data.yml rebuilds data weekly
 ```
 
 ## Build

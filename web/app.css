@@ -288,6 +288,10 @@ button, input { font: inherit; color: inherit; letter-spacing: inherit; }
   display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 99px;
   background: var(--fill); font-size: 12.5px; font-weight: 600;
 }
+/* logos are drawn for light backgrounds, so they sit on a white pill in dark mode too */
+.logo-chip { background: #fff; padding: 4px 10px; box-shadow: inset 0 0 0 .5px rgba(0,0,0,.12); }
+.logo-img { display: block; height: 20px; width: auto; max-width: 120px; object-fit: contain; }
+.logo-link, .logo-sounder { height: 18px; }
 .chip .dot { width: 8px; height: 8px; border-radius: 50%; }
 .live-chip { background: color-mix(in srgb, var(--on) 14%, transparent); }
 .live-chip .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--on); animation: live-pulse 1.8s ease-out infinite; }
@@ -585,3 +589,5 @@ table.sched td.good { color: var(--good); font-weight: 650; }
 .tt-alert .al-ic { width: 13px; height: 13px; }
 @media (prefers-reduced-motion: reduce) { .al-more { animation: none; } }
 .icon .al-ic svg, .nav-row .al-row-ic .al-ic svg { width: 18px; height: 18px; }
+.vtrip { margin: 4px 0 0; font-size: 13px; }
+.vtrip b { font-weight: 650; }

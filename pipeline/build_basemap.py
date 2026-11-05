@@ -29,8 +29,8 @@ RAW = os.path.join(CACHE, "tiles_raw")
 OUT = os.path.join(SITE, "tiles")
 FONT_OUT = os.path.join(SITE, "fonts")
 
-# Layer -> attributes kept. Everything else (buildings, POIs, house numbers,
-# translations) is dropped: the transit lines are the subject here.
+# Layer -> attributes kept. Everything else (buildings, house numbers,
+# translations) is dropped; POIs are cut down to the kinds in POI_KEEP below: the transit lines are the subject here.
 KEEP = {
     "water": {"class", "brunnel"},
     "waterway": {"class", "brunnel"},
@@ -41,12 +41,17 @@ KEEP = {
     "transportation": {"class", "subclass", "brunnel", "ramp", "service"},
     "transportation_name": {"name", "class", "ref", "network", "brunnel"},
     "place": {"name", "class", "rank", "capital"},
+    "poi": {"name", "class", "subclass", "rank"},
     "aeroway": {"class"},
     "boundary": {"admin_level", "maritime", "disputed"},
 }
 LANDUSE_KEEP = {"university", "college", "hospital", "cemetery", "stadium", "industrial",
                 "railway", "school", "pitch", "zoo", "military"}
 LANDCOVER_KEEP = {"wood", "grass", "wetland", "sand", "ice"}
+# Places worth a symbol (the web page's POI_KIND): matched on the POI's subclass or class
+POI_KEEP = {"zoo", "aquarium", "museum", "art_gallery", "stadium", "sports_centre", "college", "university", "school",
+            "kindergarten", "library", "hospital", "park", "garden", "nature_reserve", "attraction", "viewpoint",
+            "theatre", "castle", "monument", "town_hall", "courthouse", "ferry_terminal"}
 TRANSPORT_DROP = {"path", "track", "busway", "bus_guideway", "pier"}
 
 
@@ -113,6 +118,11 @@ def strip_tile(raw: bytes, z: int) -> bytes:
                 continue
             if layer.name in ("transportation", "transportation_name") and cls in TRANSPORT_DROP:
                 continue
+            if layer.name == "poi":
+                sub = props.get("subclass", (None, None))[1]
+                sub = sub.string_value if sub is not None else None
+                if "name" not in props or (sub not in POI_KEEP and cls not in POI_KEEP):
+                    continue
             if layer.name == "boundary":
                 lvl = props.get("admin_level", (None, None))[1]
                 if lvl is None or lvl.int_value not in (2, 4, 8) and lvl.uint_value not in (2, 4, 8):
