@@ -598,3 +598,5 @@ table.sched td.good { color: var(--good); font-weight: 650; }
 .ferry-sailings { list-style: none; padding: 0; margin: 10px 0 0; }
 .ferry-sailings li { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; font-size: 13px; }
 .ferry-sailings span { color: var(--muted); }
+.ferry-notes { margin-top: 8px; }
+.ferry-notes summary { color: var(--muted); cursor: pointer; font-size: 13px; }

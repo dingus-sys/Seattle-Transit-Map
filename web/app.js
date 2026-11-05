@@ -1092,13 +1092,16 @@
     const box = $("#ferryInfo");
     if (!box) return;
     const ids = box.dataset.terminals.split(",").map(Number), data = wsf.terminals;
+    const openTips = new Set([...box.querySelectorAll(".ferry-notes[open]")].map((el) => +el.dataset.terminal));
+    const terminalName = (id) => data?.notes.find((t) => t.TerminalID === id)?.TerminalName || data?.spaces.find((t) => t.TerminalID === id)?.TerminalName || stopIndex[`wsf-${id}`]?.name || "Ferry terminal";
+    const routeWord = (s) => String(s || "").toLowerCase().replace(/\bpt\b/g, "point").replace(/\bisland\b/g, "").replace(/[^a-z0-9]/g, "");
     const now = Date.now(), fresh = data && now - wsf.terminalGot < 60000;
     const rows = [];
     for (const id of ids) {
       const notes = fresh && data.notes.find((t) => t.TerminalID === id);
       const spaces = fresh && data.spaces.find((t) => t.TerminalID === id);
-      const name = notes?.TerminalName || spaces?.TerminalName || stopIndex[`wsf-${id}`]?.name || "Ferry terminal";
-      const waits = (notes?.WaitTimes || []).filter((w) => w.WaitTimeNotes);
+      const name = terminalName(id), destinations = ids.filter((other) => other !== id).map(terminalName).map(routeWord);
+      const waits = (notes?.WaitTimes || []).filter((w) => w.WaitTimeNotes && (!w.RouteName || ids.length === 1 || destinations.some((dest) => routeWord(w.RouteName).includes(dest))));
       const sailings = (spaces?.DepartingSpaces || []).filter((d) => wsfDate(d.Departure) >= now - 60000 && wsfDate(d.Departure) <= now + 3 * 3600000)
         .sort((a, b) => wsfDate(a.Departure) - wsfDate(b.Departure));
       const departures = sailings.flatMap((d) => (d.SpaceForArrivalTerminals || []).filter((a) => ids.length === 1 || ids.includes(a.TerminalID)).map((a) => {
@@ -1107,7 +1110,7 @@
         return `<li><b>${esc(CLOCK.format(new Date(wsfDate(d.Departure))))} to ${esc(a.TerminalName)}</b><span>${esc(status)}</span></li>`;
       })).slice(0, 2);
       if (!waits.length && !departures.length) continue;
-      rows.push(`<div class="ferry-terminal"><h4>${esc(name)}</h4>${waits.map((w) => `<p>${esc(stripHTML(w.WaitTimeNotes))}</p>${wsfDate(w.WaitTimeLastUpdated) ? `<p class="foot">WSF note updated ${esc(new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(wsfDate(w.WaitTimeLastUpdated))))}</p>` : ""}`).join("")}${departures.length ? `<ul class="ferry-sailings">${departures.join("")}</ul>` : ""}</div>`);
+      rows.push(`<div class="ferry-terminal"><h4>${esc(name)}</h4>${departures.length ? `<ul class="ferry-sailings">${departures.join("")}</ul>` : ""}${waits.length ? `<details class="ferry-notes" data-terminal="${id}"${openTips.has(id) ? " open" : ""}><summary>WSF arrival tips</summary>${waits.map((w) => `${ids.length === 1 && w.RouteName ? `<p><b>${esc(w.RouteName)}</b></p>` : ""}<p>${esc(stripHTML(w.WaitTimeNotes))}</p>${wsfDate(w.WaitTimeLastUpdated) ? `<p class="foot">WSF note updated ${esc(new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(wsfDate(w.WaitTimeLastUpdated))))}</p>` : ""}`).join("")}</details>` : ""}</div>`);
     }
     box.innerHTML = `<h3 class="section">Ferry terminal conditions</h3><div class="group ferry-conditions">${rows.length ? rows.join("") : `<p class="hint">${wsf.terminalAttempt && !wsf.terminalGot ? "Checking WSF terminal conditions…" : "WSF terminal conditions are currently unavailable."}</p>`}</div><p class="foot">${rows.length ? "From WSF, checked " + CLOCK.format(new Date(wsf.terminalGot)) + ". " : ""}Vehicle space changes as loading continues. Walk-on availability is separate.</p>`;
   }

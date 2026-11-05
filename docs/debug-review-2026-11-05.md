@@ -1,7 +1,8 @@
 # Map debug review, November 5, 2026
 
-Prepared locally on `codex/route-clarity-debug` for later publication to the existing GitHub
-Pages site. This review does not deploy the changes or open a pull request.
+Published to the existing GitHub Pages site on November 5, 2026. The initial release was
+`1294d18`; its Check map and Pages workflows succeeded. The agent handles saving finished
+updates to GitHub and publishing, without making the user perform a push.
 
 The map keeps its shared corridors and service colors. Route ordering now minimizes actual
 strand inversions, including pairs that travel together for several blocks. Corners use a
@@ -48,7 +49,8 @@ Validation completed locally:
 - 28/28 desktop interaction checks, including search, layers, direction tabs and malformed links.
 - All 345 route cards opened with the matching route content and no missing cards.
 - 8/8 phone checks at 390 × 844, including sheet states and horizontal overflow.
-- 10/10 WSF/WSDOT fixture checks, including unavailable feeds, stale data and cancellations.
+- 12/12 WSF/WSDOT fixture checks, including route-specific folded tips, unavailable feeds,
+  stale data and cancellations.
 - The no-worker fallback loaded Route 49, with its line, selected path and stops.
 - Fractional display scaling no longer produces mismatched icon-image sizes.
 - Workflow YAML parses, JavaScript/Python source checks pass, and the keyless site builds.
@@ -56,8 +58,14 @@ Validation completed locally:
 Before/after views were inspected at Denny/I-5 and South Everett. Local screenshots are in
 the ignored `shots/` directory; they are not included in the deployed website.
 
-Real WSF/WSDOT authentication still needs a check after a GitHub deployment, since stored
-secret values cannot be read back for local testing. The full GTFS download and street-matching
+Live publication checks confirmed valid HTTP 200 responses for WSF vessel locations,
+service bulletins, terminal notes, vehicle-space reports and WSDOT highway alerts. The
+published app/geometry versions and network content matched the tested release. Browser
+verification confirmed live vehicles, terminal conditions and road notices without exposing
+credential values. A follow-up makes arrival tips specific to the selected crossing and
+folded by default, with sailing times and vehicle spaces shown first.
+
+The full GTFS download and street-matching
 pipeline was not rerun; the new repair step regenerated the network using the existing matched
 shapes. Rare trip variants below the existing 15% drawing threshold can still have stops listed
 outside the drawn path. Battery use and performance on a physical older phone were not measured.

@@ -20,7 +20,10 @@
         DepartingTerminalName: 'Seattle', ArrivingTerminalName: 'Bainbridge Island', Latitude: 47.62, Longitude: -122.45, Heading: 270, AtDock: false,
         TimeStamp: date(), LeftDock: date(-600000), Eta: date(1200000) }],
       alerts: [],
-      terminalwaittimes: [{ TerminalID: 7, TerminalName: 'Seattle', WaitTimes: [{ WaitTimeNotes: 'Example terminal note for the browser test.', WaitTimeLastUpdated: date(-300000) }] }],
+      terminalwaittimes: [{ TerminalID: 7, TerminalName: 'Seattle', WaitTimes: [
+        { RouteName: 'Seattle / Bainbridge Island', WaitTimeNotes: 'Example terminal note for the browser test.', WaitTimeLastUpdated: date(-300000) },
+        { RouteName: 'Seattle / Bremerton', WaitTimeNotes: 'Unrelated crossing note that must stay off the Bainbridge route.', WaitTimeLastUpdated: date(-300000) },
+      ] }],
       terminalsailingspace: [{ TerminalID: 7, TerminalName: 'Seattle', DepartingSpaces: [
         { Departure: date(600000), IsCancelled: false, SpaceForArrivalTerminals: [{ TerminalID: 3, TerminalName: 'Bainbridge Island', DisplayDriveUpSpace: true, DriveUpSpaceCount: 0 }] },
         { Departure: date(2400000), IsCancelled: true, SpaceForArrivalTerminals: [{ TerminalID: 3, TerminalName: 'Bainbridge Island', DisplayDriveUpSpace: false, DriveUpSpaceCount: null }] },

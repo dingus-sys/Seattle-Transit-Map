@@ -10,6 +10,8 @@
   check('road reports do not claim confirmed transit detours', a.alerts().road[0]?.routes.size === 0);
   route(); await wait();
   const text = document.querySelector('#ferryInfo')?.textContent || '';
+  check('terminal tips only include the selected crossing', !text.includes('Unrelated crossing note'));
+  check('arrival tips start folded while sailings stay visible', document.querySelector('#ferryInfo .ferry-notes')?.open === false && document.querySelector('#ferryInfo .ferry-sailings')?.getBoundingClientRect().height > 0);
   check('terminal notes load on demand', /Example terminal note/.test(text));
   check('zero vehicle spaces is distinct from walk-on availability', /Car deck full/.test(text) && /Walk-on availability is separate/.test(text));
   check('canceled sailings are labeled', /Canceled/.test(text));

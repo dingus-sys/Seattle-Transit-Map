@@ -154,14 +154,14 @@ the map tiles; the bundled tiles keep only named places of the kinds in `POI_KEE
 
 ## Open items
 
-1. **November 5 changes await publication.** The user requested a GitHub-ready version for a later
-   upload, so this round is prepared locally. The repository has `WSP_KEY` and `WSDOT_KEY`; the Pages
-   workflow now accepts those names. WSF vessel locations, terminal conditions and highway alerts
-   passed fixture checks; authentication with the real stored keys still needs a deployment check.
-   Verify that deployed settings are non-empty without printing the keys.
+1. **November 5 release is published.** GitHub Pages and the Check map workflow succeeded.
+   The published app, geometry and 956,447-byte network matched the tested release. `WSP_KEY`
+   and `WSDOT_KEY` work: live vessel locations, ferry bulletins, terminal notes, vehicle-space
+   reports and WSDOT highway alerts all returned valid lists with HTTP 200. The browser also
+   received live vehicles, ferry conditions and highway reports. Never print key values.
 2. The November 5 geometry changes reduce the previous 287 strand swaps to 42, clip small offset
    folds, and restore substantial source-path omissions, including the shared 201/202/513 stretch
-   near Paine Field. Keep real crossings and rail/surface separations. Some routes can still list
+   on I-5 in South Everett. Keep real crossings and rail/surface separations. Some routes can still list
    stops served only by trip variants below the 15% drawing threshold (e.g. 21, 4, 7, 906); adding
    every rare variant would require a separate decision about map detail.
 3. The user asked for official agency logos; this was declined (rule 3). Original service-type
@@ -176,5 +176,10 @@ the map tiles; the bundled tiles keep only named places of the kinds in `POI_KEE
 - They notice when a fix is a one-off. Fix the class of problem (find all the places it happens), and
   check several other places afterwards.
 - Always show before and after screenshots of what changed; send them the relevant ones.
-- Ship each round: commit, push `main`, confirm the deploy, republish the artifact, then summarize
-  what changed and what's still open, in plain language and without jargon.
+- The user wants completed changes saved to the connected GitHub repository and publication
+  handled by the agent, without making the user perform a push. Test complex changes locally
+  when useful, then handle the commit and publication yourself. On November 5 the GitHub
+  connector could read the repo but its Git blob write returned 403; regular Git push worked.
+- Ship each requested website update to `main`, wait for checks and GitHub Pages, then verify
+  the live site. Respect an explicit request for review-only or local-only work. Update the
+  separate Claude artifact only when requested.
