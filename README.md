@@ -32,7 +32,7 @@ pipeline/         Python build steps (run in this order by build_all.py)
   match_shapes.py   snaps every bus and streetcar route onto the real street network
   build_graph.py    the shared-corridor network and ribbon order
   tidy_junctions.py  folds small junction knots and removes stray stubs
-  repair_network.py restores remaining gaps from matched shapes; simplifies to 2 m
+  repair_network.py restores gaps and turnarounds from route shapes and simplifies to 2 m
   build_site.py     builds the page from web/: site/index.html with app.js, app.css, geom.js,
                     ribbons.js and logos/ beside it (+ artifact.html, one self-contained file)
 web/              page template, styles, app script, geom.js (layout) and ribbons.js (drawing)
@@ -155,8 +155,10 @@ draws one solid band per service type instead of tiny individual route strands.
 After junction cleanup, `repair_network.py` repeats the gap repair using the route's own
 matched path, including long freeway stretches and omitted terminal branches. Substantial
 source spans more than 160 m from the drawing are restored when they can be anchored to
-the existing route; small terminal loops remain simplified. Redundant surface-network
-points within 2 m are removed while junction endpoints, rail and water geometry are kept.
+the existing route. Compact one-way turnarounds are restored from agency shapes when the
+arriving and departing paths show the same approach and connect to the rest of the route.
+Redundant surface-network points within 2 m are removed while junction endpoints, rail
+and water geometry are kept.
 
 The base map shows highway numbers (Interstate, US and state routes) now and then along each
 freeway, and on the website, where the full map tiles are available, places to find your

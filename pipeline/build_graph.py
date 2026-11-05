@@ -146,10 +146,11 @@ def layer_of(cat):
     return "surface"
 
 
-def load_routes():
+def load_routes(*, prefer_matched=True):
     # the shapes matched to the street network (match_shapes.py), else the agencies' own
     matched = os.path.join(CACHE, "route_shapes_matched.json")
-    shapes = json.load(open(matched if os.path.exists(matched) else os.path.join(CACHE, "route_shapes.json")))
+    source = matched if prefer_matched and os.path.exists(matched) else os.path.join(CACHE, "route_shapes.json")
+    shapes = json.load(open(source))
     meta = json.load(open(os.path.join(SITE, "data", "routes.json")))
     rank = {r["id"]: i for i, r in enumerate(meta["routes"])}
     region = box(REGION["west"], REGION["south"], REGION["east"], REGION["north"])

@@ -1,4 +1,4 @@
-"""Restore route continuity after junction simplification, using matched GTFS paths.
+"""Restore route continuity and turnarounds after junction simplification.
 
 The short-gap repair during tracing runs before junctions are folded and has a 2.5 km
 limit. Run it once more on the finished surface network, allowing long freeway gaps.
@@ -13,6 +13,8 @@ import numpy as np
 import shapely
 from shapely.geometry import LineString, Point
 from shapely.ops import substring, unary_union
+
+from restore_turnarounds import restore_turnarounds
 
 
 def restore_spans(g, routes):
@@ -118,7 +120,13 @@ def main():
     filled = graph.fill_gaps(g, surface, mask, max_span=20000)
     bridged = graph.bridge_loose_ends(g, surface, mask, max_span=20000)
     restored = restore_spans(g, surface)
-    print(f"final continuity: {filled} gaps filled, {bridged} loose ends reconnected, {restored} omitted spans restored", flush=True)
+    raw = {}
+    if graph.MATCHED:
+        raw_routes, _, _ = graph.load_routes(prefer_matched=False)
+        raw = {slug: shape for slug, (layer, shape) in raw_routes.items() if layer == "surface"}
+    turnarounds = restore_turnarounds(g, surface, raw)
+    print(f"final continuity: {filled} gaps filled, {bridged} loose ends reconnected, "
+          f"{restored} omitted spans and {turnarounds} turnarounds restored", flush=True)
     # Infer direction only for new links; split links retain their original metadata.
     new = graph.Graph(g.pos, [])
     source_ids = {}
