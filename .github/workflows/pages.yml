@@ -27,30 +27,22 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check route geometry before publishing
+        run: node tools/geometry_check.js
       - uses: actions/configure-pages@v5
       # The page (index.html, app.js, app.css, geom.js, logos/) is built here from web/ and is
       # not kept in the repository; the data in site/data and site/tiles is.
       - name: Build the page
-        run: |
-          python3 pipeline/build_site.py
-          rm site/artifact.html   # the one-file claude.ai preview, not part of the website
-      - name: Add the live-data key (from the OBA_API_KEY repository secret)
         env:
           OBA_API_KEY: ${{ secrets.OBA_API_KEY }}
+          WSF_ACCESS_CODE: ${{ secrets.WSF_ACCESS_CODE || vars.WSF_ACCESS_CODE || secrets.WSF_KEY || secrets.WSP_KEY || secrets.WSDOT_KEY }}
+          WSDOT_KEY: ${{ secrets.WSDOT_KEY || secrets.WSDOT_ACCESS_CODE || secrets.WSF_ACCESS_CODE || secrets.WSP_KEY }}
         run: |
-          if [ -n "$OBA_API_KEY" ]; then
-            sed -i "s/__OBA_API_KEY__/${OBA_API_KEY}/" site/index.html
-          else
-            echo "No OBA_API_KEY secret: the map will show timetable estimates instead of live positions."
-          fi
-      - name: Add the ferry access code (from the WSF_ACCESS_CODE repository secret)
-        env:
-          # a repository secret, or a repository variable of the same name
-          WSF_ACCESS_CODE: ${{ secrets.WSF_ACCESS_CODE || vars.WSF_ACCESS_CODE }}
-        run: |
-          # without one the placeholder is cleared and ferries come from OneBusAway alone
-          if [ -z "$WSF_ACCESS_CODE" ]; then echo "No WSF_ACCESS_CODE secret or variable: ferry bulletins stay off."; fi
-          sed -i "s/__WSF_ACCESS_CODE__/${WSF_ACCESS_CODE}/" site/index.html
+          python3 pipeline/build_site.py --with-key
+          rm site/artifact.html   # the one-file claude.ai preview, not part of the website
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site

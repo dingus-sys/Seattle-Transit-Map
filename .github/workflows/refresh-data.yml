@@ -24,6 +24,7 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.txt
+      - run: python tools/check_repair.py
       - run: python pipeline/build_all.py --no-tiles --fresh
       - name: Commit updated data
         run: |

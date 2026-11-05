@@ -20,11 +20,12 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(__file__))
 from config import (CACHE, FEEDS, LIVE_FEEDS, OBA_AGENCIES, OBA_ALERTS, OBA_BASE, OBA_DEPARTURES,  # noqa: E402
-                    OBA_REST_POSITIONS, OBA_STATUS, ROOT, SITE, WSF_API, oba_key, wsf_code)
+                    OBA_REST_POSITIONS, OBA_STATUS, ROOT, SITE, WSF_API, WSDOT_ALERTS, oba_key, wsf_code, wsdot_code)
 
 MAPLIBRE_CSS_URL = "https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.css"
 KEY_PLACEHOLDER = "__OBA_API_KEY__"
 WSF_PLACEHOLDER = "__WSF_ACCESS_CODE__"
+WSDOT_PLACEHOLDER = "__WSDOT_ACCESS_CODE__"
 LOGO_TYPES = {".svg": "image/svg+xml", ".png": "image/png"}
 # fetched by the page as soon as it starts, so the browser can start downloading them
 # while it is still loading the scripts
@@ -71,17 +72,19 @@ def logos_js(urls):
 
 def live_js(with_key):
     # The API key never goes into the repository: index.html carries a placeholder that the
-    # GitHub Pages workflow replaces with the OBA_API_KEY secret at deploy time. For local
-    # testing, `build_site.py --with-key` writes the key from pipeline/local_secrets.json.
+    # GitHub Pages builds with --with-key and environment secrets; default builds use
+    # placeholders. Local --with-key builds can also read pipeline/local_secrets.json.
     key = oba_key() if with_key else KEY_PLACEHOLDER
     wsf = (wsf_code() or "") if with_key else WSF_PLACEHOLDER
+    wsdot = (wsdot_code() or "") if with_key else WSDOT_PLACEHOLDER
     return " window.ATLAS_LIVE = " + json.dumps({"key": key, "base": OBA_BASE, "status": OBA_STATUS, "agencies": OBA_AGENCIES,
                                                  "feeds": LIVE_FEEDS, "alerts": OBA_ALERTS, "rest": OBA_REST_POSITIONS,
                                                  "deps": OBA_DEPARTURES,
                                                  # stop ids read "<feed>-<the agency's own id>"; OneBusAway calls the
                                                  # same stop "<agency number>_<the agency's own id>"
                                                  "stopAgency": {f["key"]: f["default"] for f in FEEDS},
-                                                 "wsf": {"base": WSF_API, "code": wsf}}) + ";"
+                                                 "wsf": {"base": WSF_API, "code": wsf},
+                                                 "wsdot": {"alerts": WSDOT_ALERTS, "code": wsdot}}).replace("<", "\\u003c") + ";"
 
 
 def build_artifact(page, css, js, geom, logos):

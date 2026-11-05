@@ -602,8 +602,11 @@ def split_edge(g, eid, pt):
     g.pos[nid] = c1.coords[-1]
     lines = e["lines"]
     g.remove(eid)
-    g.add(e["a"], nid, list(c1.coords), lines)
-    g.add(nid, e["b"], list(c2.coords), lines)
+    for a, b, c in ((e["a"], nid, c1), (nid, e["b"], c2)):
+        k = g.add(a, b, list(c.coords), lines)
+        for field in ("order", "dirs"):
+            if field in e:
+                g.edges[k][field] = e[field].copy()
     return nid
 
 

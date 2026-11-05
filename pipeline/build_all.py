@@ -15,7 +15,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from config import CACHE  # noqa: E402
 
-STEPS = ["build_basemap.py", "process_gtfs.py", "build_areas.py", "match_shapes.py", "build_graph.py", "tidy_junctions.py", "build_site.py"]
+STEPS = ["build_basemap.py", "process_gtfs.py", "build_areas.py", "match_shapes.py", "build_graph.py", "tidy_junctions.py", "repair_network.py", "build_site.py"]
 
 
 def run(step):

@@ -91,28 +91,38 @@ OBA_REST_POSITIONS = ["95"]
 # secret, or "wsf_access_code" in pipeline/local_secrets.json. Without one, ferries still show
 # live from OneBusAway, without the WSF bulletins.
 WSF_API = "https://www.wsdot.wa.gov/ferries/api"
+WSDOT_ALERTS = "https://www.wsdot.wa.gov/traffic/api/HighwayAlerts/HighwayAlertsREST.svc/GetAlertsAsJson"
 
 TILEJSON_URL = "https://tiles.openfreemap.org/planet"
 FONTS_URL = "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf"
 
 
-def wsf_code():
-    code = os.environ.get("WSF_ACCESS_CODE", "").strip()
-    if code:
-        return code
+def access_code(*names):
+    for name in names:
+        code = os.environ.get(name, "").strip()
+        if code:
+            return code
     path = os.path.join(os.path.dirname(__file__), "local_secrets.json")
     if os.path.exists(path):
         import json
-        return json.load(open(path)).get("wsf_access_code", "")
+        with open(path) as f:
+            local = json.load(f)
+        for name in names:
+            value = local.get(name.lower(), "")
+            code = value.strip() if isinstance(value, str) else ""
+            if code:
+                return code
     return ""
+
+
+def wsf_code():
+    # WSP_KEY is the ferry key's existing repository-secret name.
+    return access_code("WSF_ACCESS_CODE", "WSF_KEY", "WSP_KEY", "WSDOT_KEY", "WSDOT_ACCESS_CODE")
+
+
+def wsdot_code():
+    return access_code("WSDOT_KEY", "WSDOT_ACCESS_CODE", "WSF_ACCESS_CODE", "WSF_KEY", "WSP_KEY")
 
 
 def oba_key():
-    key = os.environ.get("OBA_API_KEY", "").strip()
-    if key:
-        return key
-    path = os.path.join(os.path.dirname(__file__), "local_secrets.json")
-    if os.path.exists(path):
-        import json
-        return json.load(open(path)).get("oba_api_key", "")
-    return ""
+    return access_code("OBA_API_KEY")

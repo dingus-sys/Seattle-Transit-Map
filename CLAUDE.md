@@ -22,11 +22,12 @@ service is a corridor, lines follow the real streets, and the look is Apple "liq
 ## Rules (do not break)
 
 1. **Never commit an API key.** The OneBusAway key and the WSDOT ferry access code live in the
-   GitHub secrets/variables `OBA_API_KEY` and `WSF_ACCESS_CODE`, in the environment variables of
+   GitHub secrets/variables `OBA_API_KEY`, `WSP_KEY` (ferries), `WSDOT_KEY` (roads), or `WSF_ACCESS_CODE`, in the environment variables of
    the same names, or in `pipeline/local_secrets.json` (git-ignored:
    `{"oba_api_key": "...", "wsf_access_code": "..."}`). The page (`site/index.html`, `app.js`,
    `app.css`, `geom.js`) is not in the repo: the Pages workflow builds it with `build_site.py`, which
-   writes the placeholders `__OBA_API_KEY__` and `__WSF_ACCESS_CODE__`, and then fills them in.
+   writes placeholders by default. The Pages workflow passes secrets through the environment
+   and builds with `--with-key`, using JSON escaping rather than shell substitution.
    - Test live data with `python3 pipeline/build_site.py --with-key`, then rebuild without
      `--with-key` when you're done.
    - Before every commit: `git grep --cached -F "<the key>"` finds nothing. Don't paste keys into
@@ -64,7 +65,9 @@ node tools/sweep.js                           # 51 checks: expect "51/51 passed"
 node tools/close.js '[["name",[-122.3365,47.6085],16]]'   # screenshot views to shots/c-name.png
 node tools/bench.js                           # layout time per zoom (worker 5-260 ms is normal)
 node tools/zoomgap2.js tag                    # pinch-zoom check (lines must stay together)
-node tools/strandorder.js                     # strand swaps at junctions (about 300 now)
+node tools/strandorder.js                     # strand swaps at junctions (42 in the November 5 network)
+node tools/geometry_check.js                  # all routes/zoom levels, selection/hover agreement
+python3 tools/check_repair.py                 # omitted branches, anchored repairs, direction metadata
 node tools/deployed_watch.js https://dingus-sys.github.io/Seattle-Transit-Map/   # live data on the real site
 python3 tools/near.py -122.15 47.58 250       # network segments near a point
 ```
@@ -85,8 +88,8 @@ secrets or the Pages API (the proxy blocks them); check the live page with `curl
 **Pipeline** (`pipeline/`, run in this order by `build_all.py`): `build_basemap` (tiles and fonts)
 then `process_gtfs` (routes, stops, schedules) then `build_areas` (DART, Access, Flex) then
 `match_shapes` (snaps every bus and streetcar shape onto the real street network with an HMM)
-then `build_graph` (the shared-corridor network, `site/data/network.json`) then `tidy_junctions`
-then `build_site`.
+then `build_graph` (the shared-corridor network, `site/data/network.json`) then `tidy_junctions`,
+`repair_network` (remaining source-path omissions and 2 m simplification), then `build_site`.
 - `network.json`: `{lines: [route ids], edges: [{c: [[lon,lat]...], l: [line indexes], d: [direction per line]}]}`.
   Three separate layers: surface, rail, water.
 - `tidy_junctions.py` (idempotent, repeats until nothing changes) fixes what tracing leaves behind:
@@ -151,18 +154,16 @@ the map tiles; the bundled tiles keep only named places of the kinds in `POI_KEE
 
 ## Open items
 
-1. **Ferry access code not on the live site.** The deploy substitutes `WSF_ACCESS_CODE` (secret or
-   variable), but the published page still has it empty, so ferry bulletins and dock/arrival times are
-   off (boats themselves show live). The user needs a repository secret named exactly `WSF_ACCESS_CODE`
-   (Settings, Secrets and variables, Actions), then to run the "Publish map to GitHub Pages" workflow.
-   Verify with `curl` that `"wsf": {..., "code": "..."}` in the live page is non-empty (never print it).
-2. Known kinks: a small knot at Denny & I-5. (The knot and D Line jog at Yesler & Prefontaine are
-   fixed: small triangles of junctions become one junction in `tidy_junctions.py`; at Kingston that
-   leaves a bus cutting one block diagonally.) About 300 strand swaps remain at junctions, mostly
-   routes that really do cross. Route 193 (peak, First Hill to Federal Way) has a 12 km gap on I-5:
-   since Federal Way Link it is alone on that stretch and the build drops a lone freeway route there.
-   Some routes list stops their drawn line doesn't pass (stops served only by trip variants that
-   carry under 15% of the trips, which aren't drawn): e.g. 21, 4, 7, 906.
+1. **November 5 changes await publication.** The user requested a GitHub-ready version for a later
+   upload, so this round is prepared locally. The repository has `WSP_KEY` and `WSDOT_KEY`; the Pages
+   workflow now accepts those names. WSF vessel locations, terminal conditions and highway alerts
+   passed fixture checks; authentication with the real stored keys still needs a deployment check.
+   Verify that deployed settings are non-empty without printing the keys.
+2. The November 5 geometry changes reduce the previous 287 strand swaps to 42, clip small offset
+   folds, and restore substantial source-path omissions, including the shared 201/202/513 stretch
+   near Paine Field. Keep real crossings and rail/surface separations. Some routes can still list
+   stops served only by trip variants below the 15% drawing threshold (e.g. 21, 4, 7, 906); adding
+   every rare variant would require a separate decision about map detail.
 3. The user asked for official agency logos; this was declined (rule 3). Original service-type
    symbols (light rail, rapid bus, bus, ferry, on-demand) for route cards and the Layers list were
    offered and not yet answered.

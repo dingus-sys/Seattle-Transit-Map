@@ -30,6 +30,8 @@ pipeline/         Python build steps (run in this order by build_all.py)
   build_areas.py    DART areas, Access area, Metro Flex zones
   match_shapes.py   snaps every bus and streetcar route onto the real street network
   build_graph.py    the shared-corridor network and ribbon order
+  tidy_junctions.py  folds small junction knots and removes stray stubs
+  repair_network.py restores remaining gaps from matched shapes; simplifies to 2 m
   build_site.py     builds the page from web/: site/index.html with app.js, app.css, geom.js
                     and logos/ beside it (+ artifact.html, one self-contained file)
 web/              page template, styles, app script and geom.js (the line geometry engine)
@@ -76,12 +78,22 @@ with a small pointer showing which way it's heading. It sits on its route's line
 when it last reported and whether it's on time, early or late (OneBusAway's vehicle status,
 fetched for one agency per update round).
 
-Washington State Ferries' boats come from OneBusAway's REST feed (its GTFS-realtime feed
-leaves out which route a boat is on), with the boat's name, where it's headed and whether
-it's early or late. With a free WSDOT access code (register at
-https://www.wsdot.wa.gov/traffic/api/), ferries also show "at the dock / left at / arrives
-about" from WSF's own API: add it as a repository secret named `WSF_ACCESS_CODE`, or as
-`"wsf_access_code"` in `pipeline/local_secrets.json`.
+Washington State Ferries' boats use WSF's own vessel locations when an access code is
+available, including the boat's name, dock status and arrival estimate. OneBusAway's REST
+feed remains a fallback. WSF data works independently of the bus key, and agencies without
+a current live feed retain clearly labeled timetable estimates. Markers refresh once per
+second and offscreen land vehicles are skipped before the route-position lookup.
+
+The Pages build accepts the repository's existing `WSP_KEY` for ferries and `WSDOT_KEY`
+for road information. `WSF_ACCESS_CODE` and `WSF_KEY` are also accepted for ferries;
+`WSDOT_ACCESS_CODE` is an alternative road-key name. A WSDOT code can be shared by both
+services. Register at https://www.wsdot.wa.gov/traffic/api/. For local testing, use
+`"wsf_access_code"` and `"wsdot_key"` in the ignored `pipeline/local_secrets.json`.
+
+Opening a WSF route or terminal loads terminal notes and the next reported sailings,
+with cancellations and drive-up vehicle spaces where WSF supplies them. Car-deck capacity
+is separate from walk-on availability. Counts refresh while the card is open and are hidden
+after a minute without fresh data. Other map views make no terminal-condition requests.
 
 ## Service alerts
 
@@ -91,6 +103,11 @@ with the WSDOT access code, Washington State Ferries' bulletins. They're checked
 minutes and sorted into disruptions (red), service changes (amber) and notices (blue): all
 of them under Service alerts on the home panel, a route's on its card, a stop's on its card
 and hover card, and a marker on a line's hover card.
+
+WSDOT highway reports within the map region appear separately in the alerts panel. They
+describe nearby road conditions, without asserting that a bus is detoured. Closed, expired
+and out-of-region reports are excluded. Failed refreshes retain recent notices for up to
+15 minutes and show an availability message.
 
 The key does end up in the deployed page, as it must for a browser to call the API directly.
 The claude.ai preview can't reach outside servers, so live vehicles show only on the website.
@@ -134,6 +151,12 @@ are put in the order that best matches the streets they come from and go on to, 
 cross each other as little as possible, and once you're zoomed in a hairline of the
 background shows between routes sharing a street.
 
+After junction cleanup, `repair_network.py` repeats the gap repair using the route's own
+matched path, including long freeway stretches and omitted terminal branches. Substantial
+source spans more than 160 m from the drawing are restored when they can be anchored to
+the existing route; small terminal loops remain simplified. Redundant surface-network
+points within 2 m are removed while junction endpoints, rail and water geometry are kept.
+
 The base map shows highway numbers (Interstate, US and state routes) now and then along each
 freeway, and on the website, where the full map tiles are available, places to find your
 way by: parks, schools and colleges, museums, the zoo, hospitals, stadiums and sights, each
@@ -149,12 +172,27 @@ work runs in a background worker so panning and zooming stay smooth (`web/app.js
 the finished lines to the map); where workers aren't allowed it runs on the page instead. Add
 `?noworker` to the address to force that.
 
+## Checks before publishing
+
+```bash
+python3 -m unittest discover -s tools -p 'test_*.py'
+node tools/geometry_check.js
+python3 tools/check_repair.py  # after installing requirements.txt
+python3 pipeline/build_site.py
+```
+
+The Check map workflow runs the lightweight source, build and geometry checks on pull
+requests. The data-refresh workflow also tests coverage repair before rebuilding data.
+Browser scripts in `tools/` cover desktop interactions, all route cards, phone sheets and
+the WSF/WSDOT integration with isolated fixtures. `live_fixture.js` is test-only and must
+run before app.js in a separate local test page; it is never included in `site/` output.
+
 ## Data and credits
 
 - Routes, stops and schedules: each agency's GTFS feed (King County Metro, Sound Transit,
   Community Transit, Pierce Transit, Everett Transit, Intercity Transit, City of Seattle,
   Washington State Ferries, Kitsap Transit, Seattle Center Monorail, Amtrak).
-- Live vehicle positions: OneBusAway Puget Sound. When live data isn't available the map
+- Live vehicle positions: OneBusAway Puget Sound and Washington State Ferries. When live data isn't available the map
   shows positions estimated from the timetable.
 - DART service areas: King County GIS (ArcGIS Online).
 - Metro Flex zones and hours: the service-area map on King County Metro's Metro Flex page.

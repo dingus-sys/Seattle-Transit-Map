@@ -14,7 +14,10 @@
 
   const MODE = window.ATLAS_MODE || "auto"; // "auto": try live tiles first; "bundled": local only
   // live vehicle feed settings; a missing key (or the unfilled build placeholder) means timetable estimates only
-  const LIVE = window.ATLAS_LIVE && window.ATLAS_LIVE.key && !/^__/.test(window.ATLAS_LIVE.key) ? window.ATLAS_LIVE : null;
+  const hasCode = (v) => typeof v === "string" && !!v.trim() && !/^__/.test(v);
+  const liveConfig = window.ATLAS_LIVE;
+  const LIVE = liveConfig && (hasCode(liveConfig.key) || hasCode(liveConfig.wsf?.code) || hasCode(liveConfig.wsdot?.code))
+    ? { ...liveConfig, key: hasCode(liveConfig.key) ? liveConfig.key : "" } : null;
   const $ = (s, el = document) => el.querySelector(s);
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const store = {
@@ -488,7 +491,7 @@
   function drawPoiIcon(id) {
     const [, kind, th] = id.split(":");
     const color = (th === "d" ? POI_COLOR_D : POI_COLOR)[kind] || "#777";
-    const dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1)), S = 18 * dpr, c = S / 2, R = 7.4 * dpr;
+    const dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1)), S = Math.round(18 * dpr), c = S / 2, R = 7.4 * dpr;
     const cv = document.createElement("canvas"); cv.width = cv.height = S;
     const x = cv.getContext("2d");
     x.beginPath(); x.arc(c, c, R + 1.3 * dpr, 0, Math.PI * 2); x.fillStyle = th === "d" ? "#1c1c1e" : "#fff"; x.fill();
@@ -1005,7 +1008,13 @@
     return new Promise((ok, fail) => {
       const cb = `__kctm_jp${++jsonpSeq}`, el = document.createElement("script");
       // a reply that comes after we've given up still finds a (do-nothing) callback
-      const done = (f, v) => { clearTimeout(t); window[cb] = () => {}; el.remove(); f(v); };
+      let settled = false;
+      const done = (f, v) => {
+        if (settled) return;
+        settled = true; clearTimeout(t); window[cb] = () => {}; el.remove();
+        setTimeout(() => { delete window[cb]; }, 60000);
+        f(v);
+      };
       const t = setTimeout(() => done(fail, new Error("timeout")), ms);
       window[cb] = (data) => done(ok, data);
       el.onerror = () => done(fail, new Error("load"));
@@ -1014,20 +1023,38 @@
     });
   }
   const wsfDate = (x) => { const m = /Date\((\d+)/.exec(String(x || "")); return m ? +m[1] : 0; };
-  const wsf = { vessels: new Map(), got: 0 };
+  const wsf = { vessels: new Map(), got: 0, attempt: 0, terminals: null, terminalGot: 0, terminalAttempt: 0, terminalLoading: null };
   const wsfState = () => wsf; // for the test scripts
   async function pollWsf() {
-    if (Date.now() - wsf.got < 15000) return;
-    wsf.got = Date.now();
+    if (!wsfOn() || Date.now() - wsf.attempt < 15000) return;
+    wsf.attempt = Date.now();
     try {
       const list = await jsonp(`${LIVE.wsf.base}/vessels/rest/vessellocations?apiaccesscode=${encodeURIComponent(LIVE.wsf.code)}`);
-      wsf.vessels = new Map((list || []).map((v) => [String(v.VesselID), v]));
+      if (!Array.isArray(list)) throw new Error("vessel data unavailable");
+      wsf.vessels = new Map(list.map((v) => [String(v.VesselID), v]));
+      wsf.got = Date.now();
     } catch (e) { /* the boats still show from OneBusAway */ }
+  }
+  function syncWsfVessels(now) {
+    if (Date.now() - wsf.got > 90000) return 0;
+    let count = 0;
+    for (const w of wsf.vessels.values()) {
+      const r = RTMAP.get(`95_${w.DepartingTerminalID}${w.ArrivingTerminalID}`);
+      const ts = wsfDate(w.TimeStamp) / 1000;
+      if (!r || w.InService === false || !Number.isFinite(w.Latitude) || !Number.isFinite(w.Longitude) || !ts || Date.now() / 1000 - ts > 300) continue;
+      const id = `95_${w.VesselID}`, to = [w.Longitude, w.Latitude], prev = live.vehicles.get(id);
+      live.vehicles.set(id, { ...prev, id, agency: "95", vid: String(w.VesselID), r, ts,
+        from: prev ? vehPos(prev, now) : to, to, t0: now, b: Number.isFinite(w.Heading) ? w.Heading : -1,
+        name: w.VesselName || WSF_VESSELS[w.VesselID] || "Ferry", head: w.ArrivingTerminalName || "" });
+      count++;
+    }
+    if (count) { live.fresh = live.fresh || {}; live.fresh["95"] = wsf.got; }
+    return count;
   }
   // "Left Kingston 2:05 PM · arrives Edmonds about 2:35 PM", "At the dock in Bainbridge Island · leaves 3:10 PM"
   function ferryLine(v) {
     const w = v && v.agency === "95" ? wsf.vessels.get(String(v.vid)) : null;
-    if (!w) return v && v.head ? esc(v.head) : "";
+    if (!w || Date.now() - wsf.got > 90000 || Date.now() - wsfDate(w.TimeStamp) > 300000) return v && v.head ? esc(v.head) : "";
     const t = (x) => (wsfDate(x) ? CLOCK.format(new Date(wsfDate(x))) : "");
     if (w.AtDock) return esc(`At the dock in ${w.DepartingTerminalName}${t(w.ScheduledDeparture) ? ` · leaves ${t(w.ScheduledDeparture)}` : ""}`);
     return esc(`${w.DepartingTerminalName ? `Left ${w.DepartingTerminalName}${t(w.LeftDock) ? " " + t(w.LeftDock) : ""}` : ""}${w.ArrivingTerminalName ? ` · arrives ${w.ArrivingTerminalName}${t(w.Eta) ? " about " + t(w.Eta) : ""}` : ""}`);
@@ -1039,12 +1066,61 @@
     const where = ferryLine(v);
     return `<${tag} class="vs-sub">${v.name ? `<b>${esc(v.name)}</b>` : ""}${v.name && where ? " · " : ""}${where}</${tag}>`;
   }
+
+  // Fetch terminal conditions only while someone is viewing a WSF route or terminal.
+  // Space counts are for vehicles; a full car deck says nothing about walk-on space.
+  async function loadFerryTerminals() {
+    if (!wsfOn() || document.hidden || Date.now() - wsf.terminalAttempt < 30000) return wsf.terminalLoading;
+    wsf.terminalAttempt = Date.now();
+    fillFerryInfo();
+    const base = `${LIVE.wsf.base}/terminals/rest/`, code = encodeURIComponent(LIVE.wsf.code);
+    wsf.terminalLoading = Promise.allSettled([
+      jsonp(`${base}terminalwaittimes?apiaccesscode=${code}`),
+      jsonp(`${base}terminalsailingspace?apiaccesscode=${code}`),
+    ]).then(([notes, spaces]) => {
+      const value = (r) => r.status === "fulfilled" && Array.isArray(r.value) ? r.value : [];
+      wsf.terminals = { notes: value(notes), spaces: value(spaces) };
+      wsf.terminalGot = Date.now();
+      fillFerryInfo();
+    }).finally(() => { wsf.terminalLoading = null; });
+    return wsf.terminalLoading;
+  }
+  function ferryTerminalIds(s) {
+    return [...new Set([s.id, ...(s.stops || []), ...(s.alias || [])].filter((id) => /^wsf-\d+$/.test(id)).map((id) => +id.slice(4)))];
+  }
+  function fillFerryInfo() {
+    const box = $("#ferryInfo");
+    if (!box) return;
+    const ids = box.dataset.terminals.split(",").map(Number), data = wsf.terminals;
+    const now = Date.now(), fresh = data && now - wsf.terminalGot < 60000;
+    const rows = [];
+    for (const id of ids) {
+      const notes = fresh && data.notes.find((t) => t.TerminalID === id);
+      const spaces = fresh && data.spaces.find((t) => t.TerminalID === id);
+      const name = notes?.TerminalName || spaces?.TerminalName || stopIndex[`wsf-${id}`]?.name || "Ferry terminal";
+      const waits = (notes?.WaitTimes || []).filter((w) => w.WaitTimeNotes);
+      const sailings = (spaces?.DepartingSpaces || []).filter((d) => wsfDate(d.Departure) >= now - 60000 && wsfDate(d.Departure) <= now + 3 * 3600000)
+        .sort((a, b) => wsfDate(a.Departure) - wsfDate(b.Departure));
+      const departures = sailings.flatMap((d) => (d.SpaceForArrivalTerminals || []).filter((a) => ids.length === 1 || ids.includes(a.TerminalID)).map((a) => {
+        const count = a.DisplayDriveUpSpace && Number.isFinite(a.DriveUpSpaceCount) && a.DriveUpSpaceCount >= 0 ? a.DriveUpSpaceCount : null;
+        const status = d.IsCancelled ? "Canceled" : count === 0 ? "Car deck full" : count != null ? `${count} drive-up vehicle spaces` : "Vehicle space not reported";
+        return `<li><b>${esc(CLOCK.format(new Date(wsfDate(d.Departure))))} to ${esc(a.TerminalName)}</b><span>${esc(status)}</span></li>`;
+      })).slice(0, 2);
+      if (!waits.length && !departures.length) continue;
+      rows.push(`<div class="ferry-terminal"><h4>${esc(name)}</h4>${waits.map((w) => `<p>${esc(stripHTML(w.WaitTimeNotes))}</p>${wsfDate(w.WaitTimeLastUpdated) ? `<p class="foot">WSF note updated ${esc(new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(wsfDate(w.WaitTimeLastUpdated))))}</p>` : ""}`).join("")}${departures.length ? `<ul class="ferry-sailings">${departures.join("")}</ul>` : ""}</div>`);
+    }
+    box.innerHTML = `<h3 class="section">Ferry terminal conditions</h3><div class="group ferry-conditions">${rows.length ? rows.join("") : `<p class="hint">${wsf.terminalAttempt && !wsf.terminalGot ? "Checking WSF terminal conditions…" : "WSF terminal conditions are currently unavailable."}</p>`}</div><p class="foot">${rows.length ? "From WSF, checked " + CLOCK.format(new Date(wsf.terminalGot)) + ". " : ""}Vehicle space changes as loading continues. Walk-on availability is separate.</p>`;
+  }
+  function showFerryInfo(ids) {
+    if (!ids.length || !wsfOn()) return "";
+    return `<div id="ferryInfo" data-terminals="${ids.join(",")}"></div>`;
+  }
   // ---------------------------------------------------------------- service alerts
   // Detours, closed or moved stops, canceled trips and other notices, from each agency's
   // GTFS-realtime alerts (through OneBusAway; Intercity Transit's own feed) and, with an access
   // code, Washington State Ferries' bulletins. Checked every few minutes.
   const ALERT_MS = 4 * 60000;
-  const alerts = { list: [], byRoute: new Map(), byStop: new Map(), got: 0, polling: false };
+  const alerts = { list: [], road: [], sources: new Map(), byRoute: new Map(), byStop: new Map(), got: 0, polling: false, failed: 0 };
   const STOP_PREFIX = { 1: "kcm", 23: "kcm", 40: "st", 29: "ct", 3: "pt", 97: "et", 20: "kt", 95: "wsf", 19: "it" };
   function parseAlerts(u8) {
     const r = { b: u8, p: 0 }, td = new TextDecoder(), out = [];
@@ -1155,22 +1231,58 @@
     }
     return out;
   }
+  function roadNotices(list, now) {
+    if (!Array.isArray(list)) return [];
+    const R = META.region;
+    return list.filter((a) => {
+      const start = wsfDate(a.StartTime) / 1000, end = wsfDate(a.EndTime) / 1000;
+      const inRegion = (p) => p && Number.isFinite(p.Latitude) && Number.isFinite(p.Longitude)
+        && p.Longitude >= R.west && p.Longitude <= R.east && p.Latitude >= R.south && p.Latitude <= R.north;
+      return a.HeadlineDescription && !/^closed$/i.test(a.EventStatus || "") && (!end || end >= now) && (!start || start <= now + 3600)
+        && (inRegion(a.StartRoadwayLocation) || inRegion(a.EndRoadwayLocation));
+    }).map((a) => ({ id: `wsdot:${a.AlertID}`, agency: "wsdot", title: stripHTML(a.HeadlineDescription),
+      desc: stripHTML(a.ExtendedDescription || ""), url: "https://wsdot.com/Travel/Real-time/Map/",
+      level: /^(highest|high)$/i.test(a.Priority) ? 2 : /^medium$/i.test(a.Priority) ? 1 : 0,
+      start: wsfDate(a.StartTime) / 1000, end: wsfDate(a.EndTime) / 1000, routes: new Set(), stops: new Set(),
+    })).sort((a, b) => b.level - a.level || b.start - a.start);
+  }
   async function pollAlerts() {
     if (!LIVE || alerts.polling || document.hidden || Date.now() - alerts.got < ALERT_MS - 5000) return;
     alerts.polling = true;
     const now = Date.now() / 1000, found = [];
-    const sources = LIVE.agencies.map((a) => [a, `${LIVE.alerts}/${a}.pb?key=${encodeURIComponent(LIVE.key)}`])
-      .concat((LIVE.feeds || []).filter((f) => f.alerts).map((f) => [f.agency, f.alerts]));
-    for (const [a, url] of LIVE.alerts ? sources : []) {
+    alerts.failed = 0;
+    const remember = (key, list) => alerts.sources.set(key, { at: Date.now(), list });
+    const sources = (LIVE.key && LIVE.alerts ? LIVE.agencies : []).map((a) => [a, `${LIVE.alerts}/${a}.pb?key=${encodeURIComponent(LIVE.key)}`, true])
+      .concat((LIVE.feeds || []).filter((f) => f.alerts).map((f) => [f.agency, f.alerts, false]));
+    for (const [a, url, isOba] of sources) {
+      if (isOba && Date.now() < live.pauseUntil) { alerts.failed++; continue; }
       try {
-        const r = await fetch(url, { cache: "no-store" });
-        if (r.status === 429) break;
-        if (r.ok) found.push(...readAlerts(a, parseAlerts(new Uint8Array(await r.arrayBuffer())), now));
-      } catch (e) { /* an agency's alerts are missing this round; the rest still show */ }
+        const r = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(12000) });
+        if (isOba && r.status === 429) live.pauseUntil = Date.now() + 60000;
+        if (!r.ok) throw new Error("alerts unavailable");
+        remember(a, readAlerts(a, parseAlerts(new Uint8Array(await r.arrayBuffer())), now));
+      } catch (e) { alerts.failed++; }
       await new Promise((ok) => setTimeout(ok, 200));
     }
     if (wsfOn()) {
-      try { found.push(...wsfAlerts(await jsonp(`${LIVE.wsf.base}/schedule/rest/alerts?apiaccesscode=${encodeURIComponent(LIVE.wsf.code)}`), now)); } catch (e) { /* bulletins later */ }
+      try {
+        const list = await jsonp(`${LIVE.wsf.base}/schedule/rest/alerts?apiaccesscode=${encodeURIComponent(LIVE.wsf.code)}`);
+        if (!Array.isArray(list)) throw new Error("bulletins unavailable");
+        remember("wsf", wsfAlerts(list, now));
+      } catch (e) { alerts.failed++; }
+    }
+    if (hasCode(LIVE.wsdot?.code)) {
+      try {
+        const list = await jsonp(`${LIVE.wsdot.alerts}?AccessCode=${encodeURIComponent(LIVE.wsdot.code)}`);
+        if (!Array.isArray(list)) throw new Error("road notices unavailable");
+        remember("roads", roadNotices(list, now));
+      } catch (e) { alerts.failed++; }
+    }
+    alerts.road = [];
+    for (const [key, source] of alerts.sources) {
+      if (Date.now() - source.at > 15 * 60000) { alerts.sources.delete(key); continue; }
+      const current = source.list.filter((a) => !a.end || a.end >= now);
+      if (key === "roads") alerts.road = current; else found.push(...current);
     }
     // the same notice can come through two agencies' feeds: keep it once, with every route it names
     const byText = new Map();
@@ -1199,7 +1311,7 @@
   }
   const LEVEL = [["notice", "Notice"], ["change", "Service change"], ["stop", "Disruption"]];
   const agencyName = (a) => ({ 1: "King County Metro", 40: "Sound Transit", 29: "Community Transit", 3: "Pierce Transit", 97: "Everett Transit",
-    20: "Kitsap Transit", 23: "Seattle Streetcar", 95: "Washington State Ferries", 19: "Intercity Transit" })[a] || "";
+    20: "Kitsap Transit", 23: "Seattle Streetcar", 95: "Washington State Ferries", 19: "Intercity Transit", wsdot: "WSDOT" })[a] || "";
   const alertIcon = (lvl) => `<span class="al-ic al-${LEVEL[lvl][0]}" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M8 1.6 15 14H1Z" fill="currentColor"/><path d="M8 6v3.6" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/><circle cx="8" cy="11.6" r=".95" fill="#fff"/></svg></span>`;
   const alertWhen = (a) => {
     const d = (t) => new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", month: "short", day: "numeric" }).format(new Date(t * 1000));
@@ -1257,7 +1369,9 @@
     const html = `<div class="alerts-view"><button class="back press" id="back" type="button"><svg width="12" height="20" viewBox="0 0 12 20" aria-hidden="true"><path d="M10 2 2 10l8 8" stroke="currentColor" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>Map</button>
       <div class="view-head"><h2 class="view-title">Service alerts</h2></div>
       ${groups.length ? groups.map(([lvl, l]) => `<h2 class="section">${["Notices", "Service changes", "Disruptions"][lvl]} <span class="count">${l.length}</span></h2><ul class="group alerts" role="list">${l.map((a) => alertHTML(a)).join("")}</ul>`).join("")
-        : `<p class="hint">${alerts.got ? "No service alerts right now." : "Checking for service alerts…"}</p>`}
+        : alerts.road.length ? "" : `<p class="hint">${!alerts.got ? "Checking for service alerts…" : alerts.failed ? "Some alert feeds are unavailable. Check your agency before traveling." : "No service alerts right now."}</p>`}
+      ${alerts.road.length ? `<h2 class="section">Nearby highway conditions <span class="count">${alerts.road.length}</span></h2><p class="hint">WSDOT road reports in this region. Check your transit agency for route changes.</p><ul class="group alerts" role="list">${alerts.road.map((a) => alertHTML(a, { routes: false })).join("")}</ul>` : ""}
+      ${alerts.failed && (groups.length || alerts.road.length) ? `<p class="hint">Some feeds are unavailable. Showing the most recently received notices.</p>` : ""}
       <p class="hint">From the agencies' live alert feeds, checked every few minutes${wsfOn() ? ", including Washington State Ferries bulletins" : ""}. Tap a route number to see it on the map.</p></div>`;
     const existing = body().querySelector(".alerts-view");
     const open = existing ? [...existing.querySelectorAll("details[open]")].map((d) => d.closest(".alert").querySelector(".al-title").textContent) : [];
@@ -1266,7 +1380,10 @@
     $("#back").addEventListener("click", () => { panelView = "home"; showHome(); });
     bindAlertList(body());
   }
-  setInterval(() => { if (enabled.has("live")) pollAlerts(); }, 30000);
+  setInterval(() => {
+    pollAlerts();
+    if ($("#ferryInfo") && !document.hidden) { fillFerryInfo(); loadFerryTerminals(); }
+  }, 30000);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) pollAlerts(); });
   const geoDist = (a, b) => { const [x0, y0] = toM(a[0], a[1]), [x1, y1] = toM(b[0], b[1]); return Math.hypot(x1 - x0, y1 - y0); };
   const geoBearing = (a, b) => { const [x0, y0] = toM(a[0], a[1]), [x1, y1] = toM(b[0], b[1]); return (Math.atan2(x1 - x0, y1 - y0) * 180 / Math.PI + 360) % 360; };
@@ -1277,7 +1394,7 @@
     return [v.from[0] + (v.to[0] - v.from[0]) * t, v.from[1] + (v.to[1] - v.from[1]) * t];
   }
   async function pollLive() {
-    if (!LIVE || !enabled.has("live") || document.hidden || live.polling || Date.now() < live.pauseUntil) return;
+    if (!LIVE || !enabled.has("live") || document.hidden || live.polling) return;
     live.polling = true;
     // One agency at a time, spaced out, so we stay well inside the API's rate limits;
     // if the server says "too many requests", stop and wait a minute.
@@ -1287,18 +1404,18 @@
     const restPos = new Set(LIVE.rest || []);
     // each round starts one agency further along, so if the API asks us to slow down part-way,
     // it isn't always the same agencies (the ferries, at the end) that miss out
-    const ags = LIVE.agencies.slice(), turn = (live.round = (live.round || 0) + 1) % ags.length;
+    const ags = LIVE.key ? LIVE.agencies.slice() : [], turn = (live.round = (live.round || 0) + 1) % (ags.length || 1);
     const oba = ags.slice(turn).concat(ags.slice(0, turn));
     const sources = oba.map((a) => [a, restPos.has(a)
       ? `${LIVE.status}/${a}.json?key=${encodeURIComponent(LIVE.key)}&includeReferences=true`
       : `${LIVE.base}/${a}.pb?key=${encodeURIComponent(LIVE.key)}`, true, restPos.has(a)])
       .concat((LIVE.feeds || []).map((f) => [f.agency, f.url, false, false]));
-    if (LIVE.wsf && wsfOn()) pollWsf(); // vessel details from WSF itself, when we have its access code
-    let slowed = false;
+    const ferryPoll = pollWsf();
+    let slowed = Date.now() < live.pauseUntil;
     for (const [a, url, isOba, rest] of sources) {
       if (isOba && slowed) continue; // told to slow down: skip the rest of OneBusAway this round
       try {
-        const r = await fetch(url, { cache: "no-store" });
+        const r = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(12000) });
         if (r.status === 429 && isOba) { live.pauseUntil = Date.now() + 60000; slowed = true; continue; }
         if (!r.ok) throw new Error(String(r.status));
         let list;
@@ -1306,6 +1423,7 @@
           const j = await r.json();
           // OneBusAway's REST answers "too many requests" inside a normal response
           if (j && j.code === 429) { live.pauseUntil = Date.now() + 60000; slowed = true; continue; }
+          if (j?.code !== 200 || !Array.isArray(j.data?.list)) throw new Error("positions unavailable");
           list = restVehicles(a, j);
         } else list = parseVehicles(new Uint8Array(await r.arrayBuffer()));
         res.push({ status: "fulfilled", value: [a, list] });
@@ -1315,14 +1433,15 @@
       await new Promise((ok) => setTimeout(ok, isOba ? 350 : 100));
     }
     // on time or late: one agency's vehicle status per round (King County Metro every other round)
-    if (LIVE.status && Date.now() >= live.pauseUntil) {
+    if (LIVE.key && LIVE.status && Date.now() >= live.pauseUntil) {
       const order = LIVE.agencies.filter((a) => !(LIVE.rest || []).includes(a)).flatMap((a) => (a === "1" ? ["1"] : ["1", a]));
       const a = order[live.statusTurn++ % order.length];
       try {
-        const r = await fetch(`${LIVE.status}/${a}.json?key=${encodeURIComponent(LIVE.key)}&includeReferences=false`, { cache: "no-store" });
+        const r = await fetch(`${LIVE.status}/${a}.json?key=${encodeURIComponent(LIVE.key)}&includeReferences=false`, { cache: "no-store", signal: AbortSignal.timeout(12000) });
         if (r.status === 429) live.pauseUntil = Date.now() + 60000;
         else if (r.ok) {
           const d = await r.json();
+          if (d?.code === 429) live.pauseUntil = Date.now() + 60000;
           for (const x of (d.data && d.data.list) || []) {
             const ts = x.tripStatus;
             if (!ts) continue;
@@ -1332,7 +1451,6 @@
         }
       } catch (e) { /* status is a bonus; positions still work */ }
     }
-    live.polling = false;
     const now = performance.now(), wall = Date.now() / 1000;
     let ok = 0;
     for (const x of res) {
@@ -1367,10 +1485,13 @@
     }
     // an agency we haven't heard from in three minutes: its vehicles are out of date, drop them
     for (const [id, v] of live.vehicles) if (live.fresh && Date.now() - (live.fresh[v.agency] || 0) > 180000) live.vehicles.delete(id);
+    await ferryPoll;
+    if (syncWsfVessels(now)) ok++;
+    if ($("#ferryInfo")) { fillFerryInfo(); loadFerryTerminals(); }
     live.error = ok === 0;
     if (ok) live.last = Date.now();
+    live.polling = false;
     renderLive(now);
-    animateLive();
     updateLiveUI();
   }
   // ---- timetable estimates: where each scheduled trip should be right now
@@ -1435,21 +1556,29 @@
     const mode = live.mode = vehMode();
     let list = [];
     if (!enabled.has("live")) list = [];
-    else if (mode === "live") for (const v of live.vehicles.values()) list.push({ id: v.id, r: v.r, pos: vehPos(v, now), b: v.b, name: v.name });
+    else if (mode === "live") {
+      for (const v of live.vehicles.values()) if (Date.now() / 1000 - v.ts <= 300 && Date.now() - (live.fresh?.[v.agency] || 0) < 90000)
+        list.push({ id: v.id, r: v.r, pos: vehPos(v, now), b: v.b, name: v.name });
+      list.push(...estVehicles().filter((v) => !(v.r.rt || []).some((rt) => Date.now() - (live.fresh?.[rt.split("_")[0]] || 0) < 90000)));
+    }
     else if (mode === "est") list = estVehicles();
     live.current = list;
     const sel = selected && selected.type === "route" ? selected.id : null;
     // vehicles thin out as you zoom out, more than the lines do: hundreds of markers would cover
     // the map. Trains, RapidRide and boats always; frequent buses from 11.5; the rest from 12.5.
     const z = map.getZoom();
+    const bounds = map.getBounds(), pad = (bounds.getNorth() - bounds.getSouth()) * 0.1;
+    const nearView = (p) => p[0] >= bounds.getWest() - pad && p[0] <= bounds.getEast() + pad && p[1] >= bounds.getSouth() - pad && p[1] <= bounds.getNorth() + pad;
     const tier = Math.min(tierFor(z), z >= 12.5 ? 2 : z >= 11.5 ? 1 : 0);
     const feats = [];
     for (const v of list) {
       const r = v.r;
       if (!r || LINEIDX[r.id] == null) continue;
       if (sel ? sel !== r.id : (!enabledCat(r.cat) || CAT[dkey(r)].tier > tier)) continue;
+      if (CAT[dkey(r)].group !== "water" && !nearView(v.pos)) continue;
       const c = tagColor(r);
       const [pos, b] = onLine(r, v.pos, v.b == null ? -1 : v.b);
+      if (!nearView(pos)) continue;
       feats.push({ type: "Feature", properties: { id: v.id, r: r.id, c, tc: c, lab: v.name || shortLabel(r), b: Math.round(b), m: vehKind(r),
         s: 20 - CAT[dkey(r)].prio, est: v.est ? 1 : 0 }, geometry: { type: "Point", coordinates: pos } });
     }
@@ -1476,8 +1605,7 @@
     if (b >= 0) { const diff = Math.abs(((hb - b + 540) % 360) - 180); if (diff > 90) hb = (hb + 180) % 360; }
     return [toLonLat(hit.q), b >= 0 ? hb : b];
   }
-  function animateLive() { /* the steady ticker below keeps vehicles moving */ }
-  setInterval(() => { if (map && enabled.has("live") && !document.hidden && !map.isMoving()) renderVehicles(); }, 125);
+  setInterval(() => { if (map && enabled.has("live") && !document.hidden && !map.isMoving()) renderVehicles(); }, 1000);
 
   // "3 min late" / "On time" / "2 min early" for a live vehicle, when its agency predicts it
   function vehicleStatus(v) {
@@ -1512,10 +1640,10 @@
   async function vehicleTrip(id) {
     const hit = tripCache.get(id);
     if (hit && Date.now() - hit.at < 20000) return hit.v;
-    if (!LIVE || !LIVE.status) return null;
+    if (!LIVE?.key || !LIVE.status) return null;
     const url = `${LIVE.status.replace("vehicles-for-agency", "trip-for-vehicle")}/${encodeURIComponent(id)}.json?key=${encodeURIComponent(LIVE.key)}&includeStatus=true&includeTrip=true&includeSchedule=false`;
     try {
-      const r = await fetch(url, { cache: "no-store" });
+      const r = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(12000) });
       if (!r.ok) return null;
       const d = await r.json(), e = d.data && d.data.entry, ref = (d.data && d.data.references) || {};
       if (!e) return null;
@@ -1554,11 +1682,11 @@
     const mode = vehMode();
     if (mode === "live") {
       const sec = Math.round((Date.now() - live.last) / 1000);
-      return `Live · ${live.count} running now · updated ${sec < 5 ? "just now" : sec + " s ago"}`;
+      return `Live${live.current.some((v) => v.est) ? " & timetable" : ""} · ${live.count} on this map · updated ${sec < 5 ? "just now" : sec + " s ago"}`;
     }
     if (mode === "est") {
       const why = !LIVE ? (MODE === "bundled" ? " (live positions on the website)" : " (live feed not set up)") : Date.now() < live.pauseUntil ? " (live feed busy)" : live.error ? " (live feed unreachable)" : "";
-      return `Estimated from the timetable · ${live.count} running now${why}`;
+      return `Estimated from the timetable · ${live.count} on this map${why}`;
     }
     return "Loading…";
   }
@@ -1567,9 +1695,9 @@
     if (d) d.textContent = liveStatusText();
     const chip = document.getElementById("liveChip");
     if (chip && selected && selected.type === "route") {
-      const n = (live.current || []).filter((v) => v.r && v.r.id === selected.id).length;
+      const running = (live.current || []).filter((v) => v.r && v.r.id === selected.id), n = running.length;
       chip.hidden = !enabled.has("live") || !live.mode;
-      chip.querySelector("span.n").textContent = (n === 0 ? "None running right now" : `${n} running now`) + (live.mode === "est" ? " (timetable)" : "");
+      chip.querySelector("span.n").textContent = (n === 0 ? "None running right now" : `${n} running now`) + (live.mode === "est" || n > 0 && running.every((v) => v.est) ? " (timetable)" : "");
     }
   }
   function startLive() {
@@ -1620,7 +1748,7 @@
   function drawVehicle(id) {
     const [kind, color, mode] = id.split(":");
     const dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
-    const S = VEH_PX * dpr, cv = document.createElement("canvas");
+    const S = Math.round(VEH_PX * dpr), cv = document.createElement("canvas");
     cv.width = cv.height = S;
     const ctx = cv.getContext("2d"), c = S / 2, R = VEH_R * dpr;
     if (kind === "vdir") {
@@ -1972,7 +2100,7 @@
     try {
       // no includeReferences=false here: on this server it makes the answer a bare "null"
       const r = await fetch(`${LIVE.deps}/${encodeURIComponent(obaId)}.json?key=${encodeURIComponent(LIVE.key)}`
-        + "&minutesBefore=0&minutesAfter=90", { cache: "no-store" });
+        + "&minutesBefore=0&minutesAfter=90", { cache: "no-store", signal: AbortSignal.timeout(12000) });
       if (r.status === 429) { depCache.pause = Date.now() + 60000; return; }
       if (!r.ok) throw new Error(String(r.status));
       const j = await r.json();
@@ -1990,7 +2118,7 @@
   // ask about the stop under the pointer, once it has settled there
   function ensureDepartures(stopIds, onReady) {
     clearTimeout(depCache.timer);
-    if (!LIVE || !LIVE.deps || Date.now() < depCache.pause) return;
+    if (!LIVE?.key || !LIVE.deps || Date.now() < depCache.pause) return;
     const ids = obaStopsFor(stopIds);
     const stale = ids.filter((id) => !depCache.inflight.has(id)
       && (!depCache.byStop.has(id) || Date.now() - depCache.byStop.get(id).got > DEP_FRESH));
@@ -2002,7 +2130,7 @@
   }
   // what we've been told about this stop, or null if we haven't been told anything yet
   function liveDepartures(stopIds, limit = 4) {
-    if (!LIVE || !LIVE.deps) return null;
+    if (!LIVE?.key || !LIVE.deps) return null;
     const now = Date.now();
     let told = false, all = [];
     for (const id of obaStopsFor(stopIds)) {
@@ -2070,7 +2198,7 @@
   function drawArrow(id) {
     const color = id.slice(4);
     const dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
-    const w = 14 * dpr, h = 12 * dpr, cv = document.createElement("canvas");
+    const w = Math.round(14 * dpr), h = Math.round(12 * dpr), cv = document.createElement("canvas");
     cv.width = w; cv.height = h;
     const ctx = cv.getContext("2d");
     ctx.lineJoin = "round"; ctx.lineCap = "round";
@@ -2229,12 +2357,13 @@
     if (panelView === "layers") return showLayers(quiet);
     if (panelView === "alerts") return showAlerts(quiet);
     const shown = LAYERS.filter((l) => enabled.has(l.key)).length;
-    const nAl = alerts.list.length, worst = nAl ? alerts.list[0].level : 0;
-    const nStop = alerts.list.filter((a) => a.level === 2).length, nChg = alerts.list.filter((a) => a.level === 1).length;
+    const nTransit = alerts.list.length, nRoad = alerts.road.length, nAl = nTransit + nRoad;
+    const worst = Math.max(alerts.list[0]?.level || 0, alerts.road[0]?.level || 0);
+    const nStop = alerts.list.filter((a) => a.level === 2).length, nChg = alerts.list.filter((a) => a.level === 1).length, nNotice = nTransit - nStop - nChg;
     const alertRow = !LIVE ? "" : `<li><button class="row nav-row" id="openAlerts" type="button">
         <span class="icon al-row-ic">${alertIcon(nAl ? worst : 0)}</span>
-        <span class="txt"><span class="name">Service alerts${nAl ? `<span class="count">${nAl}</span>` : ""}</span><span class="desc">${!alerts.got ? "Checking…" : !nAl ? "None right now"
-          : [nStop ? `${nStop} disruption${nStop === 1 ? "" : "s"}` : "", nChg ? `${nChg} service change${nChg === 1 ? "" : "s"}` : "", nAl - nStop - nChg ? `${nAl - nStop - nChg} notice${nAl - nStop - nChg === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ")}</span></span>
+        <span class="txt"><span class="name">Service alerts${nAl ? `<span class="count">${nAl}</span>` : ""}</span><span class="desc">${!alerts.got ? "Checking…" : !nAl ? alerts.failed ? "Some feeds unavailable" : "None right now"
+          : [nStop ? `${nStop} disruption${nStop === 1 ? "" : "s"}` : "", nChg ? `${nChg} service change${nChg === 1 ? "" : "s"}` : "", nNotice ? `${nNotice} notice${nNotice === 1 ? "" : "s"}` : "", nRoad ? `${nRoad} road report${nRoad === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ")}</span></span>
         <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="m1.5 1.5 5 5.5-5 5.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button></li>`;
     const keys = LAYERS.filter((l) => KEY_NAME[l.key] && enabled.has(l.key));
@@ -2422,7 +2551,7 @@
     let html = `${backBtn}
       <div class="hero">${badgeHTML(r, "xl")}<div><h2>${esc(routeTitle(r))}</h2><p>${esc(r.name || "")}</p></div></div>
       <div class="chips"><span class="chip"><span class="dot" style="background:${color}"></span>${esc(CAT_NAME[r.cat])}</span><span class="chip">${esc(r.agency)}</span>${logoChips([r])}<span class="chip live-chip" id="liveChip" hidden><span class="pulse" aria-hidden="true"></span><span class="n"></span></span></div>
-      <div id="routeAlerts"></div>
+      <div id="routeAlerts"></div>${r.id.startsWith("wsf-") ? showFerryInfo([...new Set(pats.flatMap((p) => p.stops).filter((id) => /^wsf-\d+$/.test(id)).map((id) => +id.slice(4)))]) : ""}
       <div class="tiles">
         <div class="tile"><span class="k">Midday on weekdays</span><span class="v">${w && w.mid_n >= 3 ? "Every " : ""}${freq}</span></div>
         <div class="tile"><span class="k">Weekday hours</span><span class="v sm">${esc(span)}</span></div>
@@ -2431,7 +2560,7 @@
       <p class="foot">Typical wait in the busier direction, from the published schedule for ${esc(dayLabel())}.</p>`;
     if (pats.length) {
       html += `<h3 class="section">Stops</h3><div class="segmented" role="tablist">${pats.map((p, i) =>
-        `<button role="tab" type="button" aria-selected="${i === 0}" data-i="${i}">To ${esc(p.headsign || "terminal")}</button>`).join("")}<span class="seg-thumb" aria-hidden="true"></span></div>
+        `<button role="tab" type="button" aria-selected="${i === 0}" data-i="${i}">To ${esc((p.headsign || "terminal").replace(/^to\s+/i, ""))}</button>`).join("")}<span class="seg-thumb" aria-hidden="true"></span></div>
         <ol class="group stoplist" id="stoplist" style="--line-c:${color}"></ol>`;
     }
     if (r.url) html += `<a class="link-out press" href="${esc(r.url)}" target="_blank" rel="noopener">Official schedule and alerts<span aria-hidden="true">↗</span></a>`;
@@ -2460,6 +2589,7 @@
       for (const t of body().querySelectorAll(".segmented button")) t.addEventListener("click", () => renderStops(+t.dataset.i));
     }
     fillRouteAlerts(r);
+    if ($("#ferryInfo")) { fillFerryInfo(); loadFerryTerminals(); }
     updateLiveUI();
     openSheet("half");
   }
@@ -2471,7 +2601,7 @@
     const kind = s.kind === "stop" ? (s.code ? `Bus stop #${s.code}` : "Bus stop") : s.kind === "ferry" ? "Ferry terminal" : "Station";
     let html = `${backBtn}<div class="hero"><span class="stop-glyph${s.kind === "stop" ? "" : " big"}" aria-hidden="true"></span><div><h2>${esc(s.name)}</h2><p>${esc(kind)}</p></div></div>
       ${logoChips(rs) ? `<div class="chips">${logoChips(rs)}</div>` : ""}
-      <div id="stopAlerts"></div>
+      <div id="stopAlerts"></div>${showFerryInfo(ferryTerminalIds(s))}
       <h3 class="section">${rs.length} route${rs.length === 1 ? "" : "s"} stop here</h3>${routeRows(rs)}`;
     if (s.kind !== "stop") {
       const near = nearbyStops(s, 250);
@@ -2482,6 +2612,7 @@
     $("#back").addEventListener("click", clearSelection);
     for (const b of body().querySelectorAll("[data-route]")) { b.addEventListener("click", () => selectRoute(b.dataset.route)); previewOnHover(b); }
     fillStopAlerts(s);
+    if ($("#ferryInfo")) { fillFerryInfo(); loadFerryTerminals(); }
     openSheet("half");
   }
   function nearbyStops(s, meters) {
@@ -3013,9 +3144,11 @@
 
   // ---------------------------------------------------------------- hash routing
   function applyHash() {
-    const h = decodeURIComponent((location.hash || "").slice(1));
+    let h;
+    try { h = decodeURIComponent((location.hash || "").slice(1)); } catch { return; }
     if (h.startsWith("route-") && RBY[h.slice(6)]) selectRoute(h.slice(6));
     else if (/^(stop|station)-/.test(h) && stopIndex[h.replace(/^(stop|station)-/, "")]) selectStop(h.replace(/^(stop|station)-/, ""));
+    else if (!h && selected) clearSelection();
   }
 
   // ---------------------------------------------------------------- boot
@@ -3116,6 +3249,7 @@
       showHome();
       applyHash();
       loadSchedule();
+      pollAlerts();
     });
   }
 

@@ -591,3 +591,10 @@ table.sched td.good { color: var(--good); font-weight: 650; }
 .icon .al-ic svg, .nav-row .al-row-ic .al-ic svg { width: 18px; height: 18px; }
 .vtrip { margin: 4px 0 0; font-size: 13px; }
 .vtrip b { font-weight: 650; }
+.ferry-terminal { padding: 14px 16px; }
+.ferry-terminal + .ferry-terminal { border-top: 1px solid var(--hairline); }
+.ferry-terminal h4 { margin: 0 0 8px; font-size: 14px; }
+.ferry-terminal p { margin: 6px 0; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.ferry-sailings { list-style: none; padding: 0; margin: 10px 0 0; }
+.ferry-sailings li { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; font-size: 13px; }
+.ferry-sailings span { color: var(--muted); }

@@ -147,6 +147,34 @@ const KCTMGeom = (() => {
     return out;
   }
 
+  // Offsetting a tight bend can make a strand curl back across itself. Clip only
+  // small, proper crossings; keep endpoints and genuine loops/long detours intact.
+  function clipSmallLoops(points, limit) {
+    const out = [], dist = [];
+    for (const p of points) {
+      if (out.length > 2) {
+        const a = out[out.length - 1], vx = p[0] - a[0], vy = p[1] - a[1];
+        for (let j = out.length - 3; j >= 0 && dist[dist.length - 1] - dist[j] <= limit; j--) {
+          const b = out[j], c = out[j + 1], wx = c[0] - b[0], wy = c[1] - b[1];
+          const den = vx * wy - vy * wx;
+          if (Math.abs(den) < 1e-9) continue;
+          const dx = b[0] - a[0], dy = b[1] - a[1];
+          const t = (dx * wy - dy * wx) / den, u = (dx * vy - dy * vx) / den;
+          if (t <= 1e-6 || t >= 1 - 1e-6 || u <= 1e-6 || u >= 1 - 1e-6) continue;
+          const q = [a[0] + t * vx, a[1] + t * vy];
+          if (dist[dist.length - 1] - dist[j] + t * Math.hypot(vx, vy) > limit) continue;
+          out.length = dist.length = j + 1;
+          dist.push(dist[j] + Math.hypot(q[0] - b[0], q[1] - b[1])); out.push(q);
+          break;
+        }
+      }
+      const a = out[out.length - 1];
+      dist.push(a ? dist[dist.length - 1] + Math.hypot(p[0] - a[0], p[1] - a[1]) : 0);
+      out.push(p);
+    }
+    return out;
+  }
+
   // One continuous path along `steps`, in the lane laneOf(Lo, step) = [center, half width] (line
   // units, before shifting) of each segment. Corners are rounded to suit the bundle width; lane
   // changes are eased steps that may overlap, so a line crossing a busy street glides across
@@ -164,7 +192,7 @@ const KCTMGeom = (() => {
       // a metre or two apart around every intersection (a chamfer, a kerb): points that close to the
       // line can't show as a corner at the radius a corner here gets, but they leave the arc no room,
       // so it collapses into a sharp elbow. Ends stay put, so junctions and lanes still line up.
-      if (g.length > 2) g = simplify(g, Math.min(0.1 * (1.25 * hwk + 6), 6));
+      if (g.length > 2 && !water) g = simplify(g, Math.min(0.25 * (1.25 * hwk + 6), 12));
       if (k > 0) { joints.push(pts.length - 1); g = g.slice(1); }
       for (const q of g) pts.push(q);
       const [c, h] = laneOf(Lo, steps[k]);
@@ -305,7 +333,7 @@ const KCTMGeom = (() => {
         const fwd = (Q[j][0] - a[0]) * (P[j][0] - P[j - 1][0]) + (Q[j][1] - a[1]) * (P[j][1] - P[j - 1][1]);
         if (fwd > 0 || j === end) piece.push(Q[j]);
       }
-      emit(s, piece);
+      emit(s, water ? piece : clipSmallLoops(piece, Math.max(12, Math.min(160, 4 * seg[s].hw))));
       start = end;
     });
   }
@@ -403,6 +431,83 @@ const KCTMGeom = (() => {
       if (n < best) { best = n; snap = EDGES.map((E) => new Map([...E.byKey].map(([v, l]) => [v, l.slice()]))); }
     }
     EDGES.forEach((E, k) => { for (const [v, l] of snap[k]) E.byKey.set(v, l); });
+    // Averages can put a route between two neighbors it crosses at both ends. Minimize
+    // actual inversions instead: move a strand only when the total at its joins falls.
+    // Alternating direction avoids favoring whichever end was visited first.
+    for (let pass = 0; pass < 16; pass++) {
+      let changed = false;
+      const scan = pass % 2 ? EDGES.slice().reverse() : EDGES;
+      for (const E of scan) for (const [v, list] of E.byKey) {
+        if (list.length < 2) continue;
+        const votes = new Map(list.map((i) => [i, new Map()]));
+        const groups = new Map();
+        for (const c of CONT[E.k]) {
+          if (keyOf(c.i) !== v) continue;
+          const k = `${c.F}|${c.f}`;
+          if (!groups.has(k)) groups.set(k, []);
+          groups.get(k).push(c);
+        }
+        for (const cs of groups.values()) for (const a of cs) for (const b of cs) {
+          if (a.i !== b.i && a.f * (xOf(EDGES[a.F], a.i) - xOf(EDGES[a.F], b.i)) > 0)
+            votes.get(a.i).set(b.i, (votes.get(a.i).get(b.i) || 0) + 1);
+        }
+        for (let j = 0; j < list.length; j++) {
+          const i = list[j], rest = list.filter((r) => r !== i);
+          const costs = [rest.reduce((n, r) => n + (votes.get(i).get(r) || 0), 0)];
+          for (const r of rest) costs.push(costs[costs.length - 1] - (votes.get(i).get(r) || 0) + (votes.get(r).get(i) || 0));
+          let at = j;
+          for (let q = 0; q < costs.length; q++) if (costs[q] < costs[at]) at = q;
+          if (at !== j) { list.splice(j, 1); list.splice(at, 0, i); changed = true; }
+        }
+      }
+      if (!changed) break;
+    }
+    // Carry an adjacent pair along its whole shared stretch before considering a swap.
+    // Otherwise a long corridor can trap one crossing at each end: moving it one block
+    // costs the same, so a strictly local optimizer can never remove the pair together.
+    const pairLinks = EDGES.map(() => new Map());
+    for (const E of EDGES) {
+      const groups = new Map();
+      for (const c of CONT[E.k]) {
+        const k = `${c.F}|${c.f}|${keyOf(c.i)}`;
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push(c);
+      }
+      for (const cs of groups.values()) for (let a = 0; a < cs.length; a++) for (let b = a + 1; b < cs.length; b++) {
+        const A = cs[a].i, B = cs[b].i, key = A < B ? `${A}|${B}` : `${B}|${A}`;
+        if (!pairLinks[E.k].has(key)) pairLinks[E.k].set(key, []);
+        pairLinks[E.k].get(key).push(cs[a]);
+      }
+    }
+    for (let pass = 0; pass < 8; pass++) {
+      let changed = false;
+      const seen = new Set();
+      for (const E of EDGES) for (const list of E.byKey.values()) for (let j = 1; j < list.length; j++) {
+        const A = Math.min(list[j - 1], list[j]), B = Math.max(list[j - 1], list[j]), key = `${A}|${B}`;
+        if (seen.has(`${E.k}:${key}`)) continue;
+        const todo = [E.k], comp = new Set(todo);
+        for (let q = 0; q < todo.length; q++) {
+          const e = todo[q], d = xOf(EDGES[e], A) - xOf(EDGES[e], B);
+          seen.add(`${e}:${key}`);
+          for (const c of pairLinks[e].get(key) || []) {
+            const fd = xOf(EDGES[c.F], A) - xOf(EDGES[c.F], B);
+            if (Math.abs(fd) === 1 && d * c.f * fd > 0 && !comp.has(c.F)) { comp.add(c.F); todo.push(c.F); }
+          }
+        }
+        let delta = 0;
+        for (const e of comp) for (const c of pairLinks[e].get(key) || []) if (!comp.has(c.F))
+          delta += (xOf(EDGES[e], A) - xOf(EDGES[e], B)) * c.f * (xOf(EDGES[c.F], A) - xOf(EDGES[c.F], B)) < 0 ? -1 : 1;
+        if (delta < 0) {
+          for (const e of comp) {
+            const l = EDGES[e].byKey.get(keyOf(A)), a = l.indexOf(A), b = l.indexOf(B);
+            [l[a], l[b]] = [l[b], l[a]];
+          }
+          changed = true;
+        }
+      }
+      if (!changed) break;
+    }
+    best = swaps();
     const strandStats = { before, after: best };
 
     const runsIn = (lay, steps, key) => {
