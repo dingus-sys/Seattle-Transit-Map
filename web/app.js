@@ -40,8 +40,8 @@
     rapidride: { group: "rapid", w: 2.7,  tier: 0, prio: 4,  inner: "dots" },
     swift:     { group: "rapid", w: 2.5,  tier: 0, prio: 5,  inner: "dots" },
     frequent:  { group: "bus",   w: 2.35, tier: 1, prio: 6,  inner: "glass" },
-    local:     { group: "bus",   w: 1.75, tier: 2, prio: 7,  inner: "glass" },
-    peak:      { group: "bus",   w: 1.05, tier: 2, prio: 8 },
+    local:     { group: "bus",   w: 1.9,  tier: 2, prio: 7,  inner: "glass" },
+    peak:      { group: "bus",   w: 1.4,  tier: 2, prio: 8 },
     shuttle:   { group: "bus",   w: 1.7,  tier: 2, prio: 9,  inner: "glass" },
     dart:      { group: "bus",   w: 1.35, tier: 2, prio: 10, dash: true },
     watertaxi: { group: "water", w: 1.9,  tier: 0, prio: 11, dash: true },
@@ -138,15 +138,6 @@
   // that touch keep touching while you zoom.
   const px = (prop, k = 1) => ["interpolate", ["exponential", 2], ["zoom"],
     0, ["*", ["get", prop], ["get", "zu"], k], 24, ["*", ["get", prop], ["get", "zu"], k * 2 ** 24]];
-  // A route's strand, a hair narrower than its lane once you're zoomed in, so a fine line of the
-  // background shows between routes sharing a street (about a pixel; never more than a third of
-  // a thin strand). Zoomed out the strands touch.
-  const pxStrand = (prop) => ["interpolate", ["exponential", 2], ["zoom"],
-    ...[0, 12, 13, 14, 15, 16, 17, 18, 19, 20, 24].flatMap((z) => {
-      const b = ["*", ["get", prop], ["get", "zu"], 2 ** z];
-      const g = z <= 12 || z >= 24 ? 0 : (z === 13 ? 0.55 : 1) * (0.85 + 0.14 * interp(UNIT, z));
-      return [z, g ? ["max", ["*", b, 0.7], ["-", b, g]] : b];
-    })];
 
   // ---------------------------------------------------------------- base map palette
   const BASE = {
@@ -351,7 +342,7 @@
   // Visual hierarchy: rush-hour lines recede, all-day lines are a touch softer, so the frequent
   // network, RapidRide and trains read first in busy places like downtown.
   const LINE_OP = 1;
-  const SOFT = { peak: 0.6, local: 0.88, dart: 0.85 };
+  const SOFT = { peak: 0.75, local: 0.95, dart: 0.85 };
   const mixHex = (a, b, t) => { // a toward b by (1 - t)
     const pa = [1, 3, 5].map((i) => parseInt(a.slice(i, i + 2), 16)), pb = [1, 3, 5].map((i) => parseInt(b.slice(i, i + 2), 16));
     return "#" + pa.map((v, i) => Math.round(v * t + pb[i] * (1 - t)).toString(16).padStart(2, "0")).join("");
@@ -383,7 +374,7 @@
         const f = ["==", ["get", "g"], g];
         L.push({ id: `line-${g}`, type: "line", source: "net", filter: ["all", f, ["==", ["get", "d"], 0]],
           layout: { "line-cap": "round", "line-join": "round", "line-sort-key": ["get", "s"] },
-          paint: { "line-color": ["get", "c"], "line-width": pxStrand("wm"), "line-opacity": LINE_OP } });
+          paint: { "line-color": ["get", "c"], "line-width": px("wm"), "line-opacity": LINE_OP } });
         L.push({ id: `dash-${g}`, type: "line", source: "net", filter: ["all", f, ["==", ["get", "d"], 1]],
           layout: { "line-join": "round" },
           paint: { "line-color": ["get", "c"], "line-width": px("wm"), "line-dasharray": [2.2, 1.3], "line-opacity": LINE_OP } });
@@ -711,7 +702,7 @@
     vehIx = vehIxSel = hitIx = null;
     lastBuildMs = m.ms || 0;
     if (ribbons) {
-      ribbons.update("net", m.mesh || KCTMRibbons.compile(m.feats, { gap: lastParams.strandGap }));
+      ribbons.update("net", m.mesh || KCTMRibbons.compile(m.feats));
       ribbons.update("sel", m.selMesh || KCTMRibbons.compile(m.selFeats, { selected: true }));
     }
     map.getSource("net").setData({ type: "FeatureCollection", features: m.feats });
@@ -774,7 +765,7 @@
     const p = { z, zs, zNow, u, capU: interp(CAP_PX, z) / u, keyOn,
       selIdx: selected && selected.type === "route" ? LINEIDX[selected.id] : -1,
       view: (builtView = viewBox(0.35)), tags: tagSpacing(TAG_DENSITY[settings.tags], zNow), theme: theme[0], colors: netColors(theme),
-      wscale: minorScale(zNow), strandGap: z <= 12 ? 0 : (z < 13 ? z - 12 : 1) * (0.85 + 0.14 * u) / u };
+      wscale: minorScale(zNow) };
     lastParams = p;
     const msg = { id: ++buildSeq, p };
     if (!worker) {
@@ -924,7 +915,7 @@
     rebuild();
     applySelectionStyle();
     renderFilterBar();
-    if (!selected) showHome(true);
+    if (!selected) showHome(panelView !== "corridor");
   }
 
   // ---------------------------------------------------------------- live vehicles
@@ -1591,8 +1582,10 @@
     const bounds = map.getBounds(), pad = (bounds.getNorth() - bounds.getSouth()) * 0.1;
     const nearView = (p) => p[0] >= bounds.getWest() - pad && p[0] <= bounds.getEast() + pad && p[1] >= bounds.getSouth() - pad && p[1] <= bounds.getNorth() + pad;
     const tier = Math.min(tierFor(z), z >= 12.5 ? 2 : z >= 11.5 ? 1 : 0);
-    const feats = [];
-    for (const v of list) {
+    const feats = [], markerGrid = new Map(), spacing = 38;
+    const priority = (v) => v.r ? CAT[dkey(v.r)]?.prio ?? 99 : 99;
+    const ordered = sel ? list : list.slice().sort((a, b) => Number(!!a.est) - Number(!!b.est) || priority(a) - priority(b) || a.id.localeCompare(b.id));
+    for (const v of ordered) {
       const r = v.r;
       if (!r || LINEIDX[r.id] == null) continue;
       if (sel ? sel !== r.id : (!enabledCat(r.cat) || CAT[dkey(r)].tier > tier)) continue;
@@ -1600,6 +1593,17 @@
       const c = tagColor(r);
       const [pos, b] = onLine(r, v.pos, v.b == null ? -1 : v.b);
       if (!nearView(pos)) continue;
+      // Keep the overview readable. A chosen route shows every one of its vehicles.
+      if (!sel && CAT[dkey(r)].group !== "water") {
+        const p = map.project(pos), gx = Math.floor(p.x / spacing), gy = Math.floor(p.y / spacing);
+        let crowded = false;
+        for (let x = gx - 1; x <= gx + 1; x++) for (let y = gy - 1; y <= gy + 1; y++)
+          if ((markerGrid.get(x + "," + y) || []).some((q) => Math.hypot(p.x - q.x, p.y - q.y) < spacing)) crowded = true;
+        if (crowded) continue;
+        const key = gx + "," + gy;
+        if (!markerGrid.has(key)) markerGrid.set(key, []);
+        markerGrid.get(key).push(p);
+      }
       feats.push({ type: "Feature", properties: { id: v.id, r: r.id, c, tc: c, lab: v.name || shortLabel(r), b: Math.round(b), m: vehKind(r),
         s: 20 - CAT[dkey(r)].prio, est: v.est ? 1 : 0 }, geometry: { type: "Point", coordinates: pos } });
     }
@@ -2302,6 +2306,7 @@
     showRouteStops(null);
     showHome();
     renderLive();
+    if (panelView === "home") openSheet("peek");
   }
   function fitPadding() {
     return isNarrow() ? { top: 70, bottom: Math.round(window.innerHeight * 0.52), left: 30, right: 70 }
@@ -2351,7 +2356,7 @@
 
   // Home is deliberately small: what's moving, what the lines mean, and one way in to the
   // full set of switches ("Layers"). Everything advanced lives on the Layers page.
-  let panelView = "home";
+  let panelView = "home", corridorRoutes = [];
   const KEY_NAME = {
     link: "Link light rail", rail: "Sounder & Amtrak", streetcar: "Streetcar", monorail: "Monorail",
     rapid: "RapidRide & Swift", frequent: "Frequent bus", local: "All-day bus", peak: "Rush-hour bus",
@@ -2378,6 +2383,7 @@
   function showHome(quiet) {
     if (panelView === "layers") return showLayers(quiet);
     if (panelView === "alerts") return showAlerts(quiet);
+    if (panelView === "corridor") return showCorridor(null, quiet);
     const shown = LAYERS.filter((l) => enabled.has(l.key)).length;
     const nTransit = alerts.list.length, nRoad = alerts.road.length, nAl = nTransit + nRoad;
     const worst = Math.max(alerts.list[0]?.level || 0, alerts.road[0]?.level || 0);
@@ -2400,7 +2406,7 @@
       ${keys.length ? `<h2 class="section">On the map</h2><ul class="key-grid" role="list">${keys.map((l) =>
         `<li><span class="sw">${swatch(l)}</span><span>${esc(KEY_NAME[l.key])}</span></li>`).join("")}</ul>`
         : `<p class="hint">Every layer is off. Turn some on in Layers.</p>`}
-      <p class="hint">Tap a line to see its routes, or a stop to see what serves it.</p>
+      <p class="hint">Tap a colored band to choose a route. Its path, stops, and vehicles will stand out.</p>
     </div>`;
     const existing = body().querySelector(".home-view");
     if (quiet && existing) existing.outerHTML = html;
@@ -2618,6 +2624,31 @@
   function routeRows(rs) {
     return `<ul class="group" role="list">${rs.map((r) => `<li><button type="button" class="row route-row" data-route="${esc(r.id)}">${badgeHTML(r)}<span class="txt"><span class="name">${esc(routeTitle(r))}</span><span class="desc">${esc(r.name)}</span></span><span class="hw">${esc(freqText(r))}</span><svg class="chev" width="8" height="13" viewBox="0 0 8 13" aria-hidden="true"><path d="M1.5 1.5 6.5 6.5l-5 5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></button></li>`).join("")}</ul>`;
   }
+  function showCorridor(routes = null, quiet = false) {
+    if (routes) corridorRoutes = [...new Set(routes.map((r) => r.id))];
+    if (quiet && body().querySelector(".corridor-picker")) return;
+    panelView = "corridor";
+    const query = routes ? "" : $("#corridorQuery")?.value || "";
+    const rs = corridorRoutes.map((id) => RBY[id]).filter(Boolean).sort((a, b) =>
+      a.label.localeCompare(b.label, undefined, { numeric: true }) || tagOrder(a, b));
+    setView(`${backBtn}<div class="corridor-picker"><h2 class="view-title">Choose a route</h2>
+      <p class="hint">${rs.length} routes here. Choose a route to follow its full path.</p>
+      <label class="corridor-filter"><span class="sr-only">Filter routes here</span><input id="corridorQuery" type="search" placeholder="Route number or destination" autocomplete="off"></label>
+      <p class="corridor-count" id="corridorCount" aria-live="polite"></p><div id="corridorList"></div></div>`);
+    const input = $("#corridorQuery"); input.value = query;
+    const render = () => {
+      const words = input.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      const matching = rs.filter((r) => words.every((w) => `${r.label} ${routeTitle(r)} ${r.name} ${r.agency || ""}`.toLowerCase().includes(w)));
+      $("#corridorCount").textContent = words.length ? `${matching.length} of ${rs.length} routes` : "All routes here";
+      $("#corridorList").innerHTML = matching.length ? routeRows(matching) : '<p class="hint">No matching routes.</p>';
+      for (const b of $("#corridorList").querySelectorAll("[data-route]")) {
+        b.addEventListener("click", () => { focusOff(); selectRoute(b.dataset.route, { fit: false }); }); previewOnHover(b);
+      }
+    };
+    input.addEventListener("input", () => { focusOff(); render(); }); render();
+    $("#back").addEventListener("click", () => { panelView = "home"; corridorRoutes = []; focusOff(); showHome(); openSheet("peek"); });
+    if (!quiet) openSheet("half");
+  }
   function showStop(s) {
     const rs = s.routes.map((id) => RBY[id]).filter(Boolean).sort(tagOrder);
     const kind = s.kind === "stop" ? (s.code ? `Bus stop #${s.code}` : "Bus stop") : s.kind === "ferry" ? "Ferry terminal" : "Station";
@@ -2732,6 +2763,7 @@
     if (!hitIx) {
       const feats = lastFeats.concat(lastSelFeats);
       hitIx = segIndex(feats);
+      hitIx.features = new Map(feats.map((f) => [f.properties, f]));
       hitIx.half = Math.max(0, ...feats.map((f) => (f.properties.ws || f.properties.wm * f.properties.zu * MPP0) / 2));
     }
     const ll = map.unproject(point), p = toM(ll.lng, ll.lat), mpp = MPP0 / 2 ** map.getZoom();
@@ -2746,13 +2778,19 @@
           const d = Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy);
           const half = (pr.ws || pr.wm * pr.zu * MPP0) / 2;
           if (d > half + radius * mpp || (found.has(pr) && found.get(pr)._distance <= d)) continue;
-          found.set(pr, { type: "Feature", properties: pr, geometry: { type: "LineString", coordinates: [toLonLat(a), toLonLat(b)] }, _distance: d });
+          found.set(pr, { ...hitIx.features.get(pr), _distance: d });
         }
       }
     }
     return [...found.values()];
   }
-  // Routes under the pointer: a corridor line stands for every visible route of its type on that street.
+  function streetRoutes(f) {
+    const p = f.properties, E = EDGES[p.e];
+    if (p.r >= 0) return [p.r];
+    if (!E) return [];
+    return (E.layer === "s" ? E.l : E.byKey.get(p.cat) || []).filter((i) => lastParams?.keyOn[dkey(LINES[i])]);
+  }
+  // Include all visible services sharing a street, so a narrow parallel band is easy to find too.
   function routesAt(point, r = 6) {
     const feats = lineFeaturesAt(point, r);
     const sel = selected && selected.type === "route" ? LINEIDX[selected.id] : -1;
@@ -2760,8 +2798,7 @@
     for (const f of feats) {
       const p = f.properties;
       if (p.r >= 0) { set.add(p.r); continue; }
-      const E = EDGES[p.e];
-      if (E && E.byKey.has(p.cat)) for (const i of E.byKey.get(p.cat)) set.add(i);
+      for (const i of streetRoutes(f)) set.add(i);
     }
     let idx = [...set];
     if (sel >= 0 && idx.includes(sel) && feats.some((f) => f.properties.r === sel)) idx = [sel];
@@ -2771,8 +2808,9 @@
   function closePopup() { if (popup) { popup.remove(); popup = null; } }
   // pointing at a route in a list shows it on the map
   function previewOnHover(b) {
-    b.addEventListener("mouseenter", () => { if (!(selected && selected.type === "route")) focusRoute(RBY[b.dataset.route]); });
-    b.addEventListener("mouseleave", () => setHover(null));
+    const preview = () => { if (!(selected && selected.type === "route")) focusRoute(RBY[b.dataset.route]); };
+    b.addEventListener("mouseenter", preview); b.addEventListener("focus", preview);
+    b.addEventListener("mouseleave", () => setHover(null)); b.addEventListener("blur", () => setHover(null));
   }
   function openPopup(lngLat, html, maxWidth = "300px") {
     closePopup();
@@ -2829,15 +2867,14 @@
         const score = out + (half ? d / half : 1) * 0.01 - (f.properties.r === sel && sel >= 0 ? 2 : 0);
         const h = { f, out, score };
         if (!best || score < best.score) best = h;
-        if (cur && cur.kind === "line" && f.properties.r === cur.id && (!held || out < held.out)) held = h;
+        if (cur && cur.kind === "line" && (f.properties.r >= 0 ? f.properties.r === cur.id : f.properties.cat === cur.cat) && (!held || out < held.out)) held = h;
       }
       // the route in focus holds while the pointer is still on (or right at the edge of) its strand
       if (held && held.out <= 1.5) best = held;
       if (!best || best.out > (cur && cur.kind === "line" ? 6 : 4)) return null;
       const f = best.f, pr = f.properties;
       // boats: every route of the crossing (they share one line)
-      const E0 = EDGES[pr.e];
-      const all = pr.r < 0 && E0 && E0.byKey.get(pr.cat) ? E0.byKey.get(pr.cat) : [pr.r];
+      const all = streetRoutes(f);
       return { f, r: pr.r < 0 ? all[0] : pr.r, routes: all.map((i) => LINES[i]).filter(Boolean).sort(tagOrder), n: pr.n || 1 };
     };
     const ev = (e, dy = 0) => ({ clientX: e.originalEvent.clientX, clientY: e.originalEvent.clientY + dy });
@@ -2888,16 +2925,19 @@
       highlightStop(null);
       const ln = pickLine(e.point);
       if (ln) {
-        cur = { kind: "line", id: ln.r };
+        cur = { kind: "line", id: ln.r, cat: ln.f.properties.cat };
         map.getCanvas().style.cursor = "pointer";
-        if (!(selected && selected.type === "route")) focusRoutes(ln.routes);
+        if (!(selected && selected.type === "route")) {
+          if (ln.routes.length > 1) focusCorridor(ln.f);
+          else focusRoutes(ln.routes);
+        }
         const rs = ln.routes, r = rs[0];
         const nal = rs.length === 1 ? routeAlerts(rs[0].id) : [];
         const more = (ln.n > 1 ? `<span class="tt-more">${ln.n} routes share this street</span>` : "")
           + (nal.length ? `<span class="tt-alert al-${LEVEL[nal[0].level][0]}">${alertIcon(nal[0].level)}${nal.length === 1 ? esc(LEVEL[nal[0].level][1]) : `${nal.length} alerts`}</span>` : "");
         tipShow("line:" + rs.map((x) => x.id).join(","), rs.length === 1
           ? `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}${more}</span>`
-          : `<span class="tip-badges">${rs.slice(0, 8).map((x) => badgeHTML(x)).join("")}</span>${rs.length > 8 ? `<span class="tt">+${rs.length - 8}</span>` : ""}`, "", ev(e));
+          : `<span class="tip-badges">${rs.slice(0, 6).map((x) => badgeHTML(x)).join("")}</span><span class="tt">${rs.length} routes here · Tap to choose</span>`, "", ev(e));
         return;
       }
       cur = null;
@@ -2915,7 +2955,7 @@
       if (tg) {
         showLens(null);
         if (tg.item.r != null) selectRoute(LINES[tg.item.r].id, { fit: false });
-        else openPopup(tg.coords, `<div class="pop"><h3>${tg.item.more.length} more routes</h3>${routeRows(tg.item.more.map((i) => LINES[i]).sort(tagOrder))}</div>`);
+        else showCorridor(tg.item.more.map((i) => LINES[i]).sort(tagOrder));
         return;
       }
       // a tap right on a station's circle opens the station, even with a train or bus on top of it
@@ -2946,12 +2986,10 @@
         selectStop(f.properties.id, { fly: false });
         return;
       }
-      const ln = !isNarrow() && pickLine(e.point);
-      if (ln && ln.routes.length === 1) { selectRoute(ln.routes[0].id, { fit: false }); return; }
       const rs = routesAt(e.point, isNarrow() ? 10 : 6);
       if (rs.length === 1) { selectRoute(rs[0].id, { fit: false }); return; }
       if (rs.length > 1) {
-        openPopup(e.lngLat, `<div class="pop"><h3>${rs.length} routes on this street</h3>${routeRows(rs.slice(0, 16))}</div>`);
+        focusOff(); showCorridor(rs);
         return;
       }
       const area = map.queryRenderedFeatures(e.point, { layers: ["flex-fill", "dart-fill", "access-fill"].filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none") });
@@ -2971,7 +3009,7 @@
       if (e.key !== "Escape" || e.target.closest("input")) return;
       if (popup) closePopup();
       else if (selected) clearSelection();
-      else if (panelView === "layers" || panelView === "alerts") { panelView = "home"; showHome(); }
+      else if (panelView !== "home") { panelView = "home"; focusOff(); showHome(); }
     });
   }
   // Hover. A line carrying one route: that route's whole path, drawn bold on top, with its stops.
@@ -3018,6 +3056,18 @@
   // Hovering shows whole routes, never just a piece: the route whose strand is under the
   // pointer (or every boat on a crossing). It's drawn bold in its own lane, right over its line,
   // with its stops when there are only a few routes.
+  function focusCorridor(f) {
+    const key = `c:${f.properties.cat}:${f.properties.e}`;
+    clearTimeout(hoverTimer);
+    if (hoverKey === key) return;
+    hoverKey = key; hoverRoutes = []; queuedRoute = null; hovStopsKey = "";
+    const line = { type: "Feature", properties: { ...f.properties, c: keyColor(f.properties.cat) }, geometry: f.geometry };
+    const next = 1 - hSlot;
+    map.getSource(HOVER_SLOTS[next]).setData(fc([line]));
+    if (ribbons) ribbons.update(HOVER_SLOTS[next], KCTMRibbons.compile([line], { hover: true, widthScale: 1.12 }));
+    hoverFade(hSlot, 0, 140); hoverFade(next, 1, 180); hSlot = next;
+    map.getSource("hoverstops").setData(fc([]));
+  }
   function focusRoutes(routes, again = false) {
     routes = (routes || []).filter((r) => r && LINEIDX[r.id] != null);
     if (!routes.length) return;

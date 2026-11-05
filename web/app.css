@@ -364,6 +364,14 @@ table.sched td.good { color: var(--good); font-weight: 650; }
 .route-row { grid-template-columns: auto minmax(0, 1fr) auto auto; }
 .route-row .hw { font-size: 13px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .route-row .chev { color: var(--muted); opacity: .6; }
+.corridor-picker > .hint { margin: 10px 2px 14px; font-size: 14px; }
+.corridor-filter { display: block; padding: 11px 14px; border-radius: 14px; background: var(--fill); }
+.corridor-filter:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.corridor-filter input { width: 100%; border: 0; outline: 0; background: transparent; color: var(--ink); font: 16px var(--font); }
+.corridor-count { margin: 14px 3px 8px; color: var(--muted); font-size: 12.5px; }
+.corridor-picker .route-row { min-height: 66px; }
+.corridor-picker .route-row .desc { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 .group > li:has(.route-row) + li::before { left: 62px; }
 
 .stop-glyph { flex: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: 2.5px solid #8e8e93; box-sizing: border-box; }

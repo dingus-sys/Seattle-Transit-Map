@@ -529,8 +529,8 @@ const KCTMGeom = (() => {
     const HMODE = { glass: 1, solid: 2, dots: 3, ties: 4 };
     // one-way arrows: +1 points along the drawn line, -1 against it, 0 none (two-way)
     const arrow = (dir, fwd) => (!dir ? 0 : (dir === 1) === fwd ? 1 : -1);
-    // width of a street line carrying n routes, in single-route widths: 1, 2, then gently more
-    const GROW = (n) => (n <= 2 ? Math.max(1, n) : Math.min(5, 2 + 0.9 * Math.log2(n / 2)));
+    // A shared street is one readable band, growing gently with the number of routes.
+    const GROW = (n) => Math.min(2.6, 1 + 0.4 * Math.log2(Math.max(1, n)));
 
     // One view. p: { z (zoom step), zNow, u (px per line unit), capU, keyOn {key: bool}, selIdx,
     //   view [x0, y0, x1, y1] in meters, tags { gap, every, busZ }, theme ("l"/"d"), colors {key: css} }
@@ -630,59 +630,30 @@ const KCTMGeom = (() => {
 
       // 3. draw corridors, and the selected route on top
       const feats = [], selFeats = [];
-      // Widths are in line units (the page turns them into pixels smoothly as you zoom).
-      // Street and train lines are drawn one route at a time: each route is a continuous strand
-      // in its own lane, and the strands of a street touch, so a street carrying three routes
-      // reads as one line three strands wide, and where a route turns off, its strand peels away
-      // on its own. Boats share one line per crossing.
+      // One solid band per service type on a street. Individual route lanes are retained
+      // for the selected/previewed route, instead of drawing dozens of hairlines at once.
       const hrOf = (c) => (c.inner === "glass" ? 0.34 : c.inner === "solid" ? 0.3 : c.inner === "dots" ? 0.32 : c.inner === "ties" ? 0.62 : 0);
       const keyLane = (v) => (Lo) => [Lo.pos.get(v), Lo.wk.get(v) * Lo.s / 2];
       for (const [v, chains] of KEY_CHAINS) {
         const c = CAT[v];
-        if (c.group !== "water" || !keyOn[v]) continue;
+        if (!keyOn[v]) continue;
+        const water = c.group === "water";
         for (const ch of chains) {
           for (const run of runs(ch, v)) {
             drawPath(keyLane(v), run, lay, S, (k, coords) => {
               if (coords.length < 2) return;
-              const Lo = lay[run[k].E.k], w = Lo.wk.get(v);
-              feats.push({ type: "Feature", properties: { r: -1, cat: v, e: run[k].E.k, zu, wm: w + 0.14, cm: w + 0.55, hm: 0, sh: 0, ws: w * S, n: Lo.rl.get(v).length,
-                g: c.group, c: color(v), s: 20 - c.prio, d: c.dash ? 1 : 0, h: 0, ar: 0 }, geometry: { type: "LineString", coordinates: coords.map(toLL) } });
-            }, true);
-          }
-        }
-      }
-      for (let i = 0; i < LINES.length; i++) {
-        const v = VKEY(LINES[i].cat), c = CAT[v];
-        if (!keyOn[v] || c.group === "water") continue;
-        const hr = hrOf(c);
-        for (const ch of ROUTE_CHAINS[i]) {
-          for (const run of runs(ch, i)) {
-            let prev = null;
-            drawPath((Lo) => [Lo.sp.get(i), Lo.sw.get(i) / 2], run, lay, S, (k, coords) => {
-              if (coords.length < 2) return;
-              const st = run[k], Lo = lay[st.E.k], list = Lo.rl.get(v), n = list.length, j = list.indexOf(i);
-              const w = Lo.sw.get(i), s = Lo.s;
-              // one strand per street carries the corridor's soft shadow and its one-way arrows,
-              // so they show once however many routes share it
-              const rep = j === Math.floor((n - 1) / 2);
-              const pr = { r: i, cat: v, e: st.E.k, zu, wm: w + 0.14 * s, cm: w + 0.55 * s,
-                // the glass highlight only on a line of one route: a wide street line is one solid color
-                hm: n === 1 || c.base === "link" ? w * hr : 0, sh: rep ? (Lo.wk.get(v) + 0.55) * s : 0, ws: w * S, n: c.base === "link" ? 1 : n,
+              const st = run[k], Lo = lay[st.E.k], w = Lo.wk.get(v) * Lo.s;
+              feats.push({ type: "Feature", properties: { r: -1, cat: v, e: st.E.k, zu,
+                wm: w + 0.14 * Lo.s, cm: w + 0.55 * Lo.s,
+                hm: water || c.inner === "glass" && Lo.rl.get(v).length > 1 ? 0 : w * hrOf(c),
+                sh: water ? 0 : w + 0.55 * Lo.s, ws: w * S, n: Lo.rl.get(v).length,
                 g: c.group, c: color(v), s: 20 - c.prio, d: c.dash ? 1 : 0, h: HMODE[c.inner] || 0,
-                ar: rep ? arrow(st.E.kdir.get(v), st.fwd) : 0 };
-              // pieces in a row that look the same are one line (no seams where streets meet)
-              if (prev && prev.coords[prev.coords.length - 1][0] === coords[0][0] && prev.coords[prev.coords.length - 1][1] === coords[0][1] &&
-                prev.pr.wm === pr.wm && prev.pr.hm === pr.hm && prev.pr.sh === pr.sh && prev.pr.ar === pr.ar && prev.pr.n === pr.n) {
-                for (let q = 1; q < coords.length; q++) prev.coords.push(coords[q]);
-                return;
-              }
-              prev = { pr, coords: coords.slice() };
-              feats.push({ type: "Feature", properties: pr, geometry: { type: "LineString", coordinates: prev.coords } });
-            }, false, false, easeAt);
+                ar: water ? 0 : arrow(st.E.kdir.get(v), st.fwd) },
+                geometry: { type: "LineString", coordinates: coords.map(toLL) } });
+            }, water, !water, easeAt);
           }
         }
       }
-      for (const f of feats) if (f.properties.r >= 0) f.geometry.coordinates = f.geometry.coordinates.map(toLL);
       // one route, in its own strand
       const strand = (i) => (Lo) => [Lo.sp.get(i), Lo.sw.get(i) / 2];
       if (selIdx >= 0) {
@@ -692,13 +663,13 @@ const KCTMGeom = (() => {
             drawPath(strand(selIdx), run, lay, S, (k, coords) => {
               if (coords.length < 2) return;
               selFeats.push({ type: "Feature", properties: { r: selIdx, cat: selKey, e: run[k].E.k, zu, c: col, d: c.dash ? 1 : 0, ar: c.group === "water" ? 0 : arrow(run[k].E.dirOf(selIdx), run[k].fwd),
-                wm: c.w + 0.9, cm: c.w + 2.6, gm: c.w + 7, hm: (c.w + 0.9) * 0.3 },
+                wm: c.w + 1.8, cm: c.w + 3.4, gm: c.w + 8, hm: (c.w + 1.8) * 0.3 },
               geometry: { type: "LineString", coordinates: coords.map(toLL) } });
             }, c.group === "water", false, easeAt);
           }
         }
       }
-      last = { lay, S, z, W, easeAt, zu, colors: p.colors, view: p.view };
+      last = { lay, S, z, W, easeAt, zu, colors: p.colors };
 
       // 4. route-number tags. Connected blocks carrying the same routes form one stretch; a
       //    stretch gets one tag (on its longest block), plus repeats along long blocks, and the
@@ -828,8 +799,8 @@ if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScop
     } else if (m.type === "build" && engine) {
       const t = Date.now();
       const out = engine.build(m.p);
-      buildId = m.id; const gap = m.p.strandGap || 0;
-      const mesh = typeof KCTMRibbons !== "undefined" ? KCTMRibbons.compile(out.feats, { gap }) : null;
+      buildId = m.id;
+      const mesh = typeof KCTMRibbons !== "undefined" ? KCTMRibbons.compile(out.feats) : null;
       const selMesh = typeof KCTMRibbons !== "undefined" ? KCTMRibbons.compile(out.selFeats, { selected: true }) : null;
       const transfer = [...(mesh || []), ...(selMesh || [])].map((b) => b.data.buffer);
       self.postMessage({ type: "built", id: m.id, ms: Date.now() - t, ...out, mesh, selMesh }, transfer);

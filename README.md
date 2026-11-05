@@ -9,11 +9,12 @@ state and Kitsap ferries, Dial-a-Ride (DART) areas, Metro Flex zones and the Acc
 paratransit area, plus live vehicle positions (ferries included) and service alerts.
 
 Lines follow the real streets, in the manner of the printed Seattle Transit Map: a street
-carrying one route is one line, a street carrying two is a line twice as wide, and busier
-streets wider still. Each route is its own strand of that line, so where a route turns off,
-its strand peels away on its own. The 1 and 2 Lines, which share track, are one line, green
-on one half and blue on the other. Hover a wide line and the route whose strand is under the
-pointer lights up end to end, with its stops and arrows where it runs one way only. Point at a single number on a
+carrying several routes has one solid band per service type, with gently increasing width.
+The 1 and 2 Lines, which share track, are one line, green on one half and blue on the other.
+Tap a band to see every visible route on that street in a readable, searchable list. Choose
+a route to highlight its full path, stops and vehicles; the surrounding network recedes.
+Hovering a shared band highlights that street rather than all its routes at once.
+Point at a single number on a
 route tag (the "62" in "45 | 62 | 75") to see just that route; click it to open it. A tag's
 numbers read in the same order as the lines under it, in the same colors. Hover any stop
 for a card with its routes and next departures (from the timetable). Click a line for its
@@ -148,8 +149,8 @@ station with its ramps, a park & ride loop) becomes one junction, and where a bu
 line passes a junction that was placed on a street beside it, the junction moves onto the
 line instead of the line dipping to it. In the browser, the routes inside each street's line
 are put in the order that best matches the streets they come from and go on to, so strands
-cross each other as little as possible, and once you're zoomed in a hairline of the
-background shows between routes sharing a street.
+cross each other as little as possible when a route is selected or previewed. The overview
+draws one solid band per service type instead of tiny individual route strands.
 
 After junction cleanup, `repair_network.py` repeats the gap repair using the route's own
 matched path, including long freeway stretches and omitted terminal branches. Substantial
@@ -162,8 +163,8 @@ freeway, and on the website, where the full map tiles are available, places to f
 way by: parks, schools and colleges, museums, the zoo, hospitals, stadiums and sights, each
 with a small symbol, more of them as you zoom in.
 
-In the browser, `web/geom.js` lays out each view: every route is one continuous strand,
-corners are rounded, each route keeps its place across the street through junctions (whole
+In the browser, `web/geom.js` lays out each view as service bands and retains a continuous
+path for each individual route. Corners are rounded, each route keeps its place through junctions (whole
 bundles slide sideways to make that possible), and when a strand must change sides it eases
 across, all strands at a junction over the same distance so they stay side by side. Line
 widths and lane positions share one world-space GPU mesh (`web/ribbons.js`), so the whole

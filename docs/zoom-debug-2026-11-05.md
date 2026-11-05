@@ -2,6 +2,8 @@
 
 The reported failure was a fast zoom that spread the route strands across downtown before
 they rejoined. The supplied recording also showed uneven interaction around busy routes.
+The follow-up request was to make shared routes cohesive and easy to choose: individual
+strands had become too thin to understand or select reliably.
 
 ## Cause and change
 
@@ -25,13 +27,21 @@ view and subpixel simplification remove excess geometry. Hit testing indexes the
 paths, independently of tiled line widths. Hover fades change opacity, and a pending hover
 queue retains only the newest target instead of rebuilding width styles every frame.
 
+The overview now draws each service type once per street as a solid band, growing gently
+with route count, capped at 2.6 single-route widths. Individual route paths remain available
+for selection and preview. Shared-band hover highlights the street rather than every route.
+Tapping opens a side-panel chooser with all visible routes, a number/destination filter,
+large buttons, and no 16-route cutoff. Back from a chosen route returns to the list. Local
+and peak buses have stronger base widths and contrast, and selected paths are bolder.
+Overview land vehicles stay 38 pixels apart; selected routes retain all their vehicles.
+
 Native line layers remain as a startup fallback (`?noribbons`); `?noworker` keeps the mesh but
 runs layout on the page. The offline, single-file preview includes the same renderer.
 No transit data or API credentials changed.
 
 ## Verification
 
-- Geometry: 10/10 checks, including every drawn route at five zoom levels and matching
+- Geometry: 11/11 checks, including every drawn route at five zoom levels and matching
   selected/hover geometry. Strand-order score remains 42.
 - Renderer: 8/8 checks for large zoom jumps, bounded joins, outward caps, duplicate points,
   rail ordering, transit patterns, selection/hover and transferable buffers.
@@ -43,6 +53,15 @@ No transit data or API credentials changed.
   layouts for the tested zoom and replaced the route source four times while moving; the
   new code requested one final layout and made no replacements while moving.
 - Hovering a downtown strand displayed its route and highlight with zero network rebuilds.
+- Corridor chooser: 11/11 on desktop and 11/11 at phone width. A 27-route corridor listed
+  every route, filtered and selected a route beyond the old cutoff, preserved the chooser
+  through a theme refresh, and returned to the complete list. Rows are at least 48 px tall.
+- WSF/WSDOT fixture: 12/12, including fresh/stale positions, terminal notes, cancellations,
+  car-space counts, and road-alert failure handling.
+- Bellevue and university-area bands were inspected alongside downtown. In a matched
+  downtown layout with every service enabled, the base drawing fell from 260 to 166
+  features and from 2,944 to 1,265 points; three-build median layout time was 16 to 10 ms
+  on this machine. These are geometry measurements, separate from browser frame timing.
 - Native fallback loaded 2,140 route features. The mesh also restored visible route geometry
   after a deliberately lost/restored graphics context.
 - Worker fallback selected Route 49 with 29 path pieces and 19 snapped stops; the mesh was

@@ -99,12 +99,12 @@ then `build_graph` (the shared-corridor network, `site/data/network.json`) then 
 - `config.py`: `REGION` (map area), `FEEDS`, live settings. Rebuilding for a new region is one edit.
 
 **Browser** (`web/`; `build_site.py` copies it into `site/` as `index.html` beside `app.js`, `app.css`
-and `geom.js`, each linked with a content hash `?v=` so browsers cache them, and inlines it all into
+`geom.js` and `ribbons.js`, each linked with a content hash `?v=` so browsers cache them, and inlines it all into
 one file for the artifact):
 - `geom.js` is the line engine. It runs in a Web Worker started from `geom.js` (`<script id="geom-src">`;
   in the one-file artifact, from that script's inline text). `?noworker` forces it onto the page. It turns the network into what one view draws: each route is a
-  continuous strand; a street's line gets wider with the number of routes on it (about 1x, 2x, then
-  slowly more); strands touch; where a route turns off its strand peels away; lanes are kept through
+  continuous route path; the overview draws one solid band per service type, growing gently
+  with route count (at most 2.6 single-route widths). Individual lanes are kept for route selection and preview through
   junctions by sliding whole bundles sideways; strands are ordered to minimize swaps. The 1 and 2 Lines
   on shared track are one line, green and blue halves. Boats are one line per crossing.
 - `app.js` has the MapLibre layers (street stack, then the rail stack on top, each with shadow,
@@ -122,6 +122,10 @@ one file for the artifact):
   cross-fading hover layers; the tooltip glides, morphs between cards and fades. Hover opacity
   changes do not rebuild width expressions, and queued hover work keeps only the newest target.
   Route hit tests use a spatial index of the displayed geometry, not tiled line-width queries.
+- Shared-band hover highlights the street only. Tapping a band opens `showCorridor`: all visible
+  surface routes on the street, without a 16-route cutoff, with a route/destination filter and
+  large buttons. Choosing one highlights its full path and stops. Back returns to the choices.
+  Overview land-vehicle badges keep 38 px apart; a selected route shows all its vehicles.
 
 **Live data:** vehicle positions and service alerts from OneBusAway Puget Sound (GTFS-realtime,
 decoded by hand in `app.js`; agencies in `OBA_AGENCIES`), Intercity Transit's own feeds, and

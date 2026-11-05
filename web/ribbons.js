@@ -14,7 +14,7 @@ const KCTMRibbons = (() => {
     return values ? values[1].split(",").slice(0, 3).map((v) => Number(v.trim()) / 255) : [0.3, 0.3, 0.3];
   };
 
-  function compile(features, { gap = 0, widthScale = 1, selected = false, hover = false } = {}) {
+  function compile(features, { widthScale = 1, selected = false, hover = false } = {}) {
     const buckets = new Map();
     const bucket = (stack, role) => {
       const key = stack + ":" + role;
@@ -63,7 +63,7 @@ const KCTMRibbons = (() => {
       if (!hover && !selected && p.sh > 0) stroke("shadow", p.sh + 0.8);
       if (!p.d) stroke("case", p.cm * widthScale * (hover ? 0.97 : 1));
       const w = p.wm * widthScale;
-      stroke(p.d ? "dash" : "body", !selected && !hover && !p.d ? Math.max(w * 0.7, w - gap) : w, p.d ? 1 : 0, !p.d);
+      stroke(p.d ? "dash" : "body", w, p.d ? 1 : 0, !p.d);
       if (!hover && p.hm > 0) stroke(p.h === 3 ? "dots" : p.h === 4 ? "ties" : "shine", p.hm, p.h === 3 ? 2 : p.h === 4 ? 3 : 0, p.h !== 4);
     }
     const order = ["shadow", "glow", "case", "body", "dash", "shine", "dots", "ties"];

@@ -38,13 +38,14 @@
     const pan = await measure({ center: [-122.323, 47.616] }, 650);
     check('panning does not rebuild routes during the gesture', pan.movingRequests === 0 && pan.movingUpdates === 0);
     check('panning retains route coverage', a.lastFeats().length > 0);
-    const hit = a.lastFeats().find((f) => f.properties.r >= 0 && f.geometry.coordinates.some((c) => {
+    const hit = a.lastFeats().find((f) => f.properties.g === 'bus' && f.geometry.coordinates.some((c) => {
       const p = m.project(c); return p.x > 440 && p.x < m.getCanvas().clientWidth - 80 && p.y > 70 && p.y < m.getCanvas().clientHeight - 70;
     }));
     if (hit && a.routesAt) {
       const c = hit.geometry.coordinates.find((c) => { const p = m.project(c); return p.x > 440 && p.x < m.getCanvas().clientWidth - 80 && p.y > 70 && p.y < m.getCanvas().clientHeight - 70; });
       const point = m.project(c), rs = a.routesAt(point);
-      check('route hit testing follows the visible ribbon', rs.some((r) => r.id === a.lineId(hit.properties.r)));
+      const init = a.engineInit(), expected = init.edges[hit.properties.e].l.filter((i) => a.lastParams().keyOn[init.lines[i].cat]);
+      check('route hit testing follows the visible ribbon', expected.every((i) => rs.some((r) => r.id === a.lineId(i))));
     }
     check('no map rendering errors', errors.length === 0, errors.join(' | '));
     return { passed: results.filter((r) => r.ok).length, total: results.length, zoom, pan, results };

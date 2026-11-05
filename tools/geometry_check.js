@@ -40,6 +40,7 @@ for (const z of [10, 12, 14, 16, 18]) check(`all routes draw with finite, usable
     assert(f.geometry.coordinates.every((p) => p.every(Number.isFinite)));
     assert(Number.isFinite(f.properties.wm) && f.properties.wm > 0);
     if (f.properties.r >= 0) drawn.add(f.properties.r);
+    else for (const i of net.edges[f.properties.e].l) if (geom.VKEY(lines[i].cat) === f.properties.cat) drawn.add(i);
   }
   for (let i = 0; i < lines.length; i++) {
     if (!['ferry', 'watertaxi'].includes(lines[i].cat)) assert(drawn.has(i), `route ${net.lines[i]} disappeared`);
@@ -65,5 +66,14 @@ check('a selected route stays visible when its category is hidden', () => {
 check('empty views return no stray geometry', () => {
   const b = engine.build({ ...params(15), view: [1e7, 1e7, 1e7 + 100, 1e7 + 100] });
   assert.equal(b.feats.length, 0);
+});
+check('a busy street draws one solid band per service type', () => {
+  const busy = geom.createEngine({ edges: [{ c: [[-122.33, 47.61], [-122.329, 47.611]], l: Array.from({ length: 40 }, (_, i) => i) }],
+    lines: Array.from({ length: 40 }, (_, rank) => ({ cat: 'frequent', rank })), cat, gap: 0 });
+  const out = busy.build(params(16));
+  assert.equal(out.feats.length, 1);
+  assert.equal(out.feats[0].properties.n, 40);
+  assert.equal(out.feats[0].properties.r, -1);
+  assert(out.feats[0].properties.wm > cat.frequent.w);
 });
 console.log(`${checks}/${checks} passed; strand swaps ${engine.strandStats.before} → ${engine.strandStats.after}`);
