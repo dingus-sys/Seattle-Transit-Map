@@ -32,9 +32,9 @@ pipeline/         Python build steps (run in this order by build_all.py)
   build_graph.py    the shared-corridor network and ribbon order
   tidy_junctions.py  folds small junction knots and removes stray stubs
   repair_network.py restores remaining gaps from matched shapes; simplifies to 2 m
-  build_site.py     builds the page from web/: site/index.html with app.js, app.css, geom.js
-                    and logos/ beside it (+ artifact.html, one self-contained file)
-web/              page template, styles, app script and geom.js (the line geometry engine)
+  build_site.py     builds the page from web/: site/index.html with app.js, app.css, geom.js,
+                    ribbons.js and logos/ beside it (+ artifact.html, one self-contained file)
+web/              page template, styles, app script, geom.js (layout) and ribbons.js (drawing)
 site/             the finished static site (this is what gets published); its data/, tiles/
                   and fonts/ are committed, the page files are built on deploy
 .github/workflows pages.yml builds the page and publishes site/; refresh-data.yml rebuilds data weekly
@@ -166,17 +166,26 @@ In the browser, `web/geom.js` lays out each view: every route is one continuous 
 corners are rounded, each route keeps its place across the street through junctions (whole
 bundles slide sideways to make that possible), and when a strand must change sides it eases
 across, all strands at a junction over the same distance so they stay side by side. Line
-widths are in line units that the map turns into pixels continuously, so lines don't jump in
-thickness while you zoom. That
-work runs in a background worker so panning and zooming stay smooth (`web/app.js` only hands
-the finished lines to the map); where workers aren't allowed it runs on the page instead. Add
-`?noworker` to the address to force that.
+widths and lane positions share one world-space GPU mesh (`web/ribbons.js`), so the whole
+bundle scales together during a fast zoom, including while the base map loads child tiles.
+The worker lays out and compiles the final view after a gesture; it does not replace the
+route sources on every zoom frame. Rounded paths are simplified to subpixel precision before
+they are sent to the page, and typed mesh buffers are transferred without copying them.
+Hover fades change opacity without repeatedly rebuilding line-width styles. Pending hover
+requests keep only the latest target. Hit testing uses the displayed route geometry in a
+spatial index, independently of base-map tile readiness.
+
+Where workers aren't allowed, layout runs on the page after the gesture. Add `?noworker` to
+test this. Native MapLibre line layers remain available if the graphics layer cannot start;
+`?noribbons` forces that fallback. The graphics layer recreates its resources after context
+restoration, and releases replaced buffers and removed layers.
 
 ## Checks before publishing
 
 ```bash
 python3 -m unittest discover -s tools -p 'test_*.py'
 node tools/geometry_check.js
+node tools/ribbon_check.js
 python3 tools/check_repair.py  # after installing requirements.txt
 python3 pipeline/build_site.py
 ```
@@ -184,7 +193,9 @@ python3 pipeline/build_site.py
 The Check map workflow runs the lightweight source, build and geometry checks on pull
 requests. The data-refresh workflow also tests coverage repair before rebuilding data.
 Browser scripts in `tools/` cover desktop interactions, all route cards, phone sheets and
-the WSF/WSDOT integration with isolated fixtures. `live_fixture.js` is test-only and must
+the WSF/WSDOT integration with isolated fixtures. `zoom_check.js` checks rapid zooms, panning,
+source-update counts and route hit testing, and records frame timing for comparison.
+`live_fixture.js` is test-only and must
 run before app.js in a separate local test page; it is never included in `site/` output.
 
 ## Data and credits

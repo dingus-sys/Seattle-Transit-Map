@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -12,6 +13,18 @@ import config
 
 
 class BuildTests(unittest.TestCase):
+    def test_ribbon_renderer_ships_in_website_and_inline_preview(self):
+        page = (Path(config.ROOT) / 'web' / 'page.html').read_text()
+        with tempfile.TemporaryDirectory() as directory, patch.object(build_site, 'SITE', directory):
+            html = build_site.build_website(page, 'styles', 'app', 'geometry', 'ribbons', [], False)
+            self.assertEqual((Path(directory) / 'ribbons.js').read_text(), 'ribbons')
+            self.assertIn('<script id="ribbons-src" src="ribbons.js?v=', html)
+            self.assertLess(html.index('id="ribbons-src"'), html.index('id="geom-src"'))
+            self.assertNotIn('/*RIBBONS_JS*/', html)
+        with patch.object(build_site, 'maplibre_css', return_value='map styles'):
+            inline = build_site.build_artifact(page, 'styles', 'app', 'geometry', 'ribbons', [])
+            self.assertIn('<script id="ribbons-src">ribbons</script>', inline)
+
     def test_existing_repository_secret_names(self):
         with patch.dict(os.environ, {"WSP_KEY": "ferry-example", "WSDOT_KEY": "road-example"}, clear=True):
             self.assertEqual(config.wsf_code(), "ferry-example")

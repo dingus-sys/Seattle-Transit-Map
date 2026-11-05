@@ -638,7 +638,8 @@
   // Laying out a view (lanes, bundle shifts, rounded paths, tags) takes 100-250 ms on a phone,
   // so it runs in a worker started from the geometry script (geom.js); the page only hands the
   // finished lines to the map. Where workers aren't allowed the same engine runs here instead.
-  let lastParams = null;
+  let lastParams = null, ribbons = null;
+  const drawStats = { requested: 0, applied: 0, deferred: 0 };
   let worker = null, engine = null, inFlight = null, queued = null, buildSeq = 0, appliedSeq = 0, lastBuildMs = 0, watchdog = 0;
   const idleWaiters = [];
   function engineInit() {
@@ -647,7 +648,8 @@
   function runHere() {
     if (worker) { worker.terminate(); worker = null; }
     clearTimeout(watchdog);
-    inFlight = null;
+    inFlight = queued = null;
+    routeFlight = queuedRoute = null;
     if (!engine) engine = KCTMGeom.createEngine(engineInit());
   }
   function startEngine() {
@@ -656,23 +658,32 @@
       // the website loads geom.js as a file, which the worker reuses from the browser's cache;
       // the one-file preview has it inline, so the worker starts from that text instead
       const el = document.getElementById("geom-src");
-      worker = new Worker(el.src || URL.createObjectURL(new Blob([el.textContent], { type: "text/javascript" })));
+      const ribbonEl = document.getElementById("ribbons-src");
+      worker = new Worker(el.src || URL.createObjectURL(new Blob([ribbonEl.textContent, "\n", el.textContent], { type: "text/javascript" })));
       worker.onmessage = (e) => {
         const m = e.data;
-        if (m.type === "route") { const cb = routeCbs.get(m.id); routeCbs.delete(m.id); if (cb) cb(m.feats); return; }
+        if (m.type === "route") {
+          const done = routeFlight; routeFlight = null;
+          if (!queuedRoute && done?.id === m.id && !map.isMoving() && m.buildId === appliedSeq) done.cb(m.feats, m.mesh);
+          if (queuedRoute) { const next = queuedRoute; queuedRoute = null; if (!map.isMoving()) sendRoute(next); }
+          return;
+        }
         if (m.type !== "built") return;
         clearTimeout(watchdog);
         inFlight = null;
-        applyBuild(m);
-        if (queued) { const q = queued; queued = null; send(q); }
+        if (map.isMoving() && lastFeats.length) { needsRebuild = true; drawStats.deferred++; }
+        else if (!queued) applyBuild(m);
+        if (queued) { const q = queued; queued = null; if (map.isMoving()) needsRebuild = true; else send(q); }
+        settleBuilds();
       };
       worker.onerror = () => { runHere(); rebuild(); };
-      worker.postMessage({ type: "init", init: engineInit() });
+      worker.postMessage({ type: "init", init: engineInit(), ribbonsURL: ribbonEl.src || null });
     } catch (err) {
       runHere();
     }
   }
   function send(msg) {
+    drawStats.requested++;
     inFlight = msg;
     worker.postMessage({ type: "build", ...msg });
     clearTimeout(watchdog);
@@ -680,21 +691,29 @@
     watchdog = setTimeout(() => { if (inFlight === msg) { runHere(); rebuild(); } }, 15000);
   }
   // one route's path in the current view's lanes (for hover previews), from the engine
-  let routeSeq = 0;
-  const routeCbs = new Map();
+  let routeSeq = 0, routeFlight = null, queuedRoute = null;
+  function sendRoute(request) {
+    routeFlight = request;
+    worker.postMessage({ type: "route", id: request.id, idxs: request.idxs });
+  }
   function requestRoutePaths(idxs, center, cb) {
     if (!worker) { cb(engine ? engine.routePaths(idxs, center) : []); return; }
-    const id = ++routeSeq;
-    routeCbs.set(id, cb);
-    worker.postMessage({ type: "route", id, idxs, center });
+    const request = { id: ++routeSeq, idxs, cb };
+    if (routeFlight) queuedRoute = request;
+    else sendRoute(request);
   }
   function applyBuild(m) {
     if (m.id < appliedSeq || !map || !map.getSource("net")) return;
     appliedSeq = m.id;
+    drawStats.applied++;
     lastFeats = m.feats;
     lastSelFeats = m.selFeats;
-    vehIx = vehIxSel = null;
+    vehIx = vehIxSel = hitIx = null;
     lastBuildMs = m.ms || 0;
+    if (ribbons) {
+      ribbons.update("net", m.mesh || KCTMRibbons.compile(m.feats, { gap: lastParams.strandGap }));
+      ribbons.update("sel", m.selMesh || KCTMRibbons.compile(m.selFeats, { selected: true }));
+    }
     map.getSource("net").setData({ type: "FeatureCollection", features: m.feats });
     if (hoverKey) focusRoutes(hoverRoutes, true);
     map.getSource("sel").setData({ type: "FeatureCollection", features: m.selFeats });
@@ -711,8 +730,9 @@
       setStops("sel", stopFeatures([r], true), m.selFeats, "route", selStopsFor !== r.id);
       selStopsFor = r.id;
     }
-    if (!inFlight && !queued) idleWaiters.splice(0).forEach((f) => f());
+    settleBuilds();
   }
+  function settleBuilds() { if (!inFlight && !queued && !needsRebuild) idleWaiters.splice(0).forEach((f) => f()); }
 
   const zStep = (z) => Math.max(9, Math.min(19, Math.round(z * 4) / 4));
   // Zoomed out, all-day and rush-hour buses are slimmer than frequent ones, so the busy
@@ -722,7 +742,7 @@
     return { local: f, peak: Math.max(0.5, Math.min(1, f + 0.15) * 0.8), shuttle: f, dart: f };
   }
   function tierFor(z) { const t = BUS_TIERS[settings.busDetail]; return z >= t[2] ? 2 : z >= t[1] ? 1 : 0; }
-  let curStep = null, lastZ = -1, labelStep = null, lastBuild = 0, buildTimer = null, builtView = null, lastFeats = [], lastSelFeats = [];
+  let lastZ = -1, labelStep = null, needsRebuild = false, builtView = null, lastFeats = [], lastSelFeats = [];
   // The area last drawn (meters): the view plus a wide margin, so panning stays smooth.
   function viewBox(margin) {
     const b = map.getBounds();
@@ -731,45 +751,43 @@
     return [x0 - mx, y0 - my, x1 + mx, y1 + my];
   }
   function onMoveEnd() {
-    if (!builtView) return;
+    if (!builtView) { rebuild(); return; }
     const v = viewBox(0.05);
-    if (v[0] < builtView[0] || v[1] < builtView[1] || v[2] > builtView[2] || v[3] > builtView[3]) rebuild();
+    if (needsRebuild || Math.abs(map.getZoom() - lastZ) > 0.005 || v[0] < builtView[0] || v[1] < builtView[1] || v[2] > builtView[2] || v[3] > builtView[3]) rebuild();
+    renderLive();
   }
 
   // Ask for the lines of the current view. Only one request is in the worker at a time; while
   // it works, newer requests replace each other, so a fast zoom only lays out where it stops.
   function rebuild() {
     if (!map || !map.getSource("net") || (!worker && !engine)) return;
+    if (map.isMoving() && lastFeats.length) { needsRebuild = true; queued = null; return; }
+    needsRebuild = false;
     const zNow = map.getZoom();
-    const zs = curStep = zStep(zNow);
+    const zs = zStep(zNow);
     // lanes are laid out for (nearly) the zoom on screen, so they follow a pinch closely
     const z = lastZ = Math.max(9, Math.min(19, Math.round(zNow * 50) / 50));
-    lastBuild = performance.now();
     const u = interp(UNIT, z) * THICK[settings.thickness];
     const tier = tierFor(zNow);
     const keyOn = {};
     for (const k of Object.keys(CAT)) keyOn[k] = (k === "sounder" ? enabledCat("sounder") || enabledCat("amtrak") : enabledCat(CAT[k].base || k)) && CAT[k].tier <= tier;
     const p = { z, zs, zNow, u, capU: interp(CAP_PX, z) / u, keyOn,
       selIdx: selected && selected.type === "route" ? LINEIDX[selected.id] : -1,
-      view: (builtView = viewBox(0.75)), tags: tagSpacing(TAG_DENSITY[settings.tags], zNow), theme: theme[0], colors: netColors(theme),
-      wscale: minorScale(zNow) };
+      view: (builtView = viewBox(0.35)), tags: tagSpacing(TAG_DENSITY[settings.tags], zNow), theme: theme[0], colors: netColors(theme),
+      wscale: minorScale(zNow), strandGap: z <= 12 ? 0 : (z < 13 ? z - 12 : 1) * (0.85 + 0.14 * u) / u };
     lastParams = p;
     const msg = { id: ++buildSeq, p };
     if (!worker) {
       const t = performance.now();
-      applyBuild({ id: msg.id, ms: performance.now() - t, ...engine.build(p) });
+      const out = engine.build(p); drawStats.requested++;
+      applyBuild({ id: msg.id, ms: performance.now() - t, ...out });
     } else if (inFlight) queued = msg;
     else send(msg);
   }
-  // While zooming, ask for a new layout as soon as the zoom has moved a little: the worker takes
-  // one request at a time and newer ones replace waiting ones, so it keeps up as best it can.
+  // The existing GPU mesh follows the camera during a gesture. Retile and lay out only
+  // the final view, so the gesture never competes with a stream of obsolete geometry.
   function onZoom() {
-    const zNow = map.getZoom();
-    if (Math.abs(zNow - lastZ) < 0.04 && zStep(zNow) === curStep) return;
-    if (worker) { clearTimeout(buildTimer); rebuild(); return; }
-    const wait = 140 - (performance.now() - lastBuild); // laying out on the page: not every frame
-    clearTimeout(buildTimer);
-    if (wait <= 0) rebuild(); else buildTimer = setTimeout(rebuild, wait);
+    needsRebuild = true;
   }
 
   // ---------------------------------------------------------------- route tags (canvas)
@@ -2230,7 +2248,8 @@
   function setNetDim(level) {
     if (!map || !map.getLayer("line-bus") || level === netDim) return;
     netDim = level;
-    for (const L of transitLayers(BASE[theme])) {
+    if (ribbons) map.triggerRepaint();
+    else for (const L of transitLayers(BASE[theme])) {
       if (L.source !== "net" || L.type !== "line") continue;
       const base = L.paint["line-opacity"] != null ? L.paint["line-opacity"] : 1;
       map.setPaintProperty(L.id, "line-opacity", level === 1 ? base : typeof base === "number" ? base * level : ["*", base, level]);
@@ -2240,7 +2259,7 @@
   function applySelectionStyle() {
     if (!map || !map.getLayer("line-bus")) return;
     const dim = !!(selected && selected.type === "route");
-    for (const g of GROUPS) {
+    if (!ribbons) for (const g of GROUPS) {
       for (const id of [`glass-${g}`, `center-${g}`, `dots-${g}`, `ties-${g}`]) map.setLayoutProperty(id, "visibility", dim ? "none" : "visible");
       for (const id of [`case-${g}`, `shadow-${g}`]) if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", dim ? "none" : "visible");
     }
@@ -2707,9 +2726,35 @@
 
   // ---------------------------------------------------------------- interaction
   const LINE_LAYERS = GROUPS.flatMap((g) => [`line-${g}`, `dash-${g}`]).concat(["sel-line", "sel-dash"]);
+  let hitIx = null;
+  function lineFeaturesAt(point, radius) {
+    if (!ribbons) return qrf([[point.x - radius, point.y - radius], [point.x + radius, point.y + radius]], { layers: LINE_LAYERS.filter((l) => map.getLayer(l)) });
+    if (!hitIx) {
+      const feats = lastFeats.concat(lastSelFeats);
+      hitIx = segIndex(feats);
+      hitIx.half = Math.max(0, ...feats.map((f) => (f.properties.ws || f.properties.wm * f.properties.zu * MPP0) / 2));
+    }
+    const ll = map.unproject(point), p = toM(ll.lng, ll.lat), mpp = MPP0 / 2 ** map.getZoom();
+    const reach = hitIx.half + radius * mpp, cell = hitIx.cell;
+    const found = new Map(), seen = new Set();
+    for (let x = Math.floor((p[0] - reach) / cell); x <= Math.floor((p[0] + reach) / cell); x++) {
+      for (let y = Math.floor((p[1] - reach) / cell); y <= Math.floor((p[1] + reach) / cell); y++) {
+        for (const n of hitIx.grid.get(x + "," + y) || []) {
+          if (seen.has(n)) continue; seen.add(n);
+          const [a, b, pr] = hitIx.segs[n], dx = b[0] - a[0], dy = b[1] - a[1], len = dx * dx + dy * dy;
+          const t = len ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len)) : 0;
+          const d = Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy);
+          const half = (pr.ws || pr.wm * pr.zu * MPP0) / 2;
+          if (d > half + radius * mpp || (found.has(pr) && found.get(pr)._distance <= d)) continue;
+          found.set(pr, { type: "Feature", properties: pr, geometry: { type: "LineString", coordinates: [toLonLat(a), toLonLat(b)] }, _distance: d });
+        }
+      }
+    }
+    return [...found.values()];
+  }
   // Routes under the pointer: a corridor line stands for every visible route of its type on that street.
   function routesAt(point, r = 6) {
-    const feats = qrf([[point.x - r, point.y - r], [point.x + r, point.y + r]], { layers: LINE_LAYERS.filter((l) => map.getLayer(l)) });
+    const feats = lineFeaturesAt(point, r);
     const sel = selected && selected.type === "route" ? LINEIDX[selected.id] : -1;
     const set = new Set();
     for (const f of feats) {
@@ -2771,15 +2816,15 @@
     // the strand the pointer is most inside of is the route
     const pickLine = (pt) => {
       const rad = 5;
-      const feats = qrf([[pt.x - rad, pt.y - rad], [pt.x + rad, pt.y + rad]], { layers: LINE_LAYERS.filter((l) => map.getLayer(l)) });
+      const feats = lineFeaturesAt(pt, rad);
       if (!feats.length) return null;
       const ll = map.unproject(pt), p = toM(ll.lng, ll.lat), mpp = MPP0 / 2 ** map.getZoom();
       const sel = selected && selected.type === "route" ? LINEIDX[selected.id] : -1;
       let best = null, held = null;
       for (const f of feats) {
-        const d = distTo(f, p);
+        const d = f._distance != null ? f._distance : distTo(f, p);
         if (!isFinite(d)) continue;
-        const half = (f.properties.ws || 0) / 2;
+        const half = (f.properties.ws || f.properties.wm * f.properties.zu * MPP0 || 0) / 2;
         const out = Math.max(0, d - half) / mpp; // pixels outside the strand
         const score = out + (half ? d / half : 1) * 0.01 - (f.properties.r === sel && sel >= 0 ? 2 : 0);
         const h = { f, out, score };
@@ -2797,6 +2842,7 @@
     };
     const ev = (e, dy = 0) => ({ clientX: e.originalEvent.clientX, clientY: e.originalEvent.clientY + dy });
     map.on("mousemove", (e) => {
+      if (map.isMoving()) return;
       // a number on a route tag
       const tg = tagAt(e.point);
       showLens(tg);
@@ -2860,7 +2906,7 @@
       setHover(null);
     });
     map.getCanvas().addEventListener("mouseleave", () => { cur = null; tipHide(true); setHover(null); highlightStop(null); showLens(null); });
-    map.on("movestart", () => { showLens(null); });
+    map.on("movestart", () => { cur = null; queuedRoute = null; showLens(null); tipHide(true); focusOff(); highlightStop(null); });
     map.on("click", (e) => {
       tipHide(true);
       closePopup();
@@ -2921,7 +2967,6 @@
     });
     map.on("zoom", onZoom);
     map.on("moveend", onMoveEnd);
-    map.on("zoomend", () => { if (Math.abs(map.getZoom() - lastZ) > 0.005 || labelStep !== curStep) rebuild(); renderLive(); });
     document.addEventListener("keydown", (e) => {
       if (e.key !== "Escape" || e.target.closest("input")) return;
       if (popup) closePopup();
@@ -2939,25 +2984,25 @@
   let hSlot = 0;
   const hAnim = HOVER_SLOTS.map(() => ({ v: 0, from: 0, to: 0, t0: 0, dur: 1, raf: 0 }));
   function hoverPaint(i) {
-    const sl = HOVER_SLOTS[i], v = hAnim[i].v, k = 1.2 + 0.45 * v;
+    if (ribbons) { map.triggerRepaint(); return; }
+    const sl = HOVER_SLOTS[i], v = hAnim[i].v;
     if (!map.getLayer(`${sl}-line`)) return;
     map.setPaintProperty(`${sl}-case`, "line-opacity", v);
     map.setPaintProperty(`${sl}-line`, "line-opacity", Math.min(1, v * 1.4));
-    map.setPaintProperty(`${sl}-case`, "line-width", px("cm", k * 0.97));
-    map.setPaintProperty(`${sl}-line`, "line-width", px("wm", k));
     map.setPaintProperty(`${sl}-arrows`, "icon-opacity", v);
   }
   function hoverFade(i, to, dur) {
     const A = hAnim[i];
     cancelAnimationFrame(A.raf);
     if (calm()) dur = 1;
+    if (ribbons) map.setPaintProperty(`${HOVER_SLOTS[i]}-arrows`, "icon-opacity", to);
     Object.assign(A, { from: A.v, to, t0: performance.now(), dur });
     const frame = (now) => {
       const t = Math.max(0, Math.min(1, (now - A.t0) / A.dur));
       A.v = A.from + (A.to - A.from) * (1 - Math.pow(1 - t, 3));
       hoverPaint(i);
       if (t < 1) A.raf = requestAnimationFrame(frame);
-      else if (A.to === 0 && map.getSource(HOVER_SLOTS[i])) map.getSource(HOVER_SLOTS[i]).setData(fc([]));
+      else if (A.to === 0 && map.getSource(HOVER_SLOTS[i])) { map.getSource(HOVER_SLOTS[i]).setData(fc([])); ribbons?.update(HOVER_SLOTS[i], []); }
     };
     A.raf = requestAnimationFrame(frame);
   }
@@ -2981,13 +3026,15 @@
     if (key === hoverKey && !again) return;
     hoverKey = key;
     hoverRoutes = routes;
-    requestRoutePaths(routes.map((r) => LINEIDX[r.id]), false, (feats) => {
+    requestRoutePaths(routes.map((r) => LINEIDX[r.id]), false, (feats, mesh) => {
       if (hoverKey !== key) return;
       const lines = withColor(feats);
-      if (again) map.getSource(HOVER_SLOTS[hSlot]).setData(fc(lines)); // the same route, relaid for a new view
+      const drawing = mesh || (ribbons ? KCTMRibbons.compile(lines, { hover: true, widthScale: 1.65 }) : null);
+      if (again) { map.getSource(HOVER_SLOTS[hSlot]).setData(fc(lines)); if (ribbons) ribbons.update(HOVER_SLOTS[hSlot], drawing); }
       else {
         const next = 1 - hSlot;
         map.getSource(HOVER_SLOTS[next]).setData(fc(lines));
+        if (ribbons) ribbons.update(HOVER_SLOTS[next], drawing);
         hoverFade(hSlot, 0, 170);
         hoverFade(next, 1, 240);
         hSlot = next;
@@ -3223,10 +3270,11 @@
     window.__atlas = {
       rebuild, timeRebuild: () => { const t = performance.now(); rebuild(); return performance.now() - t; },
       inWorker: () => !!worker, lastBuildMs: () => lastBuildMs, engineInit, lastParams: () => lastParams, lastFeats: () => lastFeats, liveState: () => liveState(), alerts: () => alerts, wsfState: () => wsfState(),
+      drawStats: () => ({ ...drawStats, renderer: ribbons ? "mesh" : "native", pending: !!(inFlight || queued || needsRebuild), ...(ribbons?.stats() || {}) }), routesAt, lineId: (i) => LINES[i]?.id,
       vehicleLines, vehicleOccupancy, occCode,
       obaStop, readDeparture, liveDepartures, depRowsHTML, depCache: () => depCache, stopCard, ensureDepartures,
       onLine, routeById: (id) => RBY[id],
-      idle: () => new Promise((res) => { if (!inFlight && !queued) res(); else idleWaiters.push(res); }),
+      idle: () => new Promise((res) => { if (!inFlight && !queued && !needsRebuild) res(); else idleWaiters.push(res); }),
     };
     map.touchZoomRotate.disableRotation();
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
@@ -3238,6 +3286,16 @@
       else if (e.id.startsWith("arr:")) drawArrow(e.id);
     });
     map.on("load", () => {
+      // Native line layers remain as a fallback for a GPU/driver that rejects the shader.
+      // The mesh needs no tile rebuilds for camera motion and uses a handful of draw calls.
+      if (typeof KCTMRibbons !== "undefined" && !/[?&]noribbons\b/.test(location.search)) {
+        const layer = KCTMRibbons.createLayer(() => ({ ...BASE[theme], dim: netDim, selected: !!(selected && selected.type === "route"), hover: hAnim.map((a) => a.v) }));
+        try {
+          map.addLayer(layer, transitLayers(BASE[theme])[0].id); ribbons = layer;
+          for (const L of transitLayers(BASE[theme])) if (L.type === "line") map.setLayoutProperty(L.id, "visibility", "none");
+        } catch (err) { if (map.getLayer(layer.id)) map.removeLayer(layer.id); }
+      }
+      map.on("webglcontextrestored", () => { ribbons?.restore(); rebuild(); });
       refreshStations();
       map.getSource("stops").setData(stopsGeoJSON());
       applyLayerToggles();

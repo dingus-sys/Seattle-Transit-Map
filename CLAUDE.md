@@ -110,12 +110,18 @@ one file for the artifact):
 - `app.js` has the MapLibre layers (street stack, then the rail stack on top, each with shadow,
   casing and line; strand dividers; places; stops; vehicles), hover and click, tags, the panel, live
   vehicles, alerts and the settings.
-- Widths are in "line units" and converted to pixels per feature using its `zu` (the zoom its
-  layout was made for), so lines stay together while zooming. Layout is re-run continuously as
-  you pinch (`z`, steps of 0.02); simplified shapes and tag spacing use the quarter step `zs`.
+- `ribbons.js` compiles the finished paths and their widths into a world-space GPU mesh in the
+  worker. It is drawn as a custom MapLibre layer, with separate casing, color and pattern passes.
+  Width and lane spacing use the same camera transform, so overzoomed parent tiles cannot pull
+  strands apart. During a gesture the current mesh follows the camera; layout/source replacement
+  waits for moveend and keeps only the latest request. Simplified shapes and tag spacing use the
+  quarter step `zs`. Native line layers are a fallback (`?noribbons`); `?noworker` tests main-page
+  layout. The mesh uses its own VAO, transfers typed buffers, and releases superseded GPU buffers.
 - Hover: `pickLine` finds the route strand under the pointer (sticky: the current target is held
   until the pointer is clearly off it); the route's whole path is drawn bold in one of two
-  cross-fading hover layers; the tooltip glides, morphs between cards and fades.
+  cross-fading hover layers; the tooltip glides, morphs between cards and fades. Hover opacity
+  changes do not rebuild width expressions, and queued hover work keeps only the newest target.
+  Route hit tests use a spatial index of the displayed geometry, not tiled line-width queries.
 
 **Live data:** vehicle positions and service alerts from OneBusAway Puget Sound (GTFS-realtime,
 decoded by hand in `app.js`; agencies in `OBA_AGENCIES`), Intercity Transit's own feeds, and

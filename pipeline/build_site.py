@@ -1,7 +1,7 @@
 """Assemble the web page from web/ into site/.
 
   site/index.html     the website (GitHub Pages): a small page that links app.js, app.css,
-                      geom.js and logos/ as separate files, so browsers cache each one and a
+                      geom.js, ribbons.js and logos/ as separate files, so browsers cache each one and a
                       code change only re-downloads what changed. Loads OpenFreeMap tiles
                       live and falls back to the bundled tiles.
   site/artifact.html  one self-contained file for the claude.ai artifact preview (bundled
@@ -87,7 +87,7 @@ def live_js(with_key):
                                                  "wsdot": {"alerts": WSDOT_ALERTS, "code": wsdot}}).replace("<", "\\u003c") + ";"
 
 
-def build_artifact(page, css, js, geom, logos):
+def build_artifact(page, css, js, geom, ribbons, logos):
     """One self-contained file: styles, scripts and logos inline (data: URIs)."""
     inline = {name: f"data:{LOGO_TYPES[os.path.splitext(f)[1]]};base64," + base64.b64encode(data).decode()
               for name, f, data in logos}
@@ -95,15 +95,17 @@ def build_artifact(page, css, js, geom, logos):
     body = sub(body, "/*APP_CSS*/", css)
     body = sub(body, "/*LOGOS*/", logos_js(inline))
     body = sub(body, "/*GEOM_JS*/", geom)
+    body = sub(body, "/*RIBBONS_JS*/", ribbons)
     body = sub(body, "/*APP_JS*/", js)
     # The claude.ai preview can't reach outside servers, so only the website gets live data.
     return sub(sub(body, "/*MODE*/", "bundled"), "/*LIVE*/", "")
 
 
-def build_website(page, css, js, geom, logos, with_key):
+def build_website(page, css, js, geom, ribbons, logos, with_key):
     """index.html plus app.css, app.js, geom.js and logos/ beside it."""
-    for name, text in (("app.css", css), ("app.js", js), ("geom.js", geom)):
-        open(os.path.join(SITE, name), "w").write(text)
+    for name, text in (("app.css", css), ("app.js", js), ("geom.js", geom), ("ribbons.js", ribbons)):
+        with open(os.path.join(SITE, name), "w") as output:
+            output.write(text)
     logo_dir = os.path.join(SITE, "logos")
     shutil.rmtree(logo_dir, ignore_errors=True)
     os.makedirs(logo_dir)
@@ -118,6 +120,7 @@ def build_website(page, css, js, geom, logos, with_key):
     body = sub(body, "<script>/*LOGOS*/</script>", f"<script>{logos_js(urls)}</script>")
     # the geometry engine runs on the page and, from the same file, as a background worker
     body = sub(body, '<script id="geom-src">/*GEOM_JS*/</script>', f'<script id="geom-src" src="geom.js?v={version(geom)}"></script>')
+    body = sub(body, '<script id="ribbons-src">/*RIBBONS_JS*/</script>', f'<script id="ribbons-src" src="ribbons.js?v={version(ribbons)}"></script>')
     body = sub(body, "<script>/*APP_JS*/</script>", f'<script src="app.js?v={version(js)}"></script>')
     body = sub(sub(body, "/*MODE*/", "auto"), "/*LIVE*/", live_js(with_key))
     body = sub(body, '\n<div id="map"', '\n</head>\n<body>\n<div id="map"')
@@ -129,11 +132,11 @@ def build_website(page, css, js, geom, logos, with_key):
 def main():
     web = os.path.join(ROOT, "web")
     read = lambda f: open(os.path.join(web, f)).read()  # noqa: E731
-    page, css, js, geom = read("page.html"), read("app.css"), read("app.js"), read("geom.js")
+    page, css, js, geom, ribbons = read("page.html"), read("app.css"), read("app.js"), read("geom.js"), read("ribbons.js")
     logos = logo_files(web)
 
-    artifact = build_artifact(page, css, js, geom, logos)
-    full = build_website(page, css, js, geom, logos, "--with-key" in sys.argv)
+    artifact = build_artifact(page, css, js, geom, ribbons, logos)
+    full = build_website(page, css, js, geom, ribbons, logos, "--with-key" in sys.argv)
     open(os.path.join(SITE, "artifact.html"), "w").write(artifact)
     open(os.path.join(SITE, "index.html"), "w").write(full)
     print(f"site/index.html {len(full)/1e3:.0f} KB (+ app.js {len(js)/1e3:.0f} KB, app.css {len(css)/1e3:.0f} KB, "

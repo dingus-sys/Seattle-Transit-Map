@@ -26,7 +26,10 @@ jobs:
           python3 -m unittest discover -s tools -p 'test_*.py'
           node --check web/app.js
           node --check web/geom.js
+          node --check web/ribbons.js
       - name: Check route geometry across zoom levels
-        run: node tools/geometry_check.js
+        run: |
+          node tools/geometry_check.js
+          node tools/ribbon_check.js
       - name: Build the keyless website
         run: python3 pipeline/build_site.py

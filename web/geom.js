@@ -333,7 +333,10 @@ const KCTMGeom = (() => {
         const fwd = (Q[j][0] - a[0]) * (P[j][0] - P[j - 1][0]) + (Q[j][1] - a[1]) * (P[j][1] - P[j - 1][1]);
         if (fwd > 0 || j === end) piece.push(Q[j]);
       }
-      emit(s, water ? piece : clipSmallLoops(piece, Math.max(12, Math.min(160, 4 * seg[s].hw))));
+      const clean = water ? piece : clipSmallLoops(piece, Math.max(12, Math.min(160, 4 * seg[s].hw)));
+      // Offset easing adds many points along straight stretches. Retain subpixel accuracy
+      // without sending every sample to the renderer and map's tile workers.
+      emit(s, simplify(clean, 0.1 * S));
       start = end;
     });
   }
@@ -695,7 +698,7 @@ const KCTMGeom = (() => {
           }
         }
       }
-      last = { lay, S, z, W, easeAt, zu };
+      last = { lay, S, z, W, easeAt, zu, colors: p.colors, view: p.view };
 
       // 4. route-number tags. Connected blocks carrying the same routes form one stretch; a
       //    stretch gets one tag (on its longest block), plus repeats along long blocks, and the
@@ -782,7 +785,7 @@ const KCTMGeom = (() => {
     // hover previews).
     function routePaths(idxs) {
       if (!last) return [];
-      const { lay, S, W, easeAt, zu } = last, out = [];
+      const { lay, S, W, easeAt, zu, colors } = last, out = [];
       for (const idx of idxs) {
         if (!LINES[idx]) continue;
         const v = VKEY(LINES[idx].cat), c = CAT[v];
@@ -793,7 +796,7 @@ const KCTMGeom = (() => {
             drawPath((Lo) => [Lo.sp.get(idx), Lo.sw.get(idx) / 2], run, lay, S, (k, coords) => {
               if (coords.length < 2) return;
               const Lo = lay[run[k].E.k], w = wide ? Math.min(Lo.wk.get(v), W(v)) * Lo.s : Lo.sw.get(idx);
-              out.push({ type: "Feature", properties: { r: idx, cat: v, e: run[k].E.k, zu, d: c.dash ? 1 : 0,
+              out.push({ type: "Feature", properties: { r: idx, cat: v, e: run[k].E.k, zu, c: colors[v] || colors.local, d: c.dash ? 1 : 0,
                 ar: c.group === "water" ? 0 : arrow(run[k].E.dirOf(idx), run[k].fwd), wm: w + 0.14, cm: w + 0.55 },
               geometry: { type: "LineString", coordinates: coords.map(toLL) } });
             }, c.group === "water", false, easeAt);
@@ -811,18 +814,25 @@ const KCTMGeom = (() => {
 
 // In a worker: answer the page's messages ("init" once, then "build" per view).
 if (typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScope) {
-  let engine = null;
+  let engine = null, buildId = 0;
   self.onmessage = (e) => {
     const m = e.data;
     if (m.type === "init") {
+      if (m.ribbonsURL) importScripts(m.ribbonsURL);
       engine = KCTMGeom.createEngine(m.init);
       self.postMessage({ type: "ready" });
     } else if (m.type === "route" && engine) {
-      self.postMessage({ type: "route", id: m.id, feats: engine.routePaths(m.idxs) });
+      const feats = engine.routePaths(m.idxs);
+      const mesh = typeof KCTMRibbons !== "undefined" ? KCTMRibbons.compile(feats, { hover: true, widthScale: 1.65 }) : null;
+      self.postMessage({ type: "route", id: m.id, buildId, feats, mesh }, mesh ? mesh.map((b) => b.data.buffer) : []);
     } else if (m.type === "build" && engine) {
       const t = Date.now();
       const out = engine.build(m.p);
-      self.postMessage({ type: "built", id: m.id, ms: Date.now() - t, ...out });
+      buildId = m.id; const gap = m.p.strandGap || 0;
+      const mesh = typeof KCTMRibbons !== "undefined" ? KCTMRibbons.compile(out.feats, { gap }) : null;
+      const selMesh = typeof KCTMRibbons !== "undefined" ? KCTMRibbons.compile(out.selFeats, { selected: true }) : null;
+      const transfer = [...(mesh || []), ...(selMesh || [])].map((b) => b.data.buffer);
+      self.postMessage({ type: "built", id: m.id, ms: Date.now() - t, ...out, mesh, selMesh }, transfer);
     }
   };
 }
