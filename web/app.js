@@ -2880,6 +2880,16 @@
     const ev = (e, dy = 0) => ({ clientX: e.originalEvent.clientX, clientY: e.originalEvent.clientY + dy });
     map.on("mousemove", (e) => {
       if (map.isMoving()) return;
+      const vh = pickVehicle(e.point);
+      if (vh) {
+        const r = RBY[vh.properties.r];
+        cur = { kind: "veh", id: vh.properties.id };
+        showLens(null);
+        map.getCanvas().style.cursor = "pointer";
+        highlightStop(null);
+        tipShow("veh:" + vh.properties.id, `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b>${vesselLine(vh.properties.id)}<span class="vs-row">${vehicleLines(vh.properties.id, vh.properties.est)}</span></span>`, "", ev(e));
+        return;
+      }
       // a number on a route tag
       const tg = tagAt(e.point);
       showLens(tg);
@@ -2896,15 +2906,6 @@
           setHover(null);
           tipShow("more:" + tg.item.more.join("."), `<span class="tip-badges">${tg.item.more.slice(0, 12).map((i) => badgeHTML(LINES[i])).join("")}</span>`, "", ev(e, 14));
         }
-        return;
-      }
-      const vh = pickVehicle(e.point);
-      if (vh) {
-        const r = RBY[vh.properties.r];
-        cur = { kind: "veh", id: vh.properties.id };
-        map.getCanvas().style.cursor = "pointer";
-        highlightStop(null);
-        tipShow("veh:" + vh.properties.id, `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b>${vesselLine(vh.properties.id)}<span class="vs-row">${vehicleLines(vh.properties.id, vh.properties.est)}</span></span>`, "", ev(e));
         return;
       }
       const st = pickStop(e.point);
@@ -2949,20 +2950,15 @@
     map.on("movestart", () => { cur = null; queuedRoute = null; showLens(null); tipHide(true); focusOff(); highlightStop(null); });
     map.on("click", (e) => {
       tipHide(true);
-      closePopup();
-      // a number on a route tag opens that route; "+3" lists the rest
-      const tg = tagAt(e.point);
-      if (tg) {
-        showLens(null);
-        if (tg.item.r != null) selectRoute(LINES[tg.item.r].id, { fit: false });
-        else showCorridor(tg.item.more.map((i) => LINES[i]).sort(tagOrder));
-        return;
-      }
+      closePopup(); showLens(null);
       // a tap right on a station's circle opens the station, even with a train or bus on top of it
       const onStation = map.getLayer("stations") && map.getLayoutProperty("stations", "visibility") !== "none"
         ? map.queryRenderedFeatures([[e.point.x - 4, e.point.y - 4], [e.point.x + 4, e.point.y + 4]], { layers: ["stations"] }) : [];
       if (onStation.length) { selectStop(onStation[0].properties.id, { fly: false }); return; }
-      const vh = vehAt(e.point, isNarrow() ? 12 : 8);
+      // A nearby badge must not steal a tap meant for the shared route band.
+      const vehicle = nearest(vehAt(e.point, isNarrow() ? 12 : 8), e.point);
+      const vehicleRadius = isNarrow() ? (selected?.type === "route" ? 22 : 14) : 10;
+      const vh = vehicle && vehicle.d <= vehicleRadius ? [vehicle.f] : [];
       if (vh.length) {
         const v = live.vehicles.get(vh[0].properties.id), r = RBY[vh[0].properties.r];
         if (vh[0].properties.est && r) {
@@ -2975,6 +2971,14 @@
           fillVehicleTrip(v.id, v.head);
           return;
         }
+      }
+      // a number on a route tag opens that route; "+3" lists the rest
+      const tg = tagAt(e.point);
+      if (tg) {
+        showLens(null);
+        if (tg.item.r != null) selectRoute(LINES[tg.item.r].id, { fit: false });
+        else showCorridor(tg.item.more.map((i) => LINES[i]).sort(tagOrder));
+        return;
       }
       const hit = map.queryRenderedFeatures([[e.point.x - 7, e.point.y - 7], [e.point.x + 7, e.point.y + 7]], { layers: hitLayers() });
       if (hit.length) {

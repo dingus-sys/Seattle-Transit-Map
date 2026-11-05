@@ -34,6 +34,9 @@ Tapping opens a side-panel chooser with all visible routes, a number/destination
 large buttons, and no 16-route cutoff. Back from a chosen route returns to the list. Local
 and peak buses have stronger base widths and contrast, and selected paths are bolder.
 Overview land vehicles stay 38 pixels apart; selected routes retain all their vehicles.
+Vehicle taps use the badge's actual center distance rather than its expanded query box.
+The visible badge also takes priority over a route-number tag underneath it; nearby band
+taps remain available for the route chooser.
 
 Native line layers remain as a startup fallback (`?noribbons`); `?noworker` keeps the mesh but
 runs layout on the page. The offline, single-file preview includes the same renderer.
@@ -53,9 +56,10 @@ No transit data or API credentials changed.
   layouts for the tested zoom and replaced the route source four times while moving; the
   new code requested one final layout and made no replacements while moving.
 - Hovering a downtown strand displayed its route and highlight with zero network rebuilds.
-- Corridor chooser: 11/11 on desktop and 11/11 at phone width. A 27-route corridor listed
+- Corridor chooser: 14/14 on desktop and 14/14 at phone width. A 27-route corridor listed
   every route, filtered and selected a route beyond the old cutoff, preserved the chooser
   through a theme refresh, and returned to the complete list. Rows are at least 48 px tall.
+  An isolated badge fixture also checks direct badge taps and adjacent band taps separately.
 - WSF/WSDOT fixture: 12/12, including fresh/stale positions, terminal notes, cancellations,
   car-space counts, and road-alert failure handling.
 - Bellevue and university-area bands were inspected alongside downtown. In a matched
