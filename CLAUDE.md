@@ -24,12 +24,13 @@ service is a corridor, lines follow the real streets, and the look is Apple "liq
 1. **Never commit an API key.** The OneBusAway key and the WSDOT ferry access code live in the
    GitHub secrets/variables `OBA_API_KEY` and `WSF_ACCESS_CODE`, in the environment variables of
    the same names, or in `pipeline/local_secrets.json` (git-ignored:
-   `{"oba_api_key": "...", "wsf_access_code": "..."}`). `site/index.html` in the repo must contain
-   only the placeholders `__OBA_API_KEY__` and `__WSF_ACCESS_CODE__`; the Pages workflow fills them in.
-   - Test live data with `python3 pipeline/build_site.py --with-key`, then **rebuild without
-     `--with-key` before committing**.
-   - Before every commit: `grep -o "__OBA_API_KEY__\|__WSF_ACCESS_CODE__" site/index.html` shows both,
-     and `git grep --cached -F "<the key>"` finds nothing. Don't paste keys into chat or print them.
+   `{"oba_api_key": "...", "wsf_access_code": "..."}`). The page (`site/index.html`, `app.js`,
+   `app.css`, `geom.js`) is not in the repo: the Pages workflow builds it with `build_site.py`, which
+   writes the placeholders `__OBA_API_KEY__` and `__WSF_ACCESS_CODE__`, and then fills them in.
+   - Test live data with `python3 pipeline/build_site.py --with-key`, then rebuild without
+     `--with-key` when you're done.
+   - Before every commit: `git grep --cached -F "<the key>"` finds nothing. Don't paste keys into
+     chat or print them.
 2. **Don't hand-edit `site/data/*.json`.** The weekly workflow (`refresh-data.yml`, Mondays) rebuilds
    them from scratch and overwrites the repo. Fix problems in `pipeline/` or `web/`.
 3. **Don't use official agency logos** (RapidRide, Link, DART and the rest are trademarks, and it
@@ -44,7 +45,7 @@ service is a corridor, lines follow the real streets, and the look is Apple "liq
 
 ```bash
 pip install -r requirements.txt
-python3 pipeline/build_site.py                 # after editing web/*: rebuilds site/index.html (fast)
+python3 pipeline/build_site.py                 # after editing web/*: rebuilds the page in site/ (fast)
 python3 pipeline/build_all.py --no-tiles       # rebuilds all data (slow: downloads GTFS and tiles into <repo>/.cache,
                                                #   or $TRANSIT_CACHE; delete .cache/gtfs to force a fresh download)
 python3 -m http.server -d site 8765 &          # serve it (a background server dies after its time limit)
@@ -94,9 +95,11 @@ then `build_site`.
   dead-end route stubs. Thresholds are constants at the top of the file.
 - `config.py`: `REGION` (map area), `FEEDS`, live settings. Rebuilding for a new region is one edit.
 
-**Browser** (`web/`, inlined into one page by `build_site.py`):
-- `geom.js` is the line engine. It runs in a Web Worker built from the inline `<script id="geom-src">`
-  (`?noworker` forces it onto the page). It turns the network into what one view draws: each route is a
+**Browser** (`web/`; `build_site.py` copies it into `site/` as `index.html` beside `app.js`, `app.css`
+and `geom.js`, each linked with a content hash `?v=` so browsers cache them, and inlines it all into
+one file for the artifact):
+- `geom.js` is the line engine. It runs in a Web Worker started from `geom.js` (`<script id="geom-src">`;
+  in the one-file artifact, from that script's inline text). `?noworker` forces it onto the page. It turns the network into what one view draws: each route is a
   continuous strand; a street's line gets wider with the number of routes on it (about 1x, 2x, then
   slowly more); strands touch; where a route turns off its strand peels away; lanes are kept through
   junctions by sliding whole bundles sideways; strands are ordered to minimize swaps. The 1 and 2 Lines
@@ -120,8 +123,8 @@ realtime feed and the REST status), and a stop card first shows the timetable, t
 agency's predicted departures (OneBusAway `arrivals-and-departures-for-stop`, one stop at a time, cached
 30 s, with its own rate-limit pause); stop ids map to OneBusAway's by feed (`stopAgency` in `ATLAS_LIVE`). The WSF API (ferry bulletins, "at the dock / arrives about") needs the
 WSDOT access code and is called with JSONP. Places (parks, schools, museums, zoo...) come from
-the live map tiles only: the bundled tiles leave out the `poi` layer to stay small. Highway
-shields work from the bundled tiles too.
+the map tiles; the bundled tiles keep only named places of the kinds in `POI_KEEP`
+(`build_basemap.py`). Highway shields work from the bundled tiles too.
 
 ## Gotchas
 
@@ -163,8 +166,6 @@ shields work from the bundled tiles too.
 3. The user asked for official agency logos; this was declined (rule 3). Original service-type
    symbols (light rail, rapid bus, bus, ferry, on-demand) for route cards and the Layers list were
    offered and not yet answered.
-4. Places only show on the website. Bundling the `poi` layer would add them to the claude.ai preview
-   at a size cost.
 
 ## Working with this user
 
