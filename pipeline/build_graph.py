@@ -103,12 +103,19 @@ def freeway_lines():
                     (tunnels if feat["properties"].get("brunnel") == "tunnel" else out).append(line)
         # Short freeway tunnels (I-90 under Mount Baker, the lids) count; long ones (SR 99 under
         # downtown) don't, so buses on the streets above aren't pulled onto them.
-        from shapely.ops import linemerge
-        merged = linemerge([LineString(t) for t in tunnels]) if tunnels else None
-        for t in getattr(merged, "geoms", [merged] if merged is not None else []):
-            xs, ys = fwd.transform(*zip(*t.coords))
-            if LineString(list(zip(xs, ys))).length < 1600:
-                out.append([list(c) for c in t.coords])
+        # A tunnel comes in pieces (split at tile edges, one per carriageway) that don't always
+        # join end to end, so pieces within 40 m of each other count as one tunnel, measured
+        # by its overall span: SR 99 is two ~1.1 km pieces under Belltown, but 3 km in all.
+        from shapely.ops import linemerge, unary_union
+        parts = [LineString(list(zip(*fwd.transform(*zip(*t))))) for t in tunnels]
+        blobs = unary_union([p.buffer(20) for p in parts]) if parts else None
+        for blob in getattr(blobs, "geoms", [blobs] if blobs is not None else []):
+            hull = list(blob.convex_hull.exterior.coords)
+            span = max(math.dist(p, q) for p in hull for q in hull)
+            if span >= 1600:
+                continue
+            merged = linemerge([LineString(t) for t, p in zip(tunnels, parts) if blob.intersects(p)])
+            out += [[list(c) for c in m.coords] for m in getattr(merged, "geoms", [merged])]
         if out:
             json.dump({"source": f"OpenFreeMap {v}, z{z}", "lines": out}, open(FREEWAYS, "w"), separators=(",", ":"))
             return out

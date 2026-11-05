@@ -463,16 +463,18 @@
     const dark = theme === "dark", col = dark ? POI_COLOR_D : POI_COLOR;
     const kind = ["match", ["get", "subclass"], ...Object.entries(POI_KIND).flat(), ["match", ["get", "class"], ...Object.entries(POI_KIND).flat(), ""]];
     const color = ["match", kind, ...Object.entries(col).flat(), P.label];
-    const rank = ["coalesce", ["get", "rank"], 30];
+    // How soon each kind of place shows as you zoom in: landmarks first, then parks and colleges, then
+    // schools, libraries and civic buildings. (A POI's own "rank" is only its order within a tile, so
+    // it can't say which are important; every tier is its own layer so a zoom needs no expression.)
+    const TIERS = [[13, ["zoo", "museum", "stadium", "hospital", "ferry"]], [14, ["park"]], [15, ["school", "library", "civic", "sight"]]];
+    const layer = (z, kinds, i) => ({ id: "poi" + z, type: "symbol", source: "base", "source-layer": "poi", minzoom: z,
+      filter: ["all", ["has", "name"], ["in", kind, ["literal", kinds]]],
+      layout: { "icon-image": ["concat", "poi:", kind, ":", dark ? "d" : "l"], "icon-size": ["interpolate", ["linear"], ["zoom"], 13, 0.85, 17, 1],
+        "text-field": ["get", "name"], "text-font": F_REG, "text-size": ["interpolate", ["linear"], ["zoom"], 13, 10.5, 17, 12],
+        "text-anchor": "left", "text-offset": [0.95, 0], "text-max-width": 8, "text-padding": 4, "icon-padding": 3, "text-optional": true },
+      paint: { "text-color": color, "text-halo-color": P.halo, "text-halo-width": 1.5, "text-opacity": 0.92 } });
     return [
-      { id: "poi", type: "symbol", source: "base", "source-layer": "poi", minzoom: 13,
-        // the busier it is around, the fewer: notable places from 13, the rest as you zoom in
-        filter: ["all", ["!=", kind, ""], ["has", "name"],
-          ["any", [">=", ["zoom"], 16], ["all", [">=", ["zoom"], 15], ["<=", rank, 14]], ["all", [">=", ["zoom"], 14], ["<=", rank, 6]], ["<=", rank, 3]]],
-        layout: { "icon-image": ["concat", "poi:", kind, ":", dark ? "d" : "l"], "icon-size": ["interpolate", ["linear"], ["zoom"], 13, 0.85, 17, 1],
-          "text-field": ["get", "name"], "text-font": F_REG, "text-size": ["interpolate", ["linear"], ["zoom"], 13, 10.5, 17, 12],
-          "text-anchor": "left", "text-offset": [0.95, 0], "text-max-width": 8, "symbol-sort-key": rank, "text-padding": 4, "icon-padding": 3 },
-        paint: { "text-color": color, "text-halo-color": P.halo, "text-halo-width": 1.5, "text-opacity": 0.92 } },
+      ...TIERS.map(([z, kinds], i) => layer(z, kinds, i)).reverse(), // the most notable are placed first
       // highway numbers: Interstate, US and state routes, sparsely
       { id: "shields", type: "symbol", source: "base", "source-layer": "transportation_name", minzoom: 9,
         filter: ["all", ["in", ["get", "network"], ["literal", ["us-interstate", "us-highway", "us-state"]]], ["has", "ref"],
@@ -542,13 +544,14 @@
   }
   function liveLayers(P) {
     return [
-      // which way it's heading: a small pointer that turns with the vehicle...
-      { id: "veh-dir", type: "symbol", source: "vehicles", filter: [">=", ["get", "b"], 0],
-        layout: { "icon-image": ["concat", "vdir:", ["get", "c"]], "icon-rotate": ["get", "b"], "icon-rotation-alignment": "map",
-          "icon-allow-overlap": true, "icon-ignore-placement": true, "icon-size": VEH_SIZE, "symbol-sort-key": ["get", "s"] } },
-      // ...under an upright badge that says what it is: a bus, a train, a streetcar or a boat
+      // an upright badge that says what it is: a bus, a train, a streetcar or a boat...
       { id: "veh-icon", type: "symbol", source: "vehicles",
         layout: { "icon-image": ["concat", "veh:", ["get", "c"], ":", ["get", "m"]], "icon-rotation-alignment": "viewport",
+          "icon-allow-overlap": true, "icon-ignore-placement": true, "icon-size": VEH_SIZE, "symbol-sort-key": ["get", "s"] },
+        paint: { "icon-opacity": ["case", ["==", ["get", "est"], 1], 0.82, 1] } },
+      // ...and which way it's heading: the badge's point, turning with the vehicle
+      { id: "veh-dir", type: "symbol", source: "vehicles", filter: [">=", ["get", "b"], 0],
+        layout: { "icon-image": ["concat", "vdir:", ["get", "c"]], "icon-rotate": ["get", "b"], "icon-rotation-alignment": "map",
           "icon-allow-overlap": true, "icon-ignore-placement": true, "icon-size": VEH_SIZE, "symbol-sort-key": ["get", "s"] },
         paint: { "icon-opacity": ["case", ["==", ["get", "est"], 1], 0.82, 1] } },
       { id: "veh-label", type: "symbol", source: "vehicles", minzoom: 14.5,
@@ -630,7 +633,7 @@
 
   // ---------------------------------------------------------------- line geometry (background worker)
   // Laying out a view (lanes, bundle shifts, rounded paths, tags) takes 100-250 ms on a phone,
-  // so it runs in a worker made from the geometry script on this page; the page only hands the
+  // so it runs in a worker started from the geometry script (geom.js); the page only hands the
   // finished lines to the map. Where workers aren't allowed the same engine runs here instead.
   let lastParams = null;
   let worker = null, engine = null, inFlight = null, queued = null, buildSeq = 0, appliedSeq = 0, lastBuildMs = 0, watchdog = 0;
@@ -647,8 +650,10 @@
   function startEngine() {
     if (/[?&]noworker\b/.test(location.search)) { runHere(); return; } // for testing the fallback
     try {
-      const src = document.getElementById("geom-src").textContent;
-      worker = new Worker(URL.createObjectURL(new Blob([src], { type: "text/javascript" })));
+      // the website loads geom.js as a file, which the worker reuses from the browser's cache;
+      // the one-file preview has it inline, so the worker starts from that text instead
+      const el = document.getElementById("geom-src");
+      worker = new Worker(el.src || URL.createObjectURL(new Blob([el.textContent], { type: "text/javascript" })));
       worker.onmessage = (e) => {
         const m = e.data;
         if (m.type === "route") { const cb = routeCbs.get(m.id); routeCbs.delete(m.id); if (cb) cb(m.feats); return; }
@@ -1498,6 +1503,37 @@
     const age = Math.max(0, Math.round(Date.now() / 1000 - ts));
     return `Updated ${age < 60 ? age + " s" : Math.round(age / 60) + " min"} ago · ${CLOCK.format(new Date(ts * 1000))}`;
   }
+  // Where a live vehicle is going and what stop it's heading for next, asked of OneBusAway for
+  // that one vehicle when its popup opens
+  const tripCache = new Map();
+  async function vehicleTrip(id) {
+    const hit = tripCache.get(id);
+    if (hit && Date.now() - hit.at < 20000) return hit.v;
+    if (!LIVE || !LIVE.status) return null;
+    const url = `${LIVE.status.replace("vehicles-for-agency", "trip-for-vehicle")}/${encodeURIComponent(id)}.json?key=${encodeURIComponent(LIVE.key)}&includeStatus=true&includeTrip=true&includeSchedule=false`;
+    try {
+      const r = await fetch(url, { cache: "no-store" });
+      if (!r.ok) return null;
+      const d = await r.json(), e = d.data && d.data.entry, ref = (d.data && d.data.references) || {};
+      if (!e) return null;
+      const trip = (ref.trips || []).find((t) => t.id === e.tripId), st = e.status || {};
+      const stop = (ref.stops || []).find((x) => x.id === st.nextStop);
+      const v = { head: trip && trip.tripHeadsign || "", next: stop ? stop.name : "", eta: st.nextStopTimeOffset };
+      tripCache.set(id, { at: Date.now(), v });
+      return v;
+    } catch (e) { return null; }
+  }
+  function vehicleTripHTML(v, head, next) {
+    const h = head || (v && v.head), n = next || (v && v.next);
+    const eta = v && v.eta > 0 && next === undefined ? ` · ${Math.max(1, Math.round(v.eta / 60))} min` : "";
+    return `${h ? `<p class="vtrip"><b>To ${esc(tidyHeadsign(h))}</b></p>` : ""}${n ? `<p class="vtrip">Next stop: ${esc(n)}${eta}</p>` : ""}`;
+  }
+  function fillVehicleTrip(vid, fallbackHead) {
+    vehicleTrip(vid).then((t) => {
+      const el = popup && popup.getElement() && popup.getElement().querySelector(".vtrip-slot");
+      if (el) el.innerHTML = vehicleTripHTML(t, (t && t.head) || fallbackHead);
+    });
+  }
   function vehicleLines(id, est) {
     if (est) return `<span class="vs-note">Estimated from the timetable</span>`;
     const v = live.vehicles.get(id), st = vehicleStatus(v);
@@ -1547,7 +1583,7 @@
   }
   // A vehicle: a round badge in its line's color with a white symbol (bus, train, streetcar,
   // boat), and a separate pointer showing which way it's going.
-  const VEH_PX = 36, VEH_R = 10;
+  const VEH_PX = 60, VEH_R = 10;
   function vehGlyph(ctx, mode, color) {
     const fillW = () => { ctx.fillStyle = "#fff"; ctx.fill(); };
     const fillC = () => { ctx.fillStyle = color; ctx.fill(); };
@@ -1585,14 +1621,30 @@
     cv.width = cv.height = S;
     const ctx = cv.getContext("2d"), c = S / 2, R = VEH_R * dpr;
     if (kind === "vdir") {
-      // a pointer just outside the badge's ring, at the top (the layer turns it to the heading)
-      const tip = c - R - 6.5 * dpr, base = c - R + 1.5 * dpr, hw = 5.2 * dpr;
-      ctx.shadowColor = "rgba(0,0,0,.25)"; ctx.shadowBlur = 2.5 * dpr; ctx.shadowOffsetY = 0.8 * dpr;
-      ctx.beginPath(); ctx.moveTo(c, tip - 1.6 * dpr); ctx.lineTo(c + hw + 1.6 * dpr, base); ctx.lineTo(c - hw - 1.6 * dpr, base); ctx.closePath();
-      ctx.fillStyle = "#fff"; ctx.fill();
-      ctx.shadowColor = "transparent";
-      ctx.beginPath(); ctx.moveTo(c, tip); ctx.lineTo(c + hw, base); ctx.lineTo(c - hw, base); ctx.closePath();
-      ctx.fillStyle = color; ctx.fill();
+      // The point of a pin: drawn over the badge, so the badge's white border runs out into the
+      // point and its color fills it, one outline around circle and point together (the layer
+      // turns it to the heading). Only the part outside the colored circle is drawn, so the
+      // symbol on the badge stays clear.
+      const Ro = R + 2 * dpr, T = Ro + 12 * dpr;
+      const pin = (ro, t) => {
+        const th = Math.acos(ro / t);
+        ctx.beginPath(); ctx.moveTo(c, c - t);
+        ctx.lineTo(c + ro * Math.sin(th), c - ro * Math.cos(th));
+        ctx.arc(c, c, ro, -Math.PI / 2 + th, 3 * Math.PI / 2 - th, false);
+        ctx.closePath();
+      };
+      ctx.save();
+      ctx.beginPath(); ctx.rect(0, 0, S, S); ctx.arc(c, c, R - 0.5 * dpr, 0, Math.PI * 2, true); ctx.clip();
+      ctx.lineJoin = "round";
+      // a soft shadow under the point only (the badge casts its own)
+      ctx.save();
+      ctx.beginPath(); ctx.rect(0, 0, S, c - Ro * 0.55); ctx.clip();
+      ctx.shadowColor = "rgba(0,0,0,.28)"; ctx.shadowBlur = 3 * dpr; ctx.shadowOffsetY = 0.8 * dpr;
+      pin(Ro, T); ctx.fillStyle = "#fff"; ctx.fill();
+      ctx.restore();
+      pin(Ro, T); ctx.fillStyle = "#fff"; ctx.fill(); ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.4 * dpr; ctx.stroke();
+      pin(R, T * R / Ro); ctx.fillStyle = color; ctx.fill(); ctx.strokeStyle = color; ctx.lineWidth = 1 * dpr; ctx.stroke();
+      ctx.restore();
     } else {
       ctx.shadowColor = "rgba(0,0,0,.3)"; ctx.shadowBlur = 3.5 * dpr; ctx.shadowOffsetY = 1 * dpr;
       ctx.beginPath(); ctx.arc(c, c, R + 2 * dpr, 0, Math.PI * 2); ctx.fillStyle = "#fff"; ctx.fill();
@@ -2334,6 +2386,26 @@
   };
   const backBtn = `<button class="back press" id="back" type="button"><svg width="12" height="20" viewBox="0 0 12 20" aria-hidden="true"><path d="M10 2 2 10l8 8" stroke="currentColor" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>All routes</button>`;
 
+  // ---------------------------------------------------------------- agency and service logos
+  // The service (RapidRide, Swift, Link, Sounder, ST Express) and the agency behind it, each with its
+  // own logo where one is bundled (web/logos); the others fall back to their name.
+  const LOGOS = window.ATLAS_LOGOS || {};
+  const AGENCY_LOGO = { "Sound Transit": "soundtransit", "Community Transit": "ct", "Pierce Transit": "pierce", "Kitsap Transit": "kitsap", "Intercity Transit": "intercity",
+    "King County Metro": "kcmetro", "Everett Transit": "everett", "Washington State Ferries": "wsf" };
+  const SERVICE_LOGO = { rapidride: "rapidride", swift: "swift", link: "link", sounder: "sounder", amtrak: "amtrak", streetcar: "streetcar", monorail: "monorail", watertaxi: "watertaxi" };
+  function logoKeys(r) {
+    const svc = SERVICE_LOGO[r.cat] || (r.agency === "Sound Transit" ? "stexpress" : null);
+    return [svc, svc && svc !== "rapidride" && svc !== "swift" ? null : AGENCY_LOGO[r.agency]].filter((k) => k && LOGOS[k]);
+  }
+  const logoImg = (k, name) => `<img class="logo-img logo-${k}" src="${LOGOS[k]}" alt="${esc(name)}" loading="lazy" decoding="async">`;
+  const LOGO_NAME = { soundtransit: "Sound Transit", link: "Link light rail", sounder: "Sounder", stexpress: "ST Express", rapidride: "RapidRide", swift: "Swift",
+    kcmetro: "King County Metro", everett: "Everett Transit", wsf: "Washington State Ferries", amtrak: "Amtrak", streetcar: "Seattle Streetcar",
+    monorail: "Seattle Center Monorail", watertaxi: "King County Water Taxi", ct: "Community Transit", pierce: "Pierce Transit", kitsap: "Kitsap Transit", intercity: "Intercity Transit" };
+  function logoChips(rs) {
+    const keys = [...new Set(rs.flatMap(logoKeys))];
+    return keys.map((k) => `<span class="chip logo-chip" title="${esc(LOGO_NAME[k])}">${logoImg(k, LOGO_NAME[k])}</span>`).join("");
+  }
+
   function showRoute(r) {
     const w = r.sched.weekday;
     const freq = w && w.mid_n >= 3 ? `${w.mid}<small> min</small>` : w && (w.am_n || w.pm_n) ? "Rush hour" : w ? `${w.trips}<small> trips</small>` : "Weekends";
@@ -2342,7 +2414,7 @@
     const color = keyColor(dkey(r));
     let html = `${backBtn}
       <div class="hero">${badgeHTML(r, "xl")}<div><h2>${esc(routeTitle(r))}</h2><p>${esc(r.name || "")}</p></div></div>
-      <div class="chips"><span class="chip"><span class="dot" style="background:${color}"></span>${esc(CAT_NAME[r.cat])}</span><span class="chip">${esc(r.agency)}</span><span class="chip live-chip" id="liveChip" hidden><span class="pulse" aria-hidden="true"></span><span class="n"></span></span></div>
+      <div class="chips"><span class="chip"><span class="dot" style="background:${color}"></span>${esc(CAT_NAME[r.cat])}</span><span class="chip">${esc(r.agency)}</span>${logoChips([r])}<span class="chip live-chip" id="liveChip" hidden><span class="pulse" aria-hidden="true"></span><span class="n"></span></span></div>
       <div id="routeAlerts"></div>
       <div class="tiles">
         <div class="tile"><span class="k">Midday on weekdays</span><span class="v">${w && w.mid_n >= 3 ? "Every " : ""}${freq}</span></div>
@@ -2391,6 +2463,7 @@
     const rs = s.routes.map((id) => RBY[id]).filter(Boolean).sort(tagOrder);
     const kind = s.kind === "stop" ? (s.code ? `Bus stop #${s.code}` : "Bus stop") : s.kind === "ferry" ? "Ferry terminal" : "Station";
     let html = `${backBtn}<div class="hero"><span class="stop-glyph${s.kind === "stop" ? "" : " big"}" aria-hidden="true"></span><div><h2>${esc(s.name)}</h2><p>${esc(kind)}</p></div></div>
+      ${logoChips(rs) ? `<div class="chips">${logoChips(rs)}</div>` : ""}
       <div id="stopAlerts"></div>
       <h3 class="section">${rs.length} route${rs.length === 1 ? "" : "s"} stop here</h3>${routeRows(rs)}`;
     if (s.kind !== "stop") {
@@ -2671,7 +2744,8 @@
         }
         if (v && r) {
           const age = v.ts ? Math.max(0, Math.round(Date.now() / 1000 - v.ts)) : null;
-          openPopup(vh[0].geometry.coordinates, `<div class="pop"><h3>${esc(routeTitle(r))}</h3><p>${esc(r.name)}</p>${vesselLine(v.id, "p")}<p class="vs-row">${vehicleLines(v.id, false)}</p>${v.label && !v.name ? `<p>Vehicle ${esc(v.label)}</p>` : ""}${routeRows([r])}</div>`, "280px");
+          openPopup(vh[0].geometry.coordinates, `<div class="pop"><h3>${esc(routeTitle(r))}</h3><p>${esc(r.name)}</p>${vesselLine(v.id, "p")}<div class="vtrip-slot">${vehicleTripHTML(null, v.head)}</div><p class="vs-row">${vehicleLines(v.id, false)}</p>${v.label && !v.name ? `<p>Vehicle ${esc(v.label)}</p>` : ""}${routeRows([r])}</div>`, "280px");
+          fillVehicleTrip(v.id, v.head);
           return;
         }
       }
