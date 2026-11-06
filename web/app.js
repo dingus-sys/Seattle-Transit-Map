@@ -1291,7 +1291,7 @@
     if (!box) return;
     const ids = box.dataset.terminals.split(",").map(Number), data = wsf.terminals;
     const openTips = new Set([...box.querySelectorAll(".ferry-notes[open]")].map((el) => +el.dataset.terminal));
-    const terminalName = (id) => data?.notes.find((t) => t.TerminalID === id)?.TerminalName || data?.spaces.find((t) => t.TerminalID === id)?.TerminalName || stopIndex[`wsf-${id}`]?.name || "Ferry terminal";
+    const terminalName = (id) => data?.notes.find((t) => t.TerminalID === id)?.TerminalName || data?.spaces.find((t) => t.TerminalID === id)?.TerminalName || stopIndex[`wsf-${id}`]?.name || WSF_TERMINALS_INFO[id]?.name || "Ferry terminal";
     const routeWord = (s) => String(s || "").toLowerCase().replace(/\bpt\b/g, "point").replace(/\bisland\b/g, "").replace(/[^a-z0-9]/g, "");
     const now = Date.now(), fresh = data && now - wsf.terminalGot < 60000;
     const rows = [];
@@ -1313,27 +1313,31 @@
     box.innerHTML = `<h3 class="section">Ferry terminal conditions</h3><div class="group ferry-conditions">${rows.length ? rows.join("") : `<p class="hint">${wsf.terminalAttempt && !wsf.terminalGot ? "Checking WSF terminal conditions…" : "WSF terminal conditions are currently unavailable."}</p>`}</div><p class="foot">${rows.length ? "From WSF, checked " + CLOCK.format(new Date(wsf.terminalGot)) + ". " : ""}Vehicle space changes as loading continues. Walk-on availability is separate.</p>`;
   }
   const WSF_TERMINALS_INFO = {
-    1: { name: "Bainbridge Island", slug: "bainbridge-island" },
-    3: { name: "Bremerton", slug: "bremerton" },
-    4: { name: "Clinton", slug: "clinton" },
-    5: { name: "Edmonds", slug: "edmonds" },
-    7: { name: "Fauntleroy (West Seattle)", slug: "fauntleroy" },
-    8: { name: "Kingston", slug: "kingston" },
-    11: { name: "Mukilteo", slug: "mukilteo" },
-    14: { name: "Point Defiance (Tacoma)", slug: "point-defiance" },
-    18: { name: "Seattle (Colman Dock Pier 52)", slug: "seattle" },
-    20: { name: "Southworth (Port Orchard)", slug: "southworth" },
-    21: { name: "Tahlequah (Vashon)", slug: "tahlequah" },
-    22: { name: "Vashon Island", slug: "vashon-island" },
+    1: { name: "Anacortes", url: "https://wsdot.com/ferries/vesselwatch/TerminalDetail.aspx?terminalid=1" },
+    3: { name: "Bainbridge Island", url: "https://wsdot.com/ferries/vesselwatch/TerminalDetail.aspx?terminalid=3" },
+    4: { name: "Bremerton", url: "https://wsdot.com/ferries/vesselwatch/TerminalDetail.aspx?terminalid=4" },
+    5: { name: "Clinton", url: "https://wsdot.com/ferries/vesselwatch/TerminalDetail.aspx?terminalid=5" },
+    7: { name: "Seattle (Colman Dock Pier 52)", url: "https://wsdot.com/ferries/vesselwatch/TerminalDetail.aspx?terminalid=7" },
+    8: { name: "Edmonds", url: "https://wsdot.com/ferries/vesselwatch/TerminalDetail.aspx?terminalid=8" },
+    9: { name: "Fauntleroy (West Seattle)", url: "https://wsdot.com/ferries/vesselwatch/TerminalDetail.aspx?terminalid=9" },
+    11: { name: "Coupeville", url: "https://wsdot.com/ferries/vesselwatch/TerminalDetail.aspx?terminalid=11" },
+    12: { name: "Kingston", url: "https://wsdot.com/ferries/vesselwatch/TerminalDetail.aspx?terminalid=12" },
+    14: { name: "Mukilteo", url: "https://wsdot.com/ferries/vesselwatch/TerminalDetail.aspx?terminalid=14" },
+    16: { name: "Point Defiance (Tacoma)", url: "https://wsdot.com/ferries/vesselwatch/TerminalDetail.aspx?terminalid=16" },
+    20: { name: "Southworth (Port Orchard)", url: "https://wsdot.com/ferries/vesselwatch/TerminalDetail.aspx?terminalid=20" },
+    21: { name: "Tahlequah (Vashon)", url: "https://wsdot.com/ferries/vesselwatch/TerminalDetail.aspx?terminalid=21" },
+    22: { name: "Vashon Island", url: "https://wsdot.com/ferries/vesselwatch/TerminalDetail.aspx?terminalid=22" },
   };
   function showFerryInfo(ids) {
     if (!ids.length) return "";
     const termLinks = ids.map((id) => {
       const info = WSF_TERMINALS_INFO[id];
-      if (!info) return "";
-      return `<a class="link-out press" href="https://wsdot.wa.gov/travel/washington-state-ferries/terminals/${info.slug}" target="_blank" rel="noopener" style="margin-top:4px">⛴️ ${esc(info.name)} Terminal Guide & Webcams<span aria-hidden="true">↗</span></a>`;
+      const url = info?.url || (id ? `https://wsdot.com/ferries/vesselwatch/TerminalDetail.aspx?terminalid=${id}` : "");
+      const name = info?.name || stopIndex[`wsf-${id}`]?.name || "Terminal";
+      if (!url) return "";
+      return `<a class="link-out press" href="${url}" target="_blank" rel="noopener" style="margin-top:4px">⛴️ ${esc(name)} Guide & Loading Webcams<span aria-hidden="true">↗</span></a>`;
     }).filter(Boolean).join("");
-    const driveUpLink = `<a class="link-out press" href="https://wsdot.wa.gov/travel/washington-state-ferries/ferry-status/vehicle-drive-space" target="_blank" rel="noopener" style="margin-top:4px">🚗 Real-time Drive-Up Vehicle Space by Terminal<span aria-hidden="true">↗</span></a>`;
+    const driveUpLink = `<a class="link-out press" href="https://wsdot.com/ferries/vesselwatch/terminals.aspx" target="_blank" rel="noopener" style="margin-top:4px">🚗 Real-time Drive-Up Space & Terminal Cameras<span aria-hidden="true">↗</span></a>`;
     const liveBox = wsfOn() ? `<div id="ferryInfo" data-terminals="${ids.join(",")}"></div>` : "";
     return `${liveBox}<div class="ferry-terminal-links" style="margin:6px 0 10px">${termLinks}${driveUpLink}</div>`;
   }
