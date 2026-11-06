@@ -31,9 +31,9 @@
   // treatment (white center for rail, dots for RapidRide, a glassy highlight for buses)
   const CAT = {
     link:      { group: "rail",  w: 3.0,  tier: 0, prio: 0,  inner: "solid" },
-    link1:     { group: "rail",  w: 3.0,  tier: 0, prio: 0,  base: "link" },
-    link2:     { group: "rail",  w: 3.0,  tier: 0, prio: 0.1, base: "link" },
-    linkT:     { group: "rail",  w: 3.0,  tier: 0, prio: 0.2, base: "link" },
+    link1:     { group: "rail",  w: 3.2,  tier: 0, prio: 0,  inner: "solid", base: "link" },
+    link2:     { group: "rail",  w: 3.2,  tier: 0, prio: 0.1, inner: "solid", base: "link" },
+    linkT:     { group: "rail",  w: 3.0,  tier: 0, prio: 0.2, inner: "solid", base: "link" },
     sounder:   { group: "rail",  w: 2.5,  tier: 0, prio: 1,  inner: "ties" },
     streetcar: { group: "rapid", w: 2.2,  tier: 0, prio: 2,  inner: "solid" },
     monorail:  { group: "rapid", w: 2.2,  tier: 0, prio: 3,  inner: "solid" },
@@ -58,14 +58,14 @@
   };
   const LINE = {
     light: {
-      link: "#1d3f86", link1: "#28813f", link2: "#0072a8", linkT: "#e57a00", sounder: "#4b5563", streetcar: "#e8772e", monorail: "#8a8f98", rapidride: "#c8102e",
+      link: "#1d3f86", link1: "#5ead56", link2: "#479ed8", linkT: "#e57a00", sounder: "#4b5563", streetcar: "#e8772e", monorail: "#8a8f98", rapidride: "#c8102e",
       swift: "#1f6fe0", frequent: "#1d4ed8", local: "#455db2", peak: "#7c3aed", shuttle: "#e3a118",
       dart: "#0a2095", watertaxi: "#1690ad", ferry: "#3d6fa8",
     },
     dark: {
-      link: "#86a8f2", link1: "#4cc46a", link2: "#4ab3e8", linkT: "#ffa94d", sounder: "#a3acb9", streetcar: "#ff9450", monorail: "#b5bac2", rapidride: "#ff5468",
-      swift: "#5b9bff", frequent: "#38bdf8", local: "#a5b4fc", peak: "#c4b5fd", shuttle: "#ffc44d",
-      dart: "#93c5fd", watertaxi: "#45c1e3", ferry: "#7aa6dc",
+      link: "#86a8f2", link1: "#6ec565", link2: "#56b4f2", linkT: "#ffa94d", sounder: "#a3acb9", streetcar: "#ff9450", monorail: "#b5bac2", rapidride: "#ff5468",
+      swift: "#5b9bff", frequent: "#3b82f6", local: "#93c5fd", peak: "#c4b5fd", shuttle: "#ffc44d",
+      dart: "#60a5fa", watertaxi: "#45c1e3", ferry: "#7aa6dc",
     },
   };
   const FLEX = { light: "#8a3cc0", dark: "#c47ef0" }; // Metro Flex zones
@@ -466,9 +466,9 @@
   function areaLayers(P) {
     const acc = theme === "dark" ? "#bf9cf5" : "#7b5cc4";
     const trailCol = theme === "dark" ? "#2dd4bf" : "#047857";
-    const trailGreenway = theme === "dark" ? "#34d399" : "#10b981";
-    const trailLane = theme === "dark" ? "#22d3ee" : "#0891b2";
-    const trailSharrow = theme === "dark" ? "#86efac" : "#15803d";
+    const trailGreenway = theme === "dark" ? "#34d399" : "#059669";
+    const trailLane = theme === "dark" ? "#14b8a6" : "#0d9488";
+    const trailSharrow = theme === "dark" ? "#86efac" : "#16a34a";
     const trailHalo = theme === "dark" ? "#090d16" : "#ffffff";
     const trailText = theme === "dark" ? "#5eead4" : "#065f46";
     const trailCase = theme === "dark" ? "#041d16" : "#ffffff";
@@ -719,7 +719,38 @@
   function tripLayers(P) {
     const walkCase = theme === "dark" ? "#0f172a" : "#ffffff";
     const walkColor = theme === "dark" ? "#38bdf8" : "#0284c7";
+    const lineCase = theme === "dark" ? "#0b1120" : "#ffffff";
     return [
+      { id: "trip-line-glow", type: "line", source: "tripline",
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: {
+          "line-color": ["get", "color"],
+          "line-width": 14,
+          "line-blur": 6,
+          "line-opacity": 0.58,
+        } },
+      { id: "trip-line-case", type: "line", source: "tripline",
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: {
+          "line-color": lineCase,
+          "line-width": 7.2,
+          "line-opacity": 0.98,
+        } },
+      { id: "trip-line-core", type: "line", source: "tripline",
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: {
+          "line-color": ["get", "color"],
+          "line-width": 4.8,
+          "line-opacity": 1.0,
+        } },
+      { id: "trip-line-rail", type: "line", source: "tripline",
+        filter: ["==", ["get", "isRail"], 1],
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: {
+          "line-color": "#ffffff",
+          "line-width": 1.8,
+          "line-opacity": 0.95,
+        } },
       { id: "trip-walk-case", type: "line", source: "tripwalk",
         paint: { "line-color": walkCase, "line-width": 5.5, "line-opacity": 0.95 } },
       { id: "trip-walk-line", type: "line", source: "tripwalk",
@@ -3202,9 +3233,9 @@
   }
   function bikeSwatch(type) {
     const trailCol = theme === "dark" ? "#2dd4bf" : "#047857";
-    const trailGreenway = theme === "dark" ? "#34d399" : "#10b981";
-    const trailLane = theme === "dark" ? "#22d3ee" : "#0891b2";
-    const trailSharrow = theme === "dark" ? "#86efac" : "#15803d";
+    const trailGreenway = theme === "dark" ? "#34d399" : "#059669";
+    const trailLane = theme === "dark" ? "#14b8a6" : "#0d9488";
+    const trailSharrow = theme === "dark" ? "#86efac" : "#16a34a";
     const trailDash = theme === "dark" ? "#fbbf24" : "#b45309";
     const trailCase = theme === "dark" ? "#041d16" : "#ffffff";
     if (type === "pbl") {
@@ -4107,12 +4138,130 @@
     return plannerStopsCache;
   }
 
-  function findNearbyStops(lat, lon, maxDist = 800) {
+  let stopToStationCache = null;
+  function getStopToStation() {
+    if (stopToStationCache) return stopToStationCache;
+    stopToStationCache = new Map();
+    for (const st of (STOPS?.stations || [])) {
+      stopToStationCache.set(st.id, st);
+      for (const sid of (st.stops || [])) stopToStationCache.set(sid, st);
+    }
+    return stopToStationCache;
+  }
+
+  let routeEdgesCache = null;
+  function getEdgesForRoute(ridx) {
+    if (!NET || !NET.edges) return [];
+    if (!routeEdgesCache) {
+      routeEdgesCache = new Map();
+      for (let k = 0; k < NET.edges.length; k++) {
+        const e = NET.edges[k];
+        for (const r of (e.l || [])) {
+          if (!routeEdgesCache.has(r)) routeEdgesCache.set(r, []);
+          routeEdgesCache.get(r).push(e);
+        }
+      }
+    }
+    return routeEdgesCache.get(ridx) || [];
+  }
+
+  function getRouteSegmentGeometry(routeIdx, boardStop, alightStop, intermediateStopIds = []) {
+    if (routeIdx == null || !boardStop || !alightStop) return [];
+    const edges = getEdgesForRoute(routeIdx);
+    if (!edges.length) {
+      const coords = [[boardStop.lon, boardStop.lat]];
+      for (const sid of intermediateStopIds) {
+        const s = stopIndex[sid];
+        if (s) coords.push([s.lon, s.lat]);
+      }
+      coords.push([alightStop.lon, alightStop.lat]);
+      return coords;
+    }
+
+    const qk = (c) => Math.round(c[0] * 100000) + "," + Math.round(c[1] * 100000);
+    const adj = new Map();
+    for (const e of edges) {
+      const u = qk(e.c[0]), v = qk(e.c[e.c.length - 1]);
+      let len = 0;
+      for (let i = 0; i < e.c.length - 1; i++) {
+        len += distMeters(e.c[i][1], e.c[i][0], e.c[i + 1][1], e.c[i + 1][0]);
+      }
+      if (!adj.has(u)) adj.set(u, []);
+      adj.get(u).push({ to: v, cost: len, edge: e, fwd: true });
+      if (!adj.has(v)) adj.set(v, []);
+      adj.get(v).push({ to: u, cost: len, edge: e, fwd: false });
+    }
+
+    function nearestNode(lon, lat) {
+      let best = null, bd = Infinity;
+      for (const [k] of adj) {
+        const [kx, ky] = k.split(",").map(Number);
+        const d = distMeters(lat, lon, ky / 100000, kx / 100000);
+        if (d < bd) { bd = d; best = k; }
+      }
+      return best;
+    }
+
+    const startNode = nearestNode(boardStop.lon, boardStop.lat);
+    const endNode = nearestNode(alightStop.lon, alightStop.lat);
+
+    if (startNode && endNode && startNode !== endNode) {
+      const dist = new Map(), prev = new Map();
+      dist.set(startNode, 0);
+      const q = [[0, startNode]];
+      while (q.length) {
+        q.sort((a, b) => a[0] - b[0]);
+        const [d, u] = q.shift();
+        if (u === endNode) break;
+        if (d > dist.get(u)) continue;
+        for (const edge of (adj.get(u) || [])) {
+          const nd = d + edge.cost;
+          if (!dist.has(edge.to) || nd < dist.get(edge.to)) {
+            dist.set(edge.to, nd);
+            prev.set(edge.to, { from: u, edge: edge.edge, fwd: edge.fwd });
+            q.push([nd, edge.to]);
+          }
+        }
+      }
+
+      if (prev.has(endNode)) {
+        const pathEdges = [];
+        let cur = endNode;
+        while (cur !== startNode) {
+          const p = prev.get(cur);
+          pathEdges.unshift(p);
+          cur = p.from;
+        }
+        const coords = [[boardStop.lon, boardStop.lat]];
+        for (const pe of pathEdges) {
+          const pts = pe.fwd ? pe.edge.c : [...pe.edge.c].reverse();
+          for (const pt of pts) coords.push(pt);
+        }
+        coords.push([alightStop.lon, alightStop.lat]);
+        return coords;
+      }
+    }
+
+    const coords = [[boardStop.lon, boardStop.lat]];
+    for (const sid of intermediateStopIds) {
+      const s = stopIndex[sid];
+      if (s) coords.push([s.lon, s.lat]);
+    }
+    coords.push([alightStop.lon, alightStop.lat]);
+    return coords;
+  }
+
+  function findNearbyStops(lat, lon, maxDist = 850, maxRailDist = 1500) {
     const stops = getPlannerStops();
     const res = [];
     for (const s of stops) {
+      const isRail = s.isStation || (s.routes || []).some((rid) => {
+        const r = RBY[rid];
+        return r && (r.cat === "link" || r.cat === "sounder" || r.cat === "streetcar" || r.cat === "ferry");
+      });
+      const limit = isRail ? maxRailDist : maxDist;
       const d = distMeters(lat, lon, s.lat, s.lon);
-      if (d <= maxDist) res.push({ stop: s, dist: d });
+      if (d <= limit) res.push({ stop: s, dist: d, isRail });
     }
     res.sort((a, b) => a.dist - b.dist);
     return res;
@@ -4123,11 +4272,11 @@
     const directWalkDist = distMeters(orig.lat, orig.lon, dest.lat, dest.lon);
     const directWalkTime = Math.round(directWalkDist / 80);
 
-    let origStops = findNearbyStops(orig.lat, orig.lon, 950);
-    if (origStops.length < 3) origStops = findNearbyStops(orig.lat, orig.lon, 1800);
+    let origStops = findNearbyStops(orig.lat, orig.lon, 950, 1500);
+    if (origStops.length < 3) origStops = findNearbyStops(orig.lat, orig.lon, 1800, 2200);
 
-    let destStops = findNearbyStops(dest.lat, dest.lon, 950);
-    if (destStops.length < 3) destStops = findNearbyStops(dest.lat, dest.lon, 1800);
+    let destStops = findNearbyStops(dest.lat, dest.lon, 950, 1500);
+    if (destStops.length < 3) destStops = findNearbyStops(dest.lat, dest.lon, 1800, 2200);
 
     const origStopMap = new Map();
     for (const o of origStops) {
@@ -4165,13 +4314,15 @@
 
             const bStop = stopIndex[sid1] || oMatch.stop;
             const aStop = stopIndex[sid2] || dMatch.stop;
+            if (!bStop || !aStop) continue;
             const transitDist = distMeters(bStop.lat, bStop.lon, aStop.lat, aStop.lon);
-            const speedMpm = r.cat === "link" || r.cat === "sounder" ? 580 : r.cat === "ferry" ? 500 : 380;
+            const isRail = r.cat === "link" || r.cat === "sounder";
+            const speedMpm = isRail ? 750 : r.cat === "ferry" ? 500 : 380;
             const numStops = j - i;
-            const rideTime = Math.max(3, Math.round(transitDist / speedMpm) + Math.round(numStops * 0.4));
+            const rideTime = Math.max(2, Math.round(transitDist / speedMpm) + Math.round(numStops * (isRail ? 0.3 : 0.4)));
             const walk1Time = Math.round(oMatch.dist / 80);
             const walk2Time = Math.round(dMatch.dist / 80);
-            const total = walk1Time + rideTime + walk2Time;
+            const total = walk1Time + rideTime + walk2Time - (isRail ? 3 : 0);
 
             if (total < minTotal) {
               minTotal = total;
@@ -4182,6 +4333,7 @@
                 destMatch: dMatch,
                 boardStop: bStop,
                 alightStop: aStop,
+                intermediateStopIds: pat.stops.slice(i + 1, j),
                 numStops,
                 rideTime,
                 walk1Dist: oMatch.dist,
@@ -4195,8 +4347,8 @@
         }
 
         if (bestPair) {
-          const headway = r.midHeadway || (r.sched?.weekday?.mid) || 15;
-          const waitTime = Math.round(Math.min(headway / 2, 10));
+          const headway = r.midHeadway || (r.sched?.weekday?.mid) || (r.cat === "link" ? 8 : 15);
+          const waitTime = Math.round(Math.min(headway / 2, 8));
           const totalDuration = bestPair.walk1Time + waitTime + bestPair.rideTime + bestPair.walk2Time;
 
           directItineraries.push({
@@ -4205,6 +4357,7 @@
             pattern: pat,
             boardStop: bestPair.boardStop,
             alightStop: bestPair.alightStop,
+            intermediateStopIds: bestPair.intermediateStopIds,
             numStops: bestPair.numStops,
             walk1Dist: bestPair.walk1Dist,
             walk1Time: bestPair.walk1Time,
@@ -4230,7 +4383,8 @@
       if (topDirect.length >= 3) break;
     }
 
-    // 1-transfer routes
+    // 1-transfer routes: support multi-modal transfer hubs (same stop, station complex, or walking connection <= 250m)
+    const stopToSt = getStopToStation();
     const origRoutes = new Set();
     for (const o of origStops) {
       for (const rid of (o.stop.routes || [])) origRoutes.add(rid);
@@ -4238,6 +4392,16 @@
     const destRoutes = new Set();
     for (const d of destStops) {
       for (const rid of (d.stop.routes || [])) destRoutes.add(rid);
+    }
+
+    function transferDistance(s1Id, s2Id) {
+      if (s1Id === s2Id) return 0;
+      const st1 = stopToSt.get(s1Id), st2 = stopToSt.get(s2Id);
+      if (st1 && st2 && st1 === st2) return 50; // connected inside same transit station/hub
+      const s1 = stopIndex[s1Id], s2 = stopIndex[s2Id];
+      if (!s1 || !s2) return Infinity;
+      const d = distMeters(s1.lat, s1.lon, s2.lat, s2.lon);
+      return d <= 250 ? d : Infinity;
     }
 
     const transferItineraries = [];
@@ -4250,8 +4414,6 @@
           if (origStopMap.has(p1.stops[i])) { firstOrig = i; break; }
         }
         if (firstOrig === -1) continue;
-        const r1StopsAfter = p1.stops.slice(firstOrig + 1);
-        const r1StopsSet = new Set(r1StopsAfter);
 
         for (const r2Id of destRoutes) {
           if (r2Id === r1Id) continue;
@@ -4264,57 +4426,68 @@
             }
             if (lastDest === -1) continue;
 
-            for (let k = 0; k < lastDest; k++) {
-              const transferSid = p2.stops[k];
-              if (r1StopsSet.has(transferSid)) {
-                const transferStop = stopIndex[transferSid];
-                if (!transferStop) continue;
+            for (let i = firstOrig + 1; i < p1.stops.length; i++) {
+              const sid1 = p1.stops[i];
+              for (let j = 0; j < lastDest; j++) {
+                const sid2 = p2.stops[j];
+                const tDist = transferDistance(sid1, sid2);
+                if (tDist <= 250) {
+                  const s1 = stopIndex[sid1], s2 = stopIndex[sid2];
+                  if (!s1 || !s2) continue;
+                  const origSid = p1.stops[firstOrig], destSid = p2.stops[lastDest];
+                  const boardStop = stopIndex[origSid] || origStopMap.get(origSid)?.stop;
+                  const alightStop = stopIndex[destSid] || destStopMap.get(destSid)?.stop;
+                  if (!boardStop || !alightStop) continue;
+                  const oMatch = origStopMap.get(origSid), dMatch = destStopMap.get(destSid);
 
-                const idxInP1 = p1.stops.indexOf(transferSid);
-                const origSid = p1.stops[firstOrig];
-                const destSid = p2.stops[lastDest];
+                  const numStops1 = i - firstOrig;
+                  const numStops2 = lastDest - j;
 
-                const boardStop = stopIndex[origSid] || origStopMap.get(origSid)?.stop;
-                const alightStop = stopIndex[destSid] || destStopMap.get(destSid)?.stop;
-                const origMatch = origStopMap.get(origSid);
-                const destMatch = destStopMap.get(destSid);
+                  const isR1Rail = r1.cat === "link" || r1.cat === "sounder";
+                  const isR2Rail = r2.cat === "link" || r2.cat === "sounder";
+                  const speed1 = isR1Rail ? 750 : r1.cat === "ferry" ? 500 : 380;
+                  const speed2 = isR2Rail ? 750 : r2.cat === "ferry" ? 500 : 380;
 
-                const numStops1 = idxInP1 - firstOrig;
-                const numStops2 = lastDest - k;
+                  const d1 = distMeters(boardStop.lat, boardStop.lon, s1.lat, s1.lon);
+                  const d2 = distMeters(s2.lat, s2.lon, alightStop.lat, alightStop.lon);
 
-                const speed1 = r1.cat === "link" || r1.cat === "sounder" ? 580 : r1.cat === "ferry" ? 500 : 380;
-                const speed2 = r2.cat === "link" || r2.cat === "sounder" ? 580 : r2.cat === "ferry" ? 500 : 380;
+                  const ride1 = Math.max(2, Math.round(d1 / speed1) + Math.round(numStops1 * (isR1Rail ? 0.3 : 0.35)));
+                  const ride2 = Math.max(2, Math.round(d2 / speed2) + Math.round(numStops2 * (isR2Rail ? 0.3 : 0.35)));
 
-                const d1 = distMeters(boardStop.lat, boardStop.lon, transferStop.lat, transferStop.lon);
-                const d2 = distMeters(transferStop.lat, transferStop.lon, alightStop.lat, alightStop.lon);
+                  const walk1Time = Math.round((oMatch ? oMatch.dist : 0) / 80);
+                  const walk2Time = Math.round((dMatch ? dMatch.dist : 0) / 80);
+                  const transferWalkTime = Math.round(tDist / 80);
 
-                const ride1 = Math.max(2, Math.round(d1 / speed1) + Math.round(numStops1 * 0.35));
-                const ride2 = Math.max(2, Math.round(d2 / speed2) + Math.round(numStops2 * 0.35));
+                  const h1 = r1.midHeadway || (r1.sched?.weekday?.mid) || (r1.cat === "link" ? 8 : 15);
+                  const h2 = r2.midHeadway || (r2.sched?.weekday?.mid) || (r2.cat === "link" ? 8 : 15);
+                  const wait1 = Math.round(Math.min(h1 / 2, 7));
+                  const wait2 = Math.round(Math.min(h2 / 2, 7)) + 2 + transferWalkTime;
 
-                const walk1Time = Math.round((origMatch ? origMatch.dist : 0) / 80);
-                const walk2Time = Math.round((destMatch ? destMatch.dist : 0) / 80);
+                  const railBonus = (isR1Rail ? 3 : 0) + (isR2Rail ? 3 : 0);
+                  const totalDuration = walk1Time + wait1 + ride1 + wait2 + ride2 + walk2Time;
 
-                const h1 = r1.midHeadway || (r1.sched?.weekday?.mid) || 15;
-                const h2 = r2.midHeadway || (r2.sched?.weekday?.mid) || 15;
-                const wait1 = Math.round(Math.min(h1 / 2, 8));
-                const wait2 = Math.round(Math.min(h2 / 2, 8)) + 3;
-
-                const totalDuration = walk1Time + wait1 + ride1 + wait2 + ride2 + walk2Time;
-
-                transferItineraries.push({
-                  type: "transfer",
-                  r1, r2,
-                  p1, p2,
-                  boardStop,
-                  transferStop,
-                  alightStop,
-                  numStops1, numStops2,
-                  ride1, ride2,
-                  walk1Time, walk2Time,
-                  wait1, wait2,
-                  totalDuration,
-                });
-                break;
+                  transferItineraries.push({
+                    type: "transfer",
+                    r1, r2,
+                    p1, p2,
+                    boardStop,
+                    transferStop: s1,
+                    transferStop1: s1,
+                    transferStop2: s2,
+                    transferWalkDist: tDist,
+                    transferWalkTime,
+                    alightStop,
+                    intermediateStops1: p1.stops.slice(firstOrig + 1, i),
+                    intermediateStops2: p2.stops.slice(j + 1, lastDest),
+                    numStops1, numStops2,
+                    ride1, ride2,
+                    walk1Time, walk2Time,
+                    wait1, wait2,
+                    totalDuration,
+                    score: totalDuration - railBonus,
+                  });
+                  break;
+                }
               }
             }
           }
@@ -4322,7 +4495,7 @@
       }
     }
 
-    transferItineraries.sort((a, b) => a.totalDuration - b.totalDuration);
+    transferItineraries.sort((a, b) => (a.score ?? a.totalDuration) - (b.score ?? b.totalDuration));
     const seenTransfer = new Set();
     const topTransfer = [];
     for (const it of transferItineraries) {
@@ -4330,7 +4503,7 @@
       if (seenTransfer.has(pair)) continue;
       seenTransfer.add(pair);
       topTransfer.push(it);
-      if (topTransfer.length >= 3) break;
+      if (topTransfer.length >= 4) break;
     }
 
     let directWalk = null;
@@ -4348,6 +4521,7 @@
   function clearTripMap() {
     if (!map) return;
     const empty = { type: "FeatureCollection", features: [] };
+    if (map.getSource("tripline")) map.getSource("tripline").setData(empty);
     if (map.getSource("tripwalk")) map.getSource("tripwalk").setData(empty);
     if (map.getSource("trippts")) map.getSource("trippts").setData(empty);
     setNetDim(1);
@@ -4371,6 +4545,7 @@
 
     const sIds = stopIdsOf(stop);
     const keys = [...new Set([stop.key, stop.id, ...((stop.stops || []).map((sid) => stopIndex[sid] && stopIndex[sid].key).filter(Boolean))])].filter(Boolean);
+    const vehWord = route.cat === "link" || route.cat === "sounder" ? "train" : route.cat === "ferry" ? "ferry" : route.cat === "streetcar" ? "streetcar" : "bus";
 
     // 1. Live departures check from agency
     const live = liveDepartures(sIds, 30);
@@ -4388,7 +4563,7 @@
           text,
           clock: clockStr,
           routeLabel: route.short || route.label,
-          desc: match.t < 60 ? `Bus due now (${clockStr})` : `Soonest bus in ${waitMin} min (${clockStr})`
+          desc: match.t < 60 ? `${vehWord.charAt(0).toUpperCase() + vehWord.slice(1)} due now (${clockStr})` : `Soonest ${vehWord} in ${waitMin} min (${clockStr})`
         };
       }
     }
@@ -4427,13 +4602,13 @@
           text,
           clock: clockStr,
           routeLabel: route.short || route.label,
-          desc: bestT < 60 ? `Scheduled now (${clockStr})` : `Soonest bus in ${waitMin} min (${clockStr})`
+          desc: bestT < 60 ? `Scheduled ${vehWord} now (${clockStr})` : `Soonest ${vehWord} in ${waitMin} min (${clockStr})`
         };
       }
     }
 
     // 3. Fallback based on published route frequency
-    const headway = route.midHeadway || (route.sched?.weekday?.mid) || 15;
+    const headway = route.midHeadway || (route.sched?.weekday?.mid) || (route.cat === "link" ? 8 : 15);
     const waitMin = Math.round(Math.min(headway / 2, 12));
     const clockTime = new Date(Date.now() + waitMin * 60000);
     const clockStr = CLOCK.format(clockTime);
@@ -4451,6 +4626,7 @@
   function renderTripOnMap(it, { fit = false, isHover = false } = {}) {
     if (!map || !it || !dirOrigin || !dirDest) return;
     const walkFeatures = [];
+    const lineFeatures = [];
     const ptFeatures = [];
 
     const origPt = [dirOrigin.lon, dirOrigin.lat];
@@ -4496,26 +4672,50 @@
       ptFeatures.push({
         type: "Feature",
         geometry: { type: "Point", coordinates: boardPt },
-        properties: { role: "board", color: "#0284c7", label: it.route.short || it.route.label }
+        properties: { role: "board", color: tagColor(it.route), label: it.route.short || it.route.label }
       });
       ptFeatures.push({
         type: "Feature",
         geometry: { type: "Point", coordinates: alightPt },
-        properties: { role: "alight", color: "#0284c7", label: "Exit" }
+        properties: { role: "alight", color: tagColor(it.route), label: "Exit" }
       });
 
-      focusRoutes([it.route], false, { glow: true, widthScale: 1.85 });
+      // ONLY the used transit segment glows along its actual street path
+      const routeIdx = LINEIDX[it.route.id];
+      const segCoords = getRouteSegmentGeometry(routeIdx, it.boardStop, it.alightStop, it.intermediateStopIds || []);
+      if (segCoords.length >= 2) {
+        lineFeatures.push({
+          type: "Feature",
+          geometry: { type: "LineString", coordinates: segCoords },
+          properties: {
+            color: tagColor(it.route),
+            isRail: it.route.cat === "link" || it.route.cat === "sounder" ? 1 : 0
+          }
+        });
+        for (const pt of segCoords) allCoords.push(pt);
+      }
+      focusOff();
     } else if (it.type === "transfer") {
       const boardPt = [it.boardStop.lon, it.boardStop.lat];
-      const transPt = [it.transferStop.lon, it.transferStop.lat];
+      const t1Pt = [it.transferStop1.lon, it.transferStop1.lat];
+      const t2Pt = [it.transferStop2.lon, it.transferStop2.lat];
       const alightPt = [it.alightStop.lon, it.alightStop.lat];
-      allCoords.push(boardPt, transPt, alightPt);
+      allCoords.push(boardPt, t1Pt, t2Pt, alightPt);
 
       walkFeatures.push({
         type: "Feature",
         geometry: { type: "LineString", coordinates: [origPt, boardPt] },
         properties: { type: "walk1" }
       });
+
+      if (it.transferWalkDist > 5) {
+        walkFeatures.push({
+          type: "Feature",
+          geometry: { type: "LineString", coordinates: [t1Pt, t2Pt] },
+          properties: { type: "transferWalk" }
+        });
+      }
+
       walkFeatures.push({
         type: "Feature",
         geometry: { type: "LineString", coordinates: [alightPt, destPt] },
@@ -4525,22 +4725,60 @@
       ptFeatures.push({
         type: "Feature",
         geometry: { type: "Point", coordinates: boardPt },
-        properties: { role: "board", color: "#0284c7", label: it.r1.short || it.r1.label }
+        properties: { role: "board", color: tagColor(it.r1), label: it.r1.short || it.r1.label }
       });
       ptFeatures.push({
         type: "Feature",
-        geometry: { type: "Point", coordinates: transPt },
+        geometry: { type: "Point", coordinates: t1Pt },
         properties: { role: "transfer", color: "#8b5cf6", label: "Transfer" }
       });
+      if (it.transferWalkDist > 5 && (t1Pt[0] !== t2Pt[0] || t1Pt[1] !== t2Pt[1])) {
+        ptFeatures.push({
+          type: "Feature",
+          geometry: { type: "Point", coordinates: t2Pt },
+          properties: { role: "transfer2", color: tagColor(it.r2), label: it.r2.short || it.r2.label }
+        });
+      }
       ptFeatures.push({
         type: "Feature",
         geometry: { type: "Point", coordinates: alightPt },
-        properties: { role: "alight", color: "#0284c7", label: "Exit" }
+        properties: { role: "alight", color: tagColor(it.r2), label: "Exit" }
       });
 
-      focusRoutes([it.r1, it.r2], false, { glow: true, widthScale: 1.85 });
+      // ONLY the used transit segments glow along their actual street paths
+      const r1Idx = LINEIDX[it.r1.id];
+      const seg1Coords = getRouteSegmentGeometry(r1Idx, it.boardStop, it.transferStop1, it.intermediateStops1 || []);
+      if (seg1Coords.length >= 2) {
+        lineFeatures.push({
+          type: "Feature",
+          geometry: { type: "LineString", coordinates: seg1Coords },
+          properties: {
+            color: tagColor(it.r1),
+            isRail: it.r1.cat === "link" || it.r1.cat === "sounder" ? 1 : 0
+          }
+        });
+        for (const pt of seg1Coords) allCoords.push(pt);
+      }
+
+      const r2Idx = LINEIDX[it.r2.id];
+      const seg2Coords = getRouteSegmentGeometry(r2Idx, it.transferStop2, it.alightStop, it.intermediateStops2 || []);
+      if (seg2Coords.length >= 2) {
+        lineFeatures.push({
+          type: "Feature",
+          geometry: { type: "LineString", coordinates: seg2Coords },
+          properties: {
+            color: tagColor(it.r2),
+            isRail: it.r2.cat === "link" || it.r2.cat === "sounder" ? 1 : 0
+          }
+        });
+        for (const pt of seg2Coords) allCoords.push(pt);
+      }
+      focusOff();
     }
 
+    if (map.getSource("tripline")) {
+      map.getSource("tripline").setData({ type: "FeatureCollection", features: lineFeatures });
+    }
     if (map.getSource("tripwalk")) {
       map.getSource("tripwalk").setData({ type: "FeatureCollection", features: walkFeatures });
     }
@@ -4548,7 +4786,7 @@
       map.getSource("trippts").setData({ type: "FeatureCollection", features: ptFeatures });
     }
 
-    setNetDim(0.28);
+    setNetDim(0.24);
 
     if (fit) {
       const lons = allCoords.map((c) => c[0]), lats = allCoords.map((c) => c[1]);
@@ -4620,7 +4858,10 @@
         descHtml = `Board <b>${esc(it.boardStop.name)}</b> → ${it.numStops} stop${it.numStops > 1 ? "s" : ""} → Alight <b>${esc(it.alightStop.name)}</b>`;
       } else if (it.type === "transfer") {
         badgeHtml = `${badgeHTML(it.r1)} <span class="trip-arrow">➔</span> ${badgeHTML(it.r2)}`;
-        descHtml = `Transfer at <b>${esc(it.transferStop.name)}</b> · ${it.numStops1 + it.numStops2} total stops`;
+        const t1 = it.transferStop1 || it.transferStop;
+        const t2 = it.transferStop2 || it.transferStop;
+        const tName = (t1 && t2 && t1.id !== t2.id && t1.name !== t2.name) ? `${esc(t1.name)} / ${esc(t2.name)}` : esc(t1.name);
+        descHtml = `Transfer at <b>${tName}</b> · ${it.numStops1 + it.numStops2} total stops`;
       }
 
       const soonestPillHtml = soonest ? `<span class="trip-soonest-pill${soonest.isLive ? " is-live" : ""}">
@@ -4732,7 +4973,7 @@
         </div>
         <div class="step-row">
           <span class="step-line"></span>
-          <span class="step-icon transit">${cur.r1.cat === "link" || cur.r1.cat === "sounder" ? "🚆" : "🚌"}</span>
+          <span class="step-icon transit">${cur.r1.cat === "link" || cur.r1.cat === "sounder" ? "🚆" : cur.r1.cat === "streetcar" ? "🚊" : cur.r1.cat === "ferry" ? "⛴️" : "🚌"}</span>
           <div class="step-content">
             <div class="step-main">Board ${badgeHTML(cur.r1)} towards ${esc(cur.p1.headsign || "Transfer")}</div>
             <div class="step-meta">${curSoonest ? `<span class="step-soonest${curSoonest.isLive ? " is-live" : ""}">${curSoonest.isLive ? "🟢 Live departure:" : "🕒 Soonest departure:"} <b>${curSoonest.text}</b>${curSoonest.clock ? ` (${curSoonest.clock})` : ""}</span> · ` : ""}${cur.ride1} min · ${cur.numStops1} stops</div>
@@ -4742,13 +4983,13 @@
           <span class="step-line"></span>
           <span class="step-icon">🔄</span>
           <div class="step-content">
-            <div class="step-main">Transfer at ${esc(cur.transferStop.name)}</div>
+            <div class="step-main">${cur.transferStop1 && cur.transferStop2 && cur.transferStop1.id !== cur.transferStop2.id && cur.transferStop1.name !== cur.transferStop2.name ? `Transfer: Walk ${cur.transferWalkTime || 1} min from ${esc(cur.transferStop1.name)} to ${esc(cur.transferStop2.name)}` : `Transfer at ${esc((cur.transferStop1 || cur.transferStop).name)}`}</div>
             <div class="step-meta">Connection buffer ~${cur.wait2} min</div>
           </div>
         </div>
         <div class="step-row">
           <span class="step-line"></span>
-          <span class="step-icon transit">${cur.r2.cat === "link" || cur.r2.cat === "sounder" ? "🚆" : "🚌"}</span>
+          <span class="step-icon transit">${cur.r2.cat === "link" || cur.r2.cat === "sounder" ? "🚆" : cur.r2.cat === "streetcar" ? "🚊" : cur.r2.cat === "ferry" ? "⛴️" : "🚌"}</span>
           <div class="step-content">
             <div class="step-main">Board ${badgeHTML(cur.r2)} towards ${esc(cur.p2.headsign || "Destination")}</div>
             <div class="step-meta">${cur.ride2} min · ${cur.numStops2} stops</div>
@@ -6031,6 +6272,7 @@
           flex: { type: "geojson", data: AREAS.flex },
           flexlabels: { type: "geojson", data: AREAS.flexLabels || empty },
           vehicles: { type: "geojson", data: empty },
+          tripline: { type: "geojson", data: empty },
           tripwalk: { type: "geojson", data: empty },
           trippts: { type: "geojson", data: empty },
           mask: { type: "geojson", data: maskGeoJSON() },
