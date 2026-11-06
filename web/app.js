@@ -1609,6 +1609,7 @@
     }
     live.count = feats.length;
     map.getSource("vehicles").setData({ type: "FeatureCollection", features: feats });
+    if (typeof updateLiveHud === "function") updateLiveHud();
   }
   const renderLive = renderVehicles;
   // Live positions are GPS fixes on the street; the map draws lines in lanes and simplified, so a
@@ -2321,24 +2322,172 @@
     b.scrollTop = 0;
   }
   const feedText = () => Object.keys(META.feeds).join(", ");
-  // Filter bar (under search, on every panel page): one chip per kind of service. A chip turns
-  // its whole group off, and back on to how it was (or to the defaults).
+
+  // ---------------------------------------------------------------- toast, favorites & sharing
+  const FAVS_KEY = "stm_favs_v2";
+  function getFavs() {
+    try {
+      const raw = localStorage.getItem(FAVS_KEY);
+      return raw ? JSON.parse(raw) : { routes: [], stops: [] };
+    } catch {
+      return { routes: [], stops: [] };
+    }
+  }
+  function saveFavs(f) {
+    try { localStorage.setItem(FAVS_KEY, JSON.stringify(f)); } catch {}
+  }
+  function isFav(type, id) {
+    const f = getFavs();
+    return (f[type === "route" ? "routes" : "stops"] || []).includes(id);
+  }
+  function toggleFav(type, id) {
+    const f = getFavs();
+    const key = type === "route" ? "routes" : "stops";
+    const list = f[key] || [];
+    const idx = list.indexOf(id);
+    let added = false;
+    if (idx >= 0) {
+      list.splice(idx, 1);
+      showToast("Removed from favorites");
+    } else {
+      list.push(id);
+      added = true;
+      showToast("Saved to favorites ★");
+    }
+    f[key] = list;
+    saveFavs(f);
+    return added;
+  }
+
+  let toastTimer = null;
+  function showToast(msg, duration = 2400) {
+    const t = $("#toast");
+    if (!t) return;
+    t.textContent = msg;
+    t.hidden = false;
+    t.classList.remove("toast-out");
+    t.classList.add("toast-in");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      t.classList.remove("toast-in");
+      t.classList.add("toast-out");
+      setTimeout(() => { t.hidden = true; }, 280);
+    }, duration);
+  }
+
+  async function shareTarget({ title, text, url }) {
+    if (navigator.share) {
+      try {
+        await navigator.share({ title, text, url });
+        return;
+      } catch (e) {
+        if (e.name === "AbortError") return;
+      }
+    }
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(url);
+        showToast("Link copied to clipboard ✓");
+      } else {
+        const input = document.createElement("input");
+        input.value = url;
+        document.body.appendChild(input);
+        input.select();
+        document.execCommand("copy");
+        document.body.removeChild(input);
+        showToast("Link copied to clipboard ✓");
+      }
+    } catch {
+      showToast("Could not copy link");
+    }
+  }
+
+  function directionsHTML(lat, lon, name) {
+    const qName = encodeURIComponent(name || "Transit Stop");
+    const appleUrl = `https://maps.apple.com/?daddr=${lat},${lon}&dirflg=r&q=${qName}`;
+    const googleUrl = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}&travelmode=transit`;
+    const transitAppUrl = `https://transitapp.com/r?lat=${lat}&lon=${lon}`;
+    return `<div class="dir-actions">
+      <span class="dir-label">Get Directions</span>
+      <div class="dir-btns">
+        <a class="dir-btn apple press" href="${appleUrl}" target="_blank" rel="noopener">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M11.182.008C11.148-.03 9.923.023 8.857 1.18c-1.002 1.092-.914 2.222-.887 2.302.04.015 1.05.097 2.054-.997.94-1.025 1.168-2.39 1.158-2.477zm1.328 3.513c-.13-.013-1.637.08-2.678.968-.992.845-1.55 2.023-1.55 3.398 0 2.247 1.547 4.298 2.766 5.485.677.662 1.41.677 1.942.427.533-.25 1.157-.25 1.69.002.533.25 1.266.234 1.942-.428.847-.824 1.487-1.898 1.87-2.73-1.53-.787-1.748-2.906-.388-4.148-.485-.807-1.378-1.464-2.463-1.874-.356-.135-.733-.207-1.13-.207z"/></svg>Apple Maps
+        </a>
+        <a class="dir-btn google press" href="${googleUrl}" target="_blank" rel="noopener">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>Google Maps
+        </a>
+        <a class="dir-btn transit press" href="${transitAppUrl}" target="_blank" rel="noopener">Transit App</a>
+      </div>
+    </div>`;
+  }
+
+  function routeBadgesHTML(r) {
+    const w = r.sched?.weekday;
+    if (!w) return "";
+    const headwayText = w.mid_n >= 3 ? `Every ${w.mid} min` : (w.am_n || w.pm_n) ? "Rush hour only" : `${w.trips} trips/day`;
+    const spanText = w.span_h >= 22 ? "24 Hours · Night Owl" : `Until ${w.last.replace(" ", " ")}`;
+    const peakText = (w.am_n && w.am < w.mid) ? `Peak: every ${w.am} min` : "";
+    return `<div class="freq-badge-row">
+      <span class="freq-pill headway" title="Typical midday wait time"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 1 0 8 8A8 8 0 0 0 8 0zm.5 4.5v3.25l2.5 1.5-.75 1.25-3.25-2V4.5z"/></svg>${esc(headwayText)}</span>
+      <span class="freq-pill span" title="Daily hours of service"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M6 .278a.768.768 0 0 1 .08.858 7.208 7.208 0 0 0-.878 3.46c0 4.021 3.278 7.277 7.318 7.277.527 0 1.04-.055 1.533-.16a.787.787 0 0 1 .81.316.733.733 0 0 1-.031.893A8.349 8.349 0 0 1 8.344 16C3.734 16 0 12.286 0 7.71 0 4.266 2.114 1.312 5.124.06A.752.752 0 0 1 6 .278z"/></svg>${esc(spanText)}</span>
+      ${peakText ? `<span class="freq-pill peak" title="Morning peak frequency"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M11.251.068a.5.5 0 0 1 .227.58L9.677 6.5H13a.5.5 0 0 1 .364.843l-8 8.5a.5.5 0 0 1-.842-.49L6.323 9.5H3a.5.5 0 0 1-.364-.843l8-8.5a.5.5 0 0 1 .615-.089z"/></svg>${esc(peakText)}</span>` : ""}
+    </div>`;
+  }
+
+  const NIGHT_OWL_IDS = new Set([
+    "sound-transit-1-line", "metro-a-line", "metro-c-line", "metro-d-line", "metro-e-line", "metro-h-line",
+    "metro-3", "metro-4", "metro-7", "metro-11", "metro-36", "metro-44", "metro-48", "metro-49",
+    "metro-70", "metro-120", "metro-124", "metro-160"
+  ]);
+  const isNightOwl = (r) => !!(r && (NIGHT_OWL_IDS.has(r.id) || (r.sched?.weekday?.late_n >= 2 && r.cat !== "peak") || (r.sched?.weekday?.span_h >= 21.5)));
+
+  const SNOW_IDS = new Set([
+    "sound-transit-1-line", "sound-transit-2-line", "metro-a-line", "metro-b-line", "metro-c-line",
+    "metro-d-line", "metro-e-line", "metro-f-line", "metro-h-line", "metro-3", "metro-4", "metro-7",
+    "metro-8", "metro-10", "metro-11", "metro-12", "metro-21", "metro-24", "metro-27", "metro-28",
+    "metro-31", "metro-32", "metro-33", "metro-36", "metro-40", "metro-44", "metro-48", "metro-49",
+    "metro-60", "metro-62", "metro-65", "metro-67", "metro-70", "metro-101", "metro-106", "metro-124",
+    "metro-131", "metro-132", "metro-150", "metro-160", "metro-165", "metro-181", "metro-182",
+    "metro-187", "metro-255", "metro-271", "metro-345", "metro-348", "metro-372", "st-512",
+    "st-522", "st-545", "st-550", "st-554"
+  ]);
+  const isSnowRoute = (r) => !!(r && (SNOW_IDS.has(r.id) || r.cat === "link" || r.cat === "rapidride"));
+
+  let specialFilter = null; // null | "nightowl" | "snow"
+
+  // Filter bar: one chip per kind of service + special filters (Night Owl, Snow)
   const FILTERS = [
     { key: "Trains", label: "Trains", color: () => LINE[theme].link },
     { key: "Buses", label: "Buses", color: () => LINE[theme].frequent },
     { key: "On the water", label: "Ferries", color: () => LINE[theme].ferry },
     { key: "On demand", label: "On demand", color: () => FLEX[theme] },
   ];
+  const SPECIAL_FILTERS = [
+    { key: "nightowl", label: "🌙 Night Owl", color: () => "#5e5ce6" },
+    { key: "snow", label: "❄️ Snow Routes", color: () => "#00c7be" },
+  ];
   const filterMemory = {};
   function renderFilterBar() {
     const bar = $("#filterBar");
     if (!bar) return;
-    bar.innerHTML = FILTERS.map((f) => {
+    const chips = FILTERS.map((f) => {
       const grp = LAYER_GROUPS.find((g) => g.title === f.key);
       const on = grp.items.some((l) => enabled.has(l.key));
       return `<button type="button" class="fchip${on ? " on" : ""}" data-f="${esc(f.key)}" aria-pressed="${on}"><span class="dot" style="background:${f.color()}"></span>${esc(f.label)}</button>`;
-    }).join("");
+    });
+    const specials = SPECIAL_FILTERS.map((f) => {
+      const on = specialFilter === f.key;
+      return `<button type="button" class="fchip${on ? " on" : ""}" data-f="${esc(f.key)}" data-special="1" aria-pressed="${on}"><span class="dot" style="background:${f.color()}"></span>${esc(f.label)}</button>`;
+    });
+    bar.innerHTML = chips.concat(specials).join("");
     for (const b of bar.querySelectorAll(".fchip")) b.addEventListener("click", () => {
+      if (b.dataset.special) {
+        const k = b.dataset.f;
+        specialFilter = specialFilter === k ? null : k;
+        renderFilterBar();
+        showHome(true);
+        return;
+      }
       const grp = LAYER_GROUPS.find((g) => g.title === b.dataset.f);
       const onNow = grp.items.filter((l) => enabled.has(l.key)).map((l) => l.key);
       if (onNow.length) {
@@ -2384,6 +2533,46 @@
     if (panelView === "layers") return showLayers(quiet);
     if (panelView === "alerts") return showAlerts(quiet);
     if (panelView === "corridor") return showCorridor(null, quiet);
+    if (panelView === "nearby") return;
+
+    if (specialFilter === "nightowl") {
+      const owlRoutes = ROUTES.filter((r) => isNightOwl(r) && LINEIDX[r.id] != null).sort(tagOrder);
+      const html = `<div class="home-view">
+        <div class="hero">
+          <span class="icon" style="background:#5e5ce6; color:#fff"><svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M6 .278a.768.768 0 0 1 .08.858 7.208 7.208 0 0 0-.878 3.46c0 4.021 3.278 7.277 7.318 7.277.527 0 1.04-.055 1.533-.16a.787.787 0 0 1 .81.316.733.733 0 0 1-.031.893A8.349 8.349 0 0 1 8.344 16C3.734 16 0 12.286 0 7.71 0 4.266 2.114 1.312 5.124.06A.752.752 0 0 1 6 .278z"/></svg></span>
+          <div><h2>🌙 Night Owl Network</h2><p>Service from Midnight to 5:00 AM</p></div>
+        </div>
+        <p class="hint">All-night & 24-hour service connecting Downtown Seattle, Capitol Hill, Ballard, West Seattle, Sea-Tac Airport, and Federal Way.</p>
+        <h3 class="section">${owlRoutes.length} Night Owl routes</h3>
+        ${routeRows(owlRoutes)}
+      </div>`;
+      setView(html);
+      for (const b of body().querySelectorAll("[data-route]")) {
+        b.addEventListener("click", () => selectRoute(b.dataset.route));
+        previewOnHover(b);
+      }
+      return;
+    }
+
+    if (specialFilter === "snow") {
+      const snowRoutes = ROUTES.filter((r) => isSnowRoute(r) && LINEIDX[r.id] != null).sort(tagOrder);
+      const html = `<div class="home-view">
+        <div class="hero">
+          <span class="icon" style="background:#00c7be; color:#fff"><svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a.5.5 0 0 1 .5.5v1.293l.707-.707a.5.5 0 1 1 .708.708L8.707 2.5l1.207 1.207.708-.707a.5.5 0 0 1 .707.707l-.707.707H12a.5.5 0 0 1 0 1h-1.293l.707.707a.5.5 0 0 1-.708.708L9.5 6.707 8.293 7.914l.707.708a.5.5 0 0 1-.707.707l-.707-.707V10a.5.5 0 0 1-1 0V8.621l-.707.707a.5.5 0 0 1-.708-.707l.707-.708L5.293 6.707l-.707.708a.5.5 0 0 1-.708-.708L4.586 6H3.293a.5.5 0 0 1 0-1h1.293l-.707-.707a.5.5 0 0 1 .707-.707l.707.707L6.5 5.5l1.207-1.207-.707-.707a.5.5 0 1 1 .707-.708L8.414 3.5V.5A.5.5 0 0 1 8 0z"/></svg></span>
+          <div><h2>❄️ Winter Snow Network</h2><p>Emergency Snow Network (ESN)</p></div>
+        </div>
+        <p class="hint">Designated arterial routes operating during severe winter storms. Avoids steep hill grades and unplowed neighborhood streets.</p>
+        <h3 class="section">${snowRoutes.length} Snow Network routes</h3>
+        ${routeRows(snowRoutes)}
+      </div>`;
+      setView(html);
+      for (const b of body().querySelectorAll("[data-route]")) {
+        b.addEventListener("click", () => selectRoute(b.dataset.route));
+        previewOnHover(b);
+      }
+      return;
+    }
+
     const shown = LAYERS.filter((l) => enabled.has(l.key)).length;
     const nTransit = alerts.list.length, nRoad = alerts.road.length, nAl = nTransit + nRoad;
     const worst = Math.max(alerts.list[0]?.level || 0, alerts.road[0]?.level || 0);
@@ -2396,8 +2585,31 @@
       </button></li>`;
     const keys = LAYERS.filter((l) => KEY_NAME[l.key] && enabled.has(l.key));
     const live = enabled.has("live");
+
+    const favs = getFavs();
+    const favRoutes = (favs.routes || []).map((id) => RBY[id]).filter(Boolean);
+    const favStops = (favs.stops || []).map((id) => stopIndex[id]).filter(Boolean);
+    const hasFavs = favRoutes.length > 0 || favStops.length > 0;
+    const favSectionHTML = hasFavs ? `
+      <h3 class="section fav-header">Favorites <span class="fav-sub">${favRoutes.length + favStops.length} saved</span></h3>
+      <ul class="group" role="list">
+        ${favRoutes.map((r) => `<li><button type="button" class="row route-row" data-route="${esc(r.id)}">
+          ${badgeHTML(r)}
+          <span class="txt"><span class="name">${esc(routeTitle(r))}</span><span class="desc">${esc(r.name)}</span></span>
+          <span class="hw">${esc(freqText(r))}</span>
+          <svg class="chev" width="8" height="13" viewBox="0 0 8 13" aria-hidden="true"><path d="M1.5 1.5 6.5 6.5l-5 5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button></li>`).join("")}
+        ${favStops.map((s) => `<li><button type="button" class="row" data-stop="${esc(s.key || s.id)}">
+          <span class="icon"><span class="stop-glyph" aria-hidden="true"></span></span>
+          <span class="txt"><span class="name">${esc(s.name)}</span><span class="desc">${s.kind === "stop" ? `Bus stop ${s.code ? "#" + s.code : ""}` : "Station"} · ${(s.routes || []).length} routes</span></span>
+          <svg class="chev" width="8" height="13" viewBox="0 0 8 13" aria-hidden="true"><path d="M1.5 1.5 6.5 6.5l-5 5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button></li>`).join("")}
+      </ul>` : "";
+
     const html = `<div class="home-view">
       <p class="live-line${live ? "" : " off"}"><span class="pulse" aria-hidden="true"></span><span${live ? ' id="liveDesc"' : ""}>${live ? esc(liveStatusText()) : "Vehicles are hidden"}</span></p>
+      ${favSectionHTML}
+      <h3 class="section">Explore</h3>
       <ul class="group" role="list"><li><button class="row nav-row" id="openLayers" type="button">
         <span class="icon"><svg viewBox="0 0 30 30" aria-hidden="true"><path d="M15 7 25 12 15 17 5 12Z" fill="var(--accent)" opacity=".9"/><path d="M6.5 16.3 15 20.5l8.5-4.2" stroke="var(--accent)" stroke-width="1.8" fill="none" stroke-linejoin="round" stroke-linecap="round" opacity=".55"/></svg></span>
         <span class="txt"><span class="name">Layers</span><span class="desc">${shown} of ${LAYERS.length} shown${isDefaultLayers() ? "" : " · customized"}</span></span>
@@ -2411,9 +2623,16 @@
     const existing = body().querySelector(".home-view");
     if (quiet && existing) existing.outerHTML = html;
     else setView(html);
-    $("#openLayers").addEventListener("click", () => { panelView = "layers"; showLayers(); openSheet("half"); });
+    $("#openLayers")?.addEventListener("click", () => { panelView = "layers"; showLayers(); openSheet("half"); });
     const oa = $("#openAlerts");
     if (oa) oa.addEventListener("click", () => { panelView = "alerts"; showAlerts(); openSheet("half"); });
+    for (const b of body().querySelectorAll("[data-route]")) {
+      b.addEventListener("click", () => selectRoute(b.dataset.route));
+      previewOnHover(b);
+    }
+    for (const b of body().querySelectorAll("[data-stop]")) {
+      b.addEventListener("click", () => selectStop(b.dataset.stop));
+    }
   }
   const layersHead = () => `<h2 class="view-title">Layers</h2>${isDefaultLayers() ? "" : `<button class="text-btn" id="resetLayers" type="button">Reset</button>`}`;
   function bindReset() {
@@ -2576,9 +2795,21 @@
     const span = !w ? "—" : w.span_h >= 22 ? "24 hours" : `${w.first.replace(" ", " ")} – ${w.last.replace(" ", " ")}`;
     const pats = (r.patterns || []).filter((p) => p.stops && p.stops.length);
     const color = keyColor(dkey(r));
+    const fav = isFav("route", r.id);
     let html = `${backBtn}
       <div class="hero">${badgeHTML(r, "xl")}<div><h2>${esc(routeTitle(r))}</h2><p>${esc(r.name || "")}</p></div></div>
       <div class="chips"><span class="chip"><span class="dot" style="background:${color}"></span>${esc(CAT_NAME[r.cat])}</span><span class="chip">${esc(r.agency)}</span>${logoChips([r])}<span class="chip live-chip" id="liveChip" hidden><span class="pulse" aria-hidden="true"></span><span class="n"></span></span></div>
+      <div class="card-actions">
+        <button type="button" class="action-btn fav-btn press${fav ? " is-fav" : ""}" id="routeFavBtn" data-fav-route="${esc(r.id)}" aria-label="${fav ? "Remove from favorites" : "Save to favorites"}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          <span>${fav ? "Favorited" : "Favorite"}</span>
+        </button>
+        <button type="button" class="action-btn share-btn press" id="routeShareBtn" aria-label="Share route link">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+          <span>Share</span>
+        </button>
+      </div>
+      ${routeBadgesHTML(r)}
       <div id="routeAlerts"></div>${r.id.startsWith("wsf-") ? showFerryInfo([...new Set(pats.flatMap((p) => p.stops).filter((id) => /^wsf-\d+$/.test(id)).map((id) => +id.slice(4)))]) : ""}
       <div class="tiles">
         <div class="tile"><span class="k">Midday on weekdays</span><span class="v">${w && w.mid_n >= 3 ? "Every " : ""}${freq}</span></div>
@@ -2594,6 +2825,21 @@
     if (r.url) html += `<a class="link-out press" href="${esc(r.url)}" target="_blank" rel="noopener">Official schedule and alerts<span aria-hidden="true">↗</span></a>`;
     setView(html);
     $("#back").addEventListener("click", clearSelection);
+    $("#routeFavBtn")?.addEventListener("click", () => {
+      const isNow = toggleFav("route", r.id);
+      const b = $("#routeFavBtn");
+      if (b) {
+        b.classList.toggle("is-fav", isNow);
+        b.querySelector("span").textContent = isNow ? "Favorited" : "Favorite";
+      }
+    });
+    $("#routeShareBtn")?.addEventListener("click", () => {
+      shareTarget({
+        title: `${routeTitle(r)} - ${r.name}`,
+        text: `Seattle Transit Map: ${routeTitle(r)}`,
+        url: `${location.origin}${location.pathname}#route-${r.id}`
+      });
+    });
     const renderStops = (i) => {
       const p = pats[i];
       $("#stoplist").innerHTML = p.stops.map((sid) => {
@@ -2652,9 +2898,24 @@
   function showStop(s) {
     const rs = s.routes.map((id) => RBY[id]).filter(Boolean).sort(tagOrder);
     const kind = s.kind === "stop" ? (s.code ? `Bus stop #${s.code}` : "Bus stop") : s.kind === "ferry" ? "Ferry terminal" : "Station";
+    const fav = isFav("stop", s.id);
+    const keys = [...new Set([s.key, ...((s.stops || []).map((sid) => stopIndex[sid] && stopIndex[sid].key).filter(Boolean))])];
+    const stopIds = stopIdsOf(s);
     let html = `${backBtn}<div class="hero"><span class="stop-glyph${s.kind === "stop" ? "" : " big"}" aria-hidden="true"></span><div><h2>${esc(s.name)}</h2><p>${esc(kind)}</p></div></div>
       ${logoChips(rs) ? `<div class="chips">${logoChips(rs)}</div>` : ""}
+      <div class="card-actions">
+        <button type="button" class="action-btn fav-btn press${fav ? " is-fav" : ""}" id="stopFavBtn" data-fav-stop="${esc(s.id)}" aria-label="${fav ? "Remove from favorites" : "Save to favorites"}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          <span>${fav ? "Favorited" : "Favorite"}</span>
+        </button>
+        <button type="button" class="action-btn share-btn press" id="stopShareBtn" aria-label="Share stop link">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+          <span>Share</span>
+        </button>
+      </div>
       <div id="stopAlerts"></div>${showFerryInfo(ferryTerminalIds(s))}
+      <h3 class="section">Upcoming departures</h3><div id="stopPanelDeps">${depRowsHTML(keys, stopIds)}</div>
+      ${directionsHTML(s.lat, s.lon, s.name)}
       <h3 class="section">${rs.length} route${rs.length === 1 ? "" : "s"} stop here</h3>${routeRows(rs)}`;
     if (s.kind !== "stop") {
       const near = nearbyStops(s, 250);
@@ -2663,6 +2924,25 @@
     }
     setView(html);
     $("#back").addEventListener("click", clearSelection);
+    $("#stopFavBtn")?.addEventListener("click", () => {
+      const isNow = toggleFav("stop", s.id);
+      const b = $("#stopFavBtn");
+      if (b) {
+        b.classList.toggle("is-fav", isNow);
+        b.querySelector("span").textContent = isNow ? "Favorited" : "Favorite";
+      }
+    });
+    $("#stopShareBtn")?.addEventListener("click", () => {
+      shareTarget({
+        title: `${s.name} - Transit Stop`,
+        text: `Seattle Transit Map: ${s.name}`,
+        url: `${location.origin}${location.pathname}#stop-${s.id}`
+      });
+    });
+    ensureDepartures(stopIds, () => {
+      const box = $("#stopPanelDeps");
+      if (box) box.innerHTML = depRowsHTML(keys, stopIds);
+    });
     for (const b of body().querySelectorAll("[data-route]")) { b.addEventListener("click", () => selectRoute(b.dataset.route)); previewOnHover(b); }
     fillStopAlerts(s);
     if ($("#ferryInfo")) { fillFerryInfo(); loadFerryTerminals(); }
@@ -3265,6 +3545,13 @@
     try { h = decodeURIComponent((location.hash || "").slice(1)); } catch { return; }
     if (h.startsWith("route-") && RBY[h.slice(6)]) selectRoute(h.slice(6));
     else if (/^(stop|station)-/.test(h) && stopIndex[h.replace(/^(stop|station)-/, "")]) selectStop(h.replace(/^(stop|station)-/, ""));
+    else if (h.startsWith("loc=")) {
+      const parts = h.slice(4).replace("z", "").split(",");
+      if (parts.length >= 2) {
+        const lat = parseFloat(parts[0]), lon = parseFloat(parts[1]), z = parseFloat(parts[2]) || 14.5;
+        if (!isNaN(lat) && !isNaN(lon) && map) map.jumpTo({ center: [lon, lat], zoom: z });
+      }
+    }
     else if (!h && selected) clearSelection();
   }
 
@@ -3407,6 +3694,142 @@
   }
 
   // ---------------------------------------------------------------- page chrome
+  // ---------------------------------------------------------------- nearby departures & live hud
+  function showNearbyDepartures(lng, lat) {
+    panelView = "nearby";
+    if (!STOPS || !STOPS.stops) return;
+    const cosLat = Math.cos(lat * Math.PI / 180);
+    const candidateStops = STOPS.stops.map((s) => {
+      const dx = (s.lon - lng) * 111320 * cosLat;
+      const dy = (s.lat - lat) * 110540;
+      const dist = Math.hypot(dx, dy);
+      return { s, dist };
+    }).filter((x) => x.dist <= 1200).sort((a, b) => a.dist - b.dist);
+
+    const topStops = candidateStops.slice(0, 5);
+    if (!topStops.length) {
+      setView(`${backBtn}<div class="hero"><span class="stop-glyph big" aria-hidden="true"></span><div><h2>Nearby Departures</h2><p>No stops within 1.2 km</p></div></div>
+        <p class="hint">You may be outside the Seattle regional transit network. Pan to Seattle, Bellevue, Tacoma, or Everett to view routes.</p>`);
+      $("#back").addEventListener("click", () => { panelView = "home"; showHome(); });
+      openSheet("half");
+      return;
+    }
+
+    const stopIds = topStops.flatMap((x) => stopIdsOf(x.s));
+    ensureDepartures(stopIds, () => {
+      if (panelView === "nearby") renderNearbyDepartures(topStops);
+    });
+    renderNearbyDepartures(topStops);
+    openSheet("half");
+  }
+
+  function renderNearbyDepartures(topStops) {
+    const cards = topStops.map(({ s, dist }) => {
+      const m = Math.round(dist);
+      const walkMin = Math.max(1, Math.round(m / 75));
+      const rs = s.routes.map((id) => RBY[id]).filter(Boolean).sort(tagOrder);
+      const keys = [s.key, ...((s.stops || []).map((sid) => stopIndex[sid] && stopIndex[sid].key).filter(Boolean))];
+      const sIds = stopIdsOf(s);
+      const live = liveDepartures(sIds, 3), sched = nextDepartures(keys, 3);
+      const list = (live && live.length) ? live : (sched && sched.length) ? sched : [];
+
+      let depsHTML = "";
+      if (list.length) {
+        depsHTML = `<div class="nearby-deps">${list.map((d) => {
+          const to = d.live ? d.toName : placeName(d.to);
+          const dot = d.live ? `<span class="sc-live" aria-hidden="true"></span>` : "";
+          const tText = d.t < 60 ? "now" : `${Math.round(d.t / 60)} min`;
+          return `<div class="nearby-dep-row press" data-route="${esc(d.r.id)}">
+            ${badgeHTML(d.r)}
+            <span class="nearby-headsign">${esc(to)}</span>
+            <span class="nearby-time${d.live ? " live" : ""}">${dot}${esc(tText)}</span>
+          </div>`;
+        }).join("")}</div>`;
+      } else {
+        depsHTML = `<div class="sc-badges">${rs.slice(0, 6).map((r) => badgeHTML(r)).join("")}</div>`;
+      }
+
+      return `<div class="nearby-card">
+        <div class="nearby-card-head">
+          <span class="nearby-stop-name press" data-stop="${esc(s.id)}">${esc(s.name)}</span>
+          <span class="nearby-dist">🚶 ${walkMin} min · ${m} m</span>
+        </div>
+        ${depsHTML}
+      </div>`;
+    }).join("");
+
+    const html = `${backBtn}
+      <div class="hero">
+        <span class="stop-glyph big" aria-hidden="true"></span>
+        <div><h2>Departures Near You</h2><p>Closest transit stops</p></div>
+      </div>
+      <div class="nearby-list">${cards}</div>
+      <p class="foot">Live countdowns update automatically from agency tracking.</p>`;
+
+    setView(html);
+    $("#back").addEventListener("click", () => { panelView = "home"; showHome(); });
+    for (const el of body().querySelectorAll("[data-stop]")) {
+      el.addEventListener("click", () => selectStop(el.dataset.stop));
+    }
+    for (const el of body().querySelectorAll("[data-route]")) {
+      el.addEventListener("click", () => selectRoute(el.dataset.route));
+    }
+  }
+
+  function setupLiveHud() {
+    const hud = $("#liveHud"), pop = $("#liveHudPop"), toggle = $("#hudLiveToggle");
+    if (!hud) return;
+    hud.addEventListener("click", (e) => {
+      if (e.target.closest("#hudLiveToggle") || e.target.closest(".switch")) return;
+      pop.hidden = !pop.hidden;
+      hud.setAttribute("aria-expanded", String(!pop.hidden));
+      updateLiveHudStats();
+    });
+    if (toggle) {
+      toggle.checked = enabled.has("live");
+      toggle.addEventListener("change", () => {
+        if (toggle.checked) enabled.add("live"); else enabled.delete("live");
+        store.set("layers2", [...enabled]);
+        applyLayerToggles();
+        updateLiveHud();
+      });
+    }
+    document.addEventListener("click", (e) => {
+      if (!hud.contains(e.target)) {
+        pop.hidden = true;
+        hud.setAttribute("aria-expanded", "false");
+      }
+    });
+  }
+
+  function updateLiveHudStats() {
+    let onTime = 0, late = 0;
+    if (live && live.status) {
+      for (const st of live.status.values()) {
+        if (st.dev != null) {
+          if (st.dev >= 180) late++; else onTime++;
+        }
+      }
+    }
+    const statOn = $("#statOnTime"), statLt = $("#statLate");
+    if (statOn) statOn.textContent = onTime ? `${onTime} on schedule` : "Fleet active";
+    if (statLt) statLt.textContent = late ? `${late} delayed (>3m)` : "No major delays";
+  }
+
+  function updateLiveHud() {
+    const txt = $("#liveHudText");
+    if (!txt) return;
+    if (!enabled.has("live")) {
+      txt.textContent = "Vehicles Off";
+      $("#liveHud")?.classList.add("off");
+      return;
+    }
+    $("#liveHud")?.classList.remove("off");
+    const count = live.count || live.vehicles?.size || 0;
+    txt.textContent = count ? `${count} Vehicles Live` : "Live Fleet";
+    updateLiveHudStats();
+  }
+
   let userMarker = null;
   function setupLocate() {
     const btn = $("#locateBtn");
@@ -3432,15 +3855,15 @@
             userMarker.setLngLat([lng, lat]);
           }
           if (map) {
-            map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 15), duration: 1000, essential: true });
+            map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 15.5), duration: 1000, essential: true });
           }
+          showNearbyDepartures(lng, lat);
         },
         (err) => {
           btn.classList.remove("locating");
           btn.classList.remove("active");
           const msg = err.code === 1 ? "Location access denied" : "Could not determine location";
-          tipShow("loc-err", `<span class="tt">${esc(msg)}</span>`, "", null);
-          setTimeout(tipHide, 3000);
+          showToast(msg);
         },
         { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
       );
@@ -3453,6 +3876,7 @@
     $("#zoomIn").addEventListener("click", () => map && map.zoomIn({ duration: 350 }));
     $("#zoomOut").addEventListener("click", () => map && map.zoomOut({ duration: 350 }));
     setupLocate();
+    setupLiveHud();
     const tb = $("#themeBtn");
     const cycle = { "": "dark", dark: "light", light: "" };
     const label = () => {

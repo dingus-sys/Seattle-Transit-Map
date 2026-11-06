@@ -630,3 +630,159 @@ table.sched td.good { color: var(--good); font-weight: 650; }
 .ferry-sailings span { color: var(--muted); }
 .ferry-notes { margin-top: 8px; }
 .ferry-notes summary { color: var(--muted); cursor: pointer; font-size: 13px; }
+
+/* ---------- Live Vehicle HUD Pill (Item E) ---------- */
+.live-hud {
+  position: fixed; z-index: 4;
+  top: calc(14px + env(safe-area-inset-top, 0px));
+  right: max(14px, env(safe-area-inset-right, 0px));
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 8px 14px 8px 12px; border-radius: 99px;
+  cursor: pointer; user-select: none; font: 600 13px/1 var(--font);
+  color: var(--ink); border: 0; outline: none;
+  animation: jelly-in .7s var(--ease-out) both;
+}
+.live-hud-dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--on); box-shadow: 0 0 8px var(--on);
+  animation: pulse-ring 2s infinite ease-out;
+}
+.live-hud-text { font-variant-numeric: tabular-nums; }
+.live-hud-pop {
+  position: absolute; top: calc(100% + 8px); right: 0;
+  width: 230px; padding: 14px; border-radius: 18px;
+  box-sizing: border-box; display: flex; flex-direction: column; gap: 10px;
+  cursor: default; animation: jelly-pop .35s var(--spring) both;
+}
+.live-hud-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.live-hud-stats { display: grid; gap: 6px; font-size: 13px; font-weight: 550; }
+.live-hud-stats .stat { display: flex; align-items: center; gap: 8px; }
+.stat-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.stat-dot.good { background: var(--good); }
+.stat-dot.delay { background: #ff9500; }
+.live-hud-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding-top: 8px; border-top: .5px solid var(--hairline); font-size: 13px; font-weight: 500;
+}
+
+/* ---------- iOS Liquid-Glass Toast ---------- */
+.toast {
+  position: fixed; z-index: 99;
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  left: 50%; transform: translateX(-50%);
+  padding: 10px 20px; border-radius: 99px;
+  font: 600 13.5px/1.3 var(--font); color: var(--ink);
+  pointer-events: none; text-align: center; white-space: nowrap;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, .14), inset 0 0 0 .5px var(--rim-hi);
+  transition: opacity .25s ease, transform .35s var(--spring);
+}
+.toast-in { animation: toast-up .4s var(--spring) both; }
+.toast-out { opacity: 0; transform: translateX(-50%) translateY(12px) scale(.92); }
+@keyframes toast-up {
+  0% { opacity: 0; transform: translateX(-50%) translateY(20px) scale(.9); }
+  100% { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+}
+
+/* ---------- Card Action Bar (Favorites, Share, Directions) ---------- */
+.card-actions {
+  display: flex; align-items: center; gap: 8px; margin: 10px 0 4px;
+}
+.action-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 12px; border-radius: 99px; border: 0;
+  background: var(--fill); color: var(--ink);
+  font: 600 13px/1 var(--font); cursor: pointer;
+  box-shadow: inset 0 0 0 .5px var(--rim);
+  transition: background-color .2s ease, transform .25s var(--spring);
+}
+.action-btn:hover { background: var(--fill-2); }
+.action-btn:active { transform: scale(.95); }
+.action-btn svg { width: 15px; height: 15px; }
+.fav-btn.is-fav svg { fill: #ffcc00; stroke: #e6a800; }
+.fav-btn.is-fav { background: color-mix(in srgb, #ffcc00 18%, var(--fill)); color: #b38600; }
+[data-dark="1"] .fav-btn.is-fav { color: #ffd633; }
+
+/* ---------- Directions buttons (Item G) ---------- */
+.dir-actions {
+  margin-top: 14px; padding: 12px; border-radius: var(--r-group);
+  background: var(--group); box-shadow: inset 0 0 0 .5px var(--rim);
+  display: grid; gap: 8px;
+}
+.dir-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+.dir-btns { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 6px; }
+.dir-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 8px 10px; border-radius: 10px; font-size: 12.5px; font-weight: 600;
+  text-decoration: none; border: 0; cursor: pointer;
+  background: var(--fill); color: var(--ink);
+  transition: transform .2s var(--spring), background-color .2s ease;
+}
+.dir-btn:hover { background: var(--fill-2); }
+.dir-btn:active { transform: scale(.96); }
+.dir-btn svg { flex: none; }
+.dir-btn.apple { color: var(--accent); }
+.dir-btn.google { color: #34a853; }
+.dir-btn.transit { color: #00aa6c; }
+
+/* ---------- Frequency & Span Badges (Item F) ---------- */
+.freq-badge-row {
+  display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 4px;
+}
+.freq-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 10px; border-radius: 99px;
+  font: 600 12.5px/1 var(--font); color: var(--ink);
+  background: var(--fill); box-shadow: inset 0 0 0 .5px var(--rim);
+}
+.freq-pill svg { color: var(--muted); }
+.freq-pill.headway { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
+.freq-pill.headway svg { color: var(--accent); }
+.freq-pill.span { background: color-mix(in srgb, #5e5ce6 12%, transparent); color: #5e5ce6; }
+.freq-pill.span svg { color: #5e5ce6; }
+.freq-pill.peak { background: color-mix(in srgb, #ff9500 12%, transparent); color: #c46d00; }
+[data-dark="1"] .freq-pill.peak { color: #ffaa33; }
+.freq-pill.peak svg { color: inherit; }
+
+/* ---------- Favorites Home Section (Item B) ---------- */
+.fav-header { display: flex; align-items: center; justify-content: space-between; }
+.fav-sub { font-size: 11.5px; color: var(--muted); font-weight: 500; }
+.fav-empty { padding: 12px 14px; font-size: 13px; color: var(--muted); text-align: center; }
+
+/* ---------- Nearby Departures (Item A) ---------- */
+.nearby-card {
+  padding: 12px 14px; background: var(--group); border-radius: var(--r-group);
+  margin-bottom: 10px; box-shadow: inset 0 0 0 .5px var(--rim);
+  display: grid; gap: 8px;
+}
+.nearby-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.nearby-stop-name { font-weight: 650; font-size: 14.5px; color: var(--ink); cursor: pointer; }
+.nearby-stop-name:hover { color: var(--accent); }
+.nearby-dist {
+  font-size: 11.5px; font-weight: 600; color: var(--muted);
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.nearby-deps { display: grid; gap: 4px; }
+.nearby-dep-row {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center; gap: 8px; padding: 4px 6px; border-radius: 8px;
+  cursor: pointer; transition: background-color .15s ease;
+}
+.nearby-dep-row:hover { background: var(--fill); }
+.nearby-headsign { font-size: 13px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nearby-time {
+  font-size: 13px; font-weight: 650; font-variant-numeric: tabular-nums;
+  display: inline-flex; align-items: center; gap: 5px; color: var(--ink);
+}
+.nearby-time.live { color: var(--good); }
+
+/* ---------- Filter bar chips for Night Owl & Snow ---------- */
+.fchip[data-f="nightowl"].on {
+  background: color-mix(in srgb, #5e5ce6 22%, var(--glass-solid));
+  color: #5e5ce6; box-shadow: inset 0 0 0 1px #5e5ce6, 0 2px 8px rgba(94, 92, 230, .25);
+}
+[data-dark="1"] .fchip[data-f="nightowl"].on { color: #a3a1f7; }
+.fchip[data-f="snow"].on {
+  background: color-mix(in srgb, #00c7be 22%, var(--glass-solid));
+  color: #008f89; box-shadow: inset 0 0 0 1px #00c7be, 0 2px 8px rgba(0, 199, 190, .25);
+}
+[data-dark="1"] .fchip[data-f="snow"].on { color: #6ee7e2; }

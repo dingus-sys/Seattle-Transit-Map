@@ -15,10 +15,10 @@ CACHE = os.environ.get("TRANSIT_CACHE", os.path.join(ROOT, ".cache"))
 # Bainbridge, Port Orchard, Gig Harbor) in the west; the Eastside out to Monroe and North Bend.
 REGION = {
     "name": "Puget Sound",
-    "west": -123.00,
-    "south": 46.95,
-    "east": -121.70,
-    "north": 48.08,
+    "west": -123.50,
+    "south": 46.80,
+    "east": -121.60,
+    "north": 48.85,
 }
 
 # The Amtrak Cascades line runs on past the map's edges, so it is kept out to here: well beyond
@@ -63,6 +63,18 @@ FEEDS = [
      "agency": {"96": "96"}, "default": "96"},
     {"key": "amtrak", "url": "https://content.amtrak.com/content/gtfs/GTFS.zip",
      "agency": {"51": "51"}, "default": "51", "only": "Cascades"},
+    {"key": "skagit", "url": "https://strweb.skagittransit.org/GTFS/google_transit.zip",
+     "agency": {"e0e4541a-2714-487b-b30c-f5c6cb4a310f": "skagit"}, "default": "skagit"},
+    {"key": "island", "url": "https://passio3.com/islandtransit/passioTransit/gtfs/google_transit.zip",
+     "agency": {"5245": "island"}, "default": "island"},
+    {"key": "clallam", "url": "https://irp.cdn-website.com/0eaf265e/files/uploaded/clallam_transit_gtfs.zip",
+     "agency": {"CTS": "clallam"}, "default": "clallam"},
+    {"key": "mason", "url": "http://data.trilliumtransit.com/gtfs/mason-wa-us/mason-wa-us.zip",
+     "agency": {"480": "mason"}, "default": "mason"},
+    {"key": "jefferson", "url": "http://mjcaction.com/MJC_GTFS_Public/jefferson_google_transit.zip",
+     "agency": {"jta": "jefferson"}, "default": "jefferson"},
+    {"key": "wta", "url": "https://github.com/whatcomtrans/publicwtadata/raw/master/GTFS/wta_gtfs_latest.zip",
+     "agency": {"14": "wta"}, "default": "wta"},
 ]
 
 # Live vehicle positions (OneBusAway Puget Sound, GTFS-realtime). The key is read from

@@ -37,6 +37,24 @@
   <div class="sheet-body" id="panelBody"></div>
 </aside>
 
+<div class="live-hud glass press" id="liveHud" role="button" aria-expanded="false" aria-label="Live vehicle tracking" tabindex="0">
+  <span class="live-hud-dot" aria-hidden="true"></span>
+  <span class="live-hud-text" id="liveHudText">Live Vehicles</span>
+  <div class="live-hud-pop glass" id="liveHudPop" hidden>
+    <div class="live-hud-title">Puget Sound Fleet</div>
+    <div class="live-hud-stats">
+      <div class="stat"><span class="stat-dot good"></span><span id="statOnTime">Checking live fleet…</span></div>
+      <div class="stat"><span class="stat-dot delay"></span><span id="statLate">--</span></div>
+    </div>
+    <div class="live-hud-row">
+      <span>Show on map</span>
+      <label class="switch"><input type="checkbox" id="hudLiveToggle" checked><span class="track"><span class="knob"></span></span></label>
+    </div>
+  </div>
+</div>
+
+<div class="toast glass" id="toast" hidden role="status" aria-live="polite"></div>
+
 <div class="controls" aria-label="Map controls">
   <div class="ctl-group glass">
     <button class="ctl press" id="zoomIn" type="button" aria-label="Zoom in"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button>

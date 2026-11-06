@@ -41,6 +41,12 @@ AGENCY = {
     "20": ("Kitsap Transit", "KT"),
     "51": ("Amtrak", "Amtrak"),
     "6289": ("Solid Ground", "Solid Ground"),
+    "skagit": ("Skagit Transit", "Skagit"),
+    "island": ("Island Transit", "Island"),
+    "clallam": ("Clallam Transit", "Clallam"),
+    "mason": ("Mason Transit", "Mason"),
+    "jefferson": ("Jefferson Transit", "Jefferson"),
+    "wta": ("Whatcom Transportation Authority", "WTA"),
 }
 
 # Map categories, in drawing priority order (first = most important).
