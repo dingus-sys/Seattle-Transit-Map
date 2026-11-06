@@ -14,7 +14,7 @@ const KCTMRibbons = (() => {
     return values ? values[1].split(",").slice(0, 3).map((v) => Number(v.trim()) / 255) : [0.3, 0.3, 0.3];
   };
 
-  function compile(features, { widthScale = 1, selected = false, hover = false } = {}) {
+  function compile(features, { widthScale = 1, selected = false, hover = false, glow = false } = {}) {
     const buckets = new Map();
     const bucket = (stack, role) => {
       const key = stack + ":" + role;
@@ -59,7 +59,7 @@ const KCTMRibbons = (() => {
         // A batch has one pattern; dashed bodies and dotted/tied centers are separate roles.
         if (pattern) buckets.get(stack + ":" + role).pattern = pattern;
       };
-      if (selected) stroke("glow", p.gm, 0);
+      if (selected || glow) stroke("glow", (p.gm || (p.wm + 2.8)) * (widthScale > 1 ? widthScale * 0.95 : 1), 0);
       if (!hover && !selected && p.sh > 0) stroke("shadow", p.sh + 0.8);
       if (!p.d) stroke("case", p.cm * widthScale * (hover ? 0.97 : 1));
       const w = p.wm * widthScale;

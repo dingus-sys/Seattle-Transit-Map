@@ -430,6 +430,8 @@
     // hovered line: drawn again, bolder, on top; nothing else changes. Two of them, so one route
     // can fade out while the next one swells in.
     for (const sl of HOVER_SLOTS) {
+      L.push({ id: `${sl}-glow`, type: "line", source: sl, layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": ["get", "c"], "line-width": px("gm", 2.0), "line-opacity": 0, "line-blur": 6 } });
       L.push({ id: `${sl}-case`, type: "line", source: sl, layout: { "line-cap": "round", "line-join": "round" },
         paint: { "line-color": P.casing, "line-width": px("cm", 1.6), "line-opacity": 0 } });
       L.push({ id: `${sl}-line`, type: "line", source: sl, layout: { "line-cap": "round", "line-join": "round" },
@@ -2544,6 +2546,9 @@
       map.setPaintProperty(L.id, "line-opacity", level === 1 ? base : typeof base === "number" ? base * level : ["*", base, level]);
     }
     map.setPaintProperty("badges", "icon-opacity", level === 1 ? 1 : Math.max(0.12, level * 0.6));
+    for (const id of ["trail-lines", "greenway-lines", "bikelane-lines"]) {
+      if (map.getLayer(id)) map.setPaintProperty(id, "line-opacity", level === 1 ? 0.85 : 0.22);
+    }
   }
   function applySelectionStyle() {
     if (!map || !map.getLayer("line-bus")) return;
@@ -4341,9 +4346,105 @@
     const empty = { type: "FeatureCollection", features: [] };
     if (map.getSource("tripwalk")) map.getSource("tripwalk").setData(empty);
     if (map.getSource("trippts")) map.getSource("trippts").setData(empty);
+    setNetDim(1);
+    focusOff();
   }
 
-  function renderTripOnMap(it) {
+  function getSoonestBus(it) {
+    if (!it || it.type === "walk") {
+      return {
+        type: "walk",
+        text: "Walk anytime",
+        clock: "Now",
+        isLive: false,
+        desc: "Direct pedestrian path"
+      };
+    }
+
+    const route = it.type === "direct" ? it.route : it.r1;
+    const stop = it.boardStop;
+    if (!route || !stop) return null;
+
+    const sIds = stopIdsOf(stop);
+    const keys = [...new Set([stop.key, stop.id, ...((stop.stops || []).map((sid) => stopIndex[sid] && stopIndex[sid].key).filter(Boolean))])].filter(Boolean);
+
+    // 1. Live departures check from agency
+    const live = liveDepartures(sIds, 30);
+    if (live && live.length) {
+      const match = live.find((d) => d.r && (d.r.id === route.id || d.r === route) && d.t >= -30);
+      if (match) {
+        const waitMin = Math.max(0, Math.round(match.t / 60));
+        const clockTime = new Date(Date.now() + Math.max(0, match.t) * 1000);
+        const clockStr = CLOCK.format(clockTime);
+        const text = match.t < 60 ? "Due now" : `in ${waitMin} min`;
+        return {
+          type: "live",
+          isLive: !!match.live,
+          mins: waitMin,
+          text,
+          clock: clockStr,
+          routeLabel: route.short || route.label,
+          desc: match.t < 60 ? `Bus due now (${clockStr})` : `Soonest bus in ${waitMin} min (${clockStr})`
+        };
+      }
+    }
+
+    // 2. Timetable schedule departures check
+    if (SCHED && DEP) {
+      const now = pacificNow();
+      let bestT = Infinity;
+      for (const k of keys) {
+        for (const [pi, i] of DEP.get(k) || []) {
+          const p = SCHED.patterns[pi];
+          if (!p || !p.f || i >= p.f.length - 1) continue;
+          const pRoute = ROUTES[p.r];
+          if (!pRoute || pRoute.id !== route.id) continue;
+
+          for (const [day, off] of [[now.day, 0], [now.prev, 86400]]) {
+            for (const [s0, du] of (SCHED.byPat[day] && SCHED.byPat[day].get(pi)) || []) {
+              const t = s0 + p.f[i] * du - off - now.secs;
+              if (t >= -20 && t < bestT) {
+                bestT = t;
+              }
+            }
+          }
+        }
+      }
+
+      if (bestT < Infinity) {
+        const waitMin = Math.max(0, Math.round(bestT / 60));
+        const clockTime = new Date(Date.now() + Math.max(0, bestT) * 1000);
+        const clockStr = CLOCK.format(clockTime);
+        const text = bestT < 60 ? "Due now" : `in ${waitMin} min`;
+        return {
+          type: "sched",
+          isLive: false,
+          mins: waitMin,
+          text,
+          clock: clockStr,
+          routeLabel: route.short || route.label,
+          desc: bestT < 60 ? `Scheduled now (${clockStr})` : `Soonest bus in ${waitMin} min (${clockStr})`
+        };
+      }
+    }
+
+    // 3. Fallback based on published route frequency
+    const headway = route.midHeadway || (route.sched?.weekday?.mid) || 15;
+    const waitMin = Math.round(Math.min(headway / 2, 12));
+    const clockTime = new Date(Date.now() + waitMin * 60000);
+    const clockStr = CLOCK.format(clockTime);
+    return {
+      type: "approx",
+      isLive: false,
+      mins: waitMin,
+      text: `~${waitMin} min wait`,
+      clock: clockStr,
+      routeLabel: route.short || route.label,
+      desc: `Every ~${headway} min (next ~${clockStr})`
+    };
+  }
+
+  function renderTripOnMap(it, { fit = false, isHover = false } = {}) {
     if (!map || !it || !dirOrigin || !dirDest) return;
     const walkFeatures = [];
     const ptFeatures = [];
@@ -4399,7 +4500,7 @@
         properties: { role: "alight", color: "#0284c7", label: "Exit" }
       });
 
-      focusRoutes([it.route]);
+      focusRoutes([it.route], false, { glow: true, widthScale: 1.85 });
     } else if (it.type === "transfer") {
       const boardPt = [it.boardStop.lon, it.boardStop.lat];
       const transPt = [it.transferStop.lon, it.transferStop.lat];
@@ -4433,7 +4534,7 @@
         properties: { role: "alight", color: "#0284c7", label: "Exit" }
       });
 
-      focusRoutes([it.r1, it.r2]);
+      focusRoutes([it.r1, it.r2], false, { glow: true, widthScale: 1.85 });
     }
 
     if (map.getSource("tripwalk")) {
@@ -4443,9 +4544,13 @@
       map.getSource("trippts").setData({ type: "FeatureCollection", features: ptFeatures });
     }
 
-    const lons = allCoords.map((c) => c[0]), lats = allCoords.map((c) => c[1]);
-    const bbox = [[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]];
-    map.fitBounds(bbox, { padding: fitPadding(), maxZoom: 15.2, duration: 900 });
+    setNetDim(0.28);
+
+    if (fit) {
+      const lons = allCoords.map((c) => c[0]), lats = allCoords.map((c) => c[1]);
+      const bbox = [[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]];
+      map.fitBounds(bbox, { padding: fitPadding(), maxZoom: 15.2, duration: 900 });
+    }
   }
 
   function executeTripPlan() {
@@ -4460,7 +4565,7 @@
     selectedItinerary = currentItineraries[0] || null;
     panelView = "directions";
     renderTripPlanView();
-    if (selectedItinerary) renderTripOnMap(selectedItinerary);
+    if (selectedItinerary) renderTripOnMap(selectedItinerary, { fit: true });
     else clearTripMap();
   }
 
@@ -4494,11 +4599,13 @@
     }
 
     const cur = selectedItinerary || currentItineraries[0];
+    const curSoonest = getSoonestBus(cur);
     const origTitle = dirOrigin.isLocation ? "Your location" : dirOrigin.name;
     const destTitle = dirDest.isLocation ? "Your location" : dirDest.name;
 
     const cardsHtml = currentItineraries.map((it, idx) => {
       const isAct = it === cur;
+      const soonest = getSoonestBus(it);
       let badgeHtml = "";
       let descHtml = "";
       if (it.type === "walk") {
@@ -4511,13 +4618,29 @@
         badgeHtml = `${badgeHTML(it.r1)} <span class="trip-arrow">➔</span> ${badgeHTML(it.r2)}`;
         descHtml = `Transfer at <b>${esc(it.transferStop.name)}</b> · ${it.numStops1 + it.numStops2} total stops`;
       }
+
+      const soonestPillHtml = soonest ? `<span class="trip-soonest-pill${soonest.isLive ? " is-live" : ""}">
+        <span class="soonest-dot"></span>
+        <span class="soonest-text">${soonest.text}${soonest.clock ? ` · ${soonest.clock}` : ""}</span>
+      </span>` : "";
+
+      const soonestFootHtml = soonest ? `<div class="trip-soonest-foot">
+        <span class="soonest-icon">${soonest.isLive ? "🟢" : soonest.type === "walk" ? "🚶" : "🕒"}</span>
+        <span class="soonest-foot-label">Soonest ${it.type === "transfer" && soonest.routeLabel ? `(${esc(soonest.routeLabel)}):` : "bus:"}</span>
+        <span class="soonest-foot-val"><b>${soonest.text}</b>${soonest.clock ? ` (${soonest.clock})` : ""}</span>
+      </div>` : "";
+
       return `<button type="button" class="trip-card${isAct ? " active" : ""}" data-plan-idx="${idx}">
         <div class="trip-card-head">
-          <span class="trip-time">${it.totalDuration} min</span>
+          <div class="trip-card-headline">
+            <span class="trip-time">${it.totalDuration} min</span>
+            ${soonestPillHtml}
+          </div>
           ${idx === 0 ? '<span class="trip-tag">Fastest</span>' : ""}
         </div>
         <div class="trip-ribbon">${badgeHtml}</div>
         <div class="trip-desc">${descHtml}</div>
+        ${soonestFootHtml}
       </button>`;
     }).join("");
 
@@ -4568,7 +4691,7 @@
           <span class="step-icon transit">${cur.route.cat === "link" || cur.route.cat === "sounder" ? "🚆" : cur.route.cat === "ferry" ? "⛴️" : "🚌"}</span>
           <div class="step-content">
             <div class="step-main">Board ${badgeHTML(cur.route)} towards ${esc(cur.pattern.headsign || "Destination")}</div>
-            <div class="step-meta">${cur.rideTime} min ride · ${cur.numStops} stop${cur.numStops > 1 ? "s" : ""} · Typical wait ~${cur.waitTime} min</div>
+            <div class="step-meta">${curSoonest ? `<span class="step-soonest${curSoonest.isLive ? " is-live" : ""}">${curSoonest.isLive ? "🟢 Live departure:" : "🕒 Soonest departure:"} <b>${curSoonest.text}</b>${curSoonest.clock ? ` (${curSoonest.clock})` : ""}</span> · ` : ""}${cur.rideTime} min ride · ${cur.numStops} stop${cur.numStops > 1 ? "s" : ""}</div>
           </div>
         </div>
         <div class="step-row">
@@ -4608,7 +4731,7 @@
           <span class="step-icon transit">${cur.r1.cat === "link" || cur.r1.cat === "sounder" ? "🚆" : "🚌"}</span>
           <div class="step-content">
             <div class="step-main">Board ${badgeHTML(cur.r1)} towards ${esc(cur.p1.headsign || "Transfer")}</div>
-            <div class="step-meta">${cur.ride1} min · ${cur.numStops1} stops</div>
+            <div class="step-meta">${curSoonest ? `<span class="step-soonest${curSoonest.isLive ? " is-live" : ""}">${curSoonest.isLive ? "🟢 Live departure:" : "🕒 Soonest departure:"} <b>${curSoonest.text}</b>${curSoonest.clock ? ` (${curSoonest.clock})` : ""}</span> · ` : ""}${cur.ride1} min · ${cur.numStops1} stops</div>
           </div>
         </div>
         <div class="step-row">
@@ -4686,13 +4809,59 @@
       toggleFavTrip(dirOrigin, dirDest, cur);
       renderTripPlanView();
     });
+    let tripHoverTimer = null;
     for (const b of body().querySelectorAll("[data-plan-idx]")) {
+      b.addEventListener("mouseenter", () => {
+        clearTimeout(tripHoverTimer);
+        const idx = +b.dataset.planIdx;
+        const it = currentItineraries[idx];
+        if (it) {
+          b.classList.add("is-hovered");
+          renderTripOnMap(it, { fit: false, isHover: true });
+        }
+      });
+      b.addEventListener("mouseleave", () => {
+        b.classList.remove("is-hovered");
+        clearTimeout(tripHoverTimer);
+        tripHoverTimer = setTimeout(() => {
+          if (panelView === "directions" && selectedItinerary) {
+            renderTripOnMap(selectedItinerary, { fit: false, isHover: false });
+          }
+        }, 70);
+      });
       b.addEventListener("click", () => {
+        clearTimeout(tripHoverTimer);
         const idx = +b.dataset.planIdx;
         if (currentItineraries[idx]) {
           selectedItinerary = currentItineraries[idx];
           renderTripPlanView();
-          renderTripOnMap(selectedItinerary);
+          renderTripOnMap(selectedItinerary, { fit: false });
+        }
+      });
+    }
+
+    // Ensure live departures for all boarding stops in the options list
+    const allBoardStops = currentItineraries.flatMap((it) => it.boardStop ? stopIdsOf(it.boardStop) : []);
+    if (allBoardStops.length) {
+      ensureDepartures(allBoardStops, () => {
+        if (panelView === "directions") {
+          for (const card of body().querySelectorAll("[data-plan-idx]")) {
+            const idx = +card.dataset.planIdx;
+            const it = currentItineraries[idx];
+            if (!it) continue;
+            const updated = getSoonestBus(it);
+            if (!updated) continue;
+            const pill = card.querySelector(".trip-soonest-pill");
+            if (pill) {
+              pill.className = `trip-soonest-pill${updated.isLive ? " is-live" : ""}`;
+              const textEl = pill.querySelector(".soonest-text");
+              if (textEl) textEl.textContent = `${updated.text}${updated.clock ? ` · ${updated.clock}` : ""}`;
+            }
+            const footVal = card.querySelector(".soonest-foot-val");
+            if (footVal) {
+              footVal.innerHTML = `<b>${esc(updated.text)}</b>${updated.clock ? ` (${esc(updated.clock)})` : ""}`;
+            }
+          }
         }
       });
     }
@@ -5439,7 +5608,7 @@
     });
     map.on("movestart", () => {
       if (moveRaf) { cancelAnimationFrame(moveRaf); moveRaf = 0; }
-      cur = null; queuedRoute = null; showLens(null); tipHide(true); focusOff(); highlightStop(null);
+      cur = null; queuedRoute = null; showLens(null); tipHide(true); if (panelView !== "directions") focusOff(); highlightStop(null);
     });
     map.on("dragstart", () => {
       if (locateMode !== "idle") {
@@ -5568,6 +5737,7 @@
     if (ribbons) { map.triggerRepaint(); return; }
     const sl = HOVER_SLOTS[i], v = hAnim[i].v;
     if (!map.getLayer(`${sl}-line`)) return;
+    if (map.getLayer(`${sl}-glow`)) map.setPaintProperty(`${sl}-glow`, "line-opacity", v * 0.45);
     map.setPaintProperty(`${sl}-case`, "line-opacity", v);
     map.setPaintProperty(`${sl}-line`, "line-opacity", Math.min(1, v * 1.4));
     map.setPaintProperty(`${sl}-arrows`, "icon-opacity", v);
@@ -5611,25 +5781,25 @@
     hoverFade(hSlot, 0, 140); hoverFade(next, 1, 180); hSlot = next;
     map.getSource("hoverstops").setData(fc([]));
   }
-  function focusRoutes(routes, again = false) {
+  function focusRoutes(routes, again = false, { glow = true, widthScale = 1.85 } = {}) {
     routes = (routes || []).filter((r) => r && LINEIDX[r.id] != null);
     if (!routes.length) return;
     clearTimeout(hoverTimer);
-    const key = "r:" + routes.map((r) => r.id).join(",");
+    const key = "r:" + routes.map((r) => r.id).join(",") + (glow ? ":g" : "");
     if (key === hoverKey && !again) return;
     hoverKey = key;
     hoverRoutes = routes;
     requestRoutePaths(routes.map((r) => LINEIDX[r.id]), false, (feats, mesh) => {
       if (hoverKey !== key) return;
       const lines = withColor(feats);
-      const drawing = mesh || (ribbons ? KCTMRibbons.compile(lines, { hover: true, widthScale: 1.65 }) : null);
+      const drawing = (ribbons ? KCTMRibbons.compile(lines, { hover: true, glow, widthScale }) : null) || mesh;
       if (again) { map.getSource(HOVER_SLOTS[hSlot]).setData(fc(lines)); if (ribbons) ribbons.update(HOVER_SLOTS[hSlot], drawing); }
       else {
         const next = 1 - hSlot;
         map.getSource(HOVER_SLOTS[next]).setData(fc(lines));
         if (ribbons) ribbons.update(HOVER_SLOTS[next], drawing);
-        hoverFade(hSlot, 0, 170);
-        hoverFade(next, 1, 240);
+        hoverFade(hSlot, 0, 140);
+        hoverFade(next, 1, 200);
         hSlot = next;
       }
       if (routes.length <= 4) {

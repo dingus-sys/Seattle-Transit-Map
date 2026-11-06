@@ -796,7 +796,7 @@ const KCTMGeom = (() => {
               if (coords.length < 2) return;
               const Lo = lay[run[k].E.k], w = wide ? Math.min(Lo.wk.get(v), W(v)) * Lo.s : Lo.sw.get(idx);
               out.push({ type: "Feature", properties: { r: idx, cat: v, e: run[k].E.k, zu, c: colors[v] || colors.local, d: c.dash ? 1 : 0,
-                ar: c.group === "water" ? 0 : arrow(run[k].E.dirOf(idx), run[k].fwd), wm: w + 0.14, cm: w + 0.55 },
+                ar: c.group === "water" ? 0 : arrow(run[k].E.dirOf(idx), run[k].fwd), wm: w + 0.14, cm: w + 0.55, gm: w + 2.8 },
               geometry: { type: "LineString", coordinates: coords.map(toLL) } });
             }, c.group === "water", false, easeAt);
           }
