@@ -1,0 +1,19 @@
+{
+  "name": "Seattle Transit Map",
+  "short_name": "Seattle Transit",
+  "description": "Real-time transit map for King County Metro, Sound Transit Link Light Rail, Washington State Ferries, and Puget Sound regional transit.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "logo-mark.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

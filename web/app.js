@@ -1223,9 +1223,30 @@
     }
     box.innerHTML = `<h3 class="section">Ferry terminal conditions</h3><div class="group ferry-conditions">${rows.length ? rows.join("") : `<p class="hint">${wsf.terminalAttempt && !wsf.terminalGot ? "Checking WSF terminal conditions…" : "WSF terminal conditions are currently unavailable."}</p>`}</div><p class="foot">${rows.length ? "From WSF, checked " + CLOCK.format(new Date(wsf.terminalGot)) + ". " : ""}Vehicle space changes as loading continues. Walk-on availability is separate.</p>`;
   }
+  const WSF_TERMINALS_INFO = {
+    1: { name: "Bainbridge Island", slug: "bainbridge-island" },
+    3: { name: "Bremerton", slug: "bremerton" },
+    4: { name: "Clinton", slug: "clinton" },
+    5: { name: "Edmonds", slug: "edmonds" },
+    7: { name: "Fauntleroy (West Seattle)", slug: "fauntleroy" },
+    8: { name: "Kingston", slug: "kingston" },
+    11: { name: "Mukilteo", slug: "mukilteo" },
+    14: { name: "Point Defiance (Tacoma)", slug: "point-defiance" },
+    18: { name: "Seattle (Colman Dock Pier 52)", slug: "seattle" },
+    20: { name: "Southworth (Port Orchard)", slug: "southworth" },
+    21: { name: "Tahlequah (Vashon)", slug: "tahlequah" },
+    22: { name: "Vashon Island", slug: "vashon-island" },
+  };
   function showFerryInfo(ids) {
-    if (!ids.length || !wsfOn()) return "";
-    return `<div id="ferryInfo" data-terminals="${ids.join(",")}"></div>`;
+    if (!ids.length) return "";
+    const termLinks = ids.map((id) => {
+      const info = WSF_TERMINALS_INFO[id];
+      if (!info) return "";
+      return `<a class="link-out press" href="https://wsdot.wa.gov/travel/washington-state-ferries/terminals/${info.slug}" target="_blank" rel="noopener" style="margin-top:4px">⛴️ ${esc(info.name)} Terminal Guide & Webcams<span aria-hidden="true">↗</span></a>`;
+    }).filter(Boolean).join("");
+    const driveUpLink = `<a class="link-out press" href="https://wsdot.wa.gov/travel/washington-state-ferries/ferry-status/vehicle-drive-space" target="_blank" rel="noopener" style="margin-top:4px">🚗 Real-time Drive-Up Vehicle Space by Terminal<span aria-hidden="true">↗</span></a>`;
+    const liveBox = wsfOn() ? `<div id="ferryInfo" data-terminals="${ids.join(",")}"></div>` : "";
+    return `${liveBox}<div class="ferry-terminal-links" style="margin:6px 0 10px">${termLinks}${driveUpLink}</div>`;
   }
   // ---------------------------------------------------------------- service alerts
   // Detours, closed or moved stops, canceled trips and other notices, from each agency's
@@ -1499,10 +1520,14 @@
   document.addEventListener("visibilitychange", () => { if (!document.hidden) pollAlerts(); });
   const geoDist = (a, b) => { const [x0, y0] = toM(a[0], a[1]), [x1, y1] = toM(b[0], b[1]); return Math.hypot(x1 - x0, y1 - y0); };
   const geoBearing = (a, b) => { const [x0, y0] = toM(a[0], a[1]), [x1, y1] = toM(b[0], b[1]); return (Math.atan2(x1 - x0, y1 - y0) * 180 / Math.PI + 360) % 360; };
+  const angleDiff = (a, b) => (((b - a + 540) % 360) - 180);
+  const lerpAngle = (a, b, t) => (a < 0 ? b : b < 0 ? a : ((a + angleDiff(a, b) * t) + 360) % 360);
   function vehPos(v, now) {
-    // glide from the last shown spot to the newest report across one polling interval,
-    // so live vehicles keep moving between updates instead of jumping
-    const t = Math.min(1, (now - v.t0) / POLL_MS);
+    // glide from the last shown spot to the newest report across the polling interval,
+    // with smooth dead-reckoning coasting between updates so live vehicles never jump
+    if (!v.from || !v.to) return v.to || [0, 0];
+    const dur = v.dur || POLL_MS;
+    const t = Math.min(1.25, Math.max(0, (now - v.t0) / dur));
     return [v.from[0] + (v.to[0] - v.from[0]) * t, v.from[1] + (v.to[1] - v.from[1]) * t];
   }
   async function pollLive() {
@@ -1584,11 +1609,13 @@
           if (prev) {
             const from = vehPos(prev, now), d = geoDist(from, to);
             const b = v.bearing != null && v.bearing > 0 ? v.bearing : d > 12 ? geoBearing(from, to) : prev.b;
+            const b0 = prev.curB != null ? prev.curB : (prev.b != null && prev.b >= 0 ? prev.b : b);
             const occ = occCode(v.occ);
-            Object.assign(prev, { from, to, t0: now, r, b, ts: v.ts, label: v.label || prev.label, vid: v.id, name, head: v.head || prev.head,
+            const dur = prev.t0 ? Math.max(5000, now - prev.t0) : POLL_MS;
+            Object.assign(prev, { from, to, t0: now, dur, r, b0, b, ts: v.ts, label: v.label || prev.label, vid: v.id, name, head: v.head || prev.head,
               occ: occ != null ? occ : prev.occ, occPct: v.occPct != null ? v.occPct : prev.occPct });
           } else {
-            live.vehicles.set(id, { id, agency: a, from: to, to, t0: now, r, b: v.bearing > 0 ? v.bearing : -1, ts: v.ts, label: v.label, vid: v.id, name, head: v.head,
+            live.vehicles.set(id, { id, agency: a, from: to, to, t0: now, dur: POLL_MS, r, b0: v.bearing > 0 ? v.bearing : -1, b: v.bearing > 0 ? v.bearing : -1, ts: v.ts, label: v.label, vid: v.id, name, head: v.head,
               occ: occCode(v.occ), occPct: v.occPct });
           }
         } catch (e) { /* one odd report doesn't stop the rest */ }
@@ -1669,8 +1696,14 @@
     let list = [];
     if (!enabled.has("live")) list = [];
     else if (mode === "live") {
-      for (const v of live.vehicles.values()) if (Date.now() / 1000 - v.ts <= 300 && Date.now() - (live.fresh?.[v.agency] || 0) < 90000)
-        list.push({ id: v.id, r: v.r, pos: vehPos(v, now), b: v.b, name: v.name });
+      for (const v of live.vehicles.values()) if (Date.now() / 1000 - v.ts <= 300 && Date.now() - (live.fresh?.[v.agency] || 0) < 90000) {
+        const dur = v.dur || POLL_MS;
+        const t = Math.min(1.25, Math.max(0, (now - v.t0) / dur));
+        const pos = vehPos(v, now);
+        const b = (v.b0 != null && v.b != null && v.b >= 0 && v.b0 >= 0) ? lerpAngle(v.b0, v.b, Math.min(1, t)) : v.b;
+        v.curB = b;
+        list.push({ id: v.id, r: v.r, pos, b, name: v.name });
+      }
       list.push(...estVehicles().filter((v) => !(v.r.rt || []).some((rt) => Date.now() - (live.fresh?.[rt.split("_")[0]] || 0) < 90000)));
     }
     else if (mode === "est") list = estVehicles();
@@ -1838,15 +1871,37 @@
       chip.querySelector("span.n").textContent = (n === 0 ? "None running right now" : `${n} running now`) + (live.mode === "est" || n > 0 && running.every((v) => v.est) ? " (timetable)" : "");
     }
   }
+  let liveAnimRaf = 0, lastAnimMs = 0;
+  function animVehicles(now) {
+    liveAnimRaf = 0;
+    if (!enabled.has("live") || document.hidden || !map || !map.getSource("vehicles")) return;
+    if (now - lastAnimMs >= 35) {
+      lastAnimMs = now;
+      renderVehicles(now);
+    }
+    liveAnimRaf = requestAnimationFrame(animVehicles);
+  }
+  function startAnim() {
+    if (!liveAnimRaf && enabled.has("live") && !document.hidden) {
+      liveAnimRaf = requestAnimationFrame(animVehicles);
+    }
+  }
+  function stopAnim() {
+    if (liveAnimRaf) { cancelAnimationFrame(liveAnimRaf); liveAnimRaf = 0; }
+  }
   function startLive() {
-    if (!LIVE || live.timer) return;
-    pollLive();
-    pollAlerts();
-    live.timer = setInterval(pollLive, POLL_MS);
+    if (!LIVE) return;
+    if (!live.timer) {
+      pollLive();
+      pollAlerts();
+      live.timer = setInterval(pollLive, POLL_MS);
+    }
+    startAnim();
   }
   function stopLive() {
     clearInterval(live.timer);
     live.timer = 0;
+    stopAnim();
     renderVehicles();
     updateLiveUI();
   }
@@ -1926,7 +1981,14 @@
     const d = ctx.getImageData(0, 0, S, S);
     if (!map.hasImage(id)) map.addImage(id, { width: S, height: S, data: d.data }, { pixelRatio: dpr });
   }
-  document.addEventListener("visibilitychange", () => { if (!document.hidden && live.timer) pollLive(); });
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      if (live.timer) pollLive();
+      startAnim();
+    } else {
+      stopAnim();
+    }
+  });
   setInterval(updateLiveUI, 3000);
 
   // ---------------------------------------------------------------- selection
@@ -2407,14 +2469,18 @@
     // the selected route shows its own arrows; the faded network's would only be noise
     if (map.getLayer("arrows")) map.setLayoutProperty("arrows", "visibility", dim ? "none" : "visible");
   }
-  function setHash(h) {
-    try { history.replaceState(null, "", h ? "#" + h : location.pathname + location.search); } catch { /* sandboxed */ }
+  function setHash(h, push = false) {
+    const url = h ? "#" + h : location.pathname + location.search;
+    try {
+      if (push) history.pushState({ hash: h }, "", url);
+      else history.replaceState({ hash: h }, "", url);
+    } catch { /* sandboxed */ }
   }
-  function selectRoute(id, { fit = true } = {}) {
+  function selectRoute(id, { fit = true, push = true } = {}) {
     const r = RBY[id];
     if (!r) return;
     selected = { type: "route", id };
-    setHash("route-" + id);
+    setHash("route-" + id, push);
     rebuild();
     applySelectionStyle();
     showRouteStops(r);
@@ -2422,22 +2488,22 @@
     renderLive();
     if (fit && r.bbox && r.bbox[0] < 180) map.fitBounds([[r.bbox[0], r.bbox[1]], [r.bbox[2], r.bbox[3]]], { padding: fitPadding(), maxZoom: 15, duration: 800 });
   }
-  function selectStop(id, { fly = true } = {}) {
+  function selectStop(id, { fly = true, push = true } = {}) {
     const s = stopIndex[id];
     if (!s) return;
     selected = { type: s.kind === "stop" ? "stop" : "station", id };
-    setHash((s.kind === "stop" ? "stop-" : "station-") + id);
+    setHash((s.kind === "stop" ? "stop-" : "station-") + id, push);
     rebuild();
     applySelectionStyle();
     showRouteStops(null);
     showStop(s);
     if (fly) map.flyTo({ center: [s.lon, s.lat], zoom: Math.max(map.getZoom(), s.kind === "stop" ? 16 : 14.5), padding: fitPadding(), duration: 800 });
   }
-  function clearSelection() {
+  function clearSelection({ push = false } = {}) {
     selected = null;
     panelView = "home";
     corridorRoutes = [];
-    setHash("");
+    setHash("", push);
     closePopup();
     rebuild();
     applySelectionStyle();
@@ -2920,6 +2986,94 @@
     return keys.map((k) => `<span class="chip logo-chip" title="${esc(LOGO_NAME[k])}">${logoImg(k, LOGO_NAME[k])}</span>`).join("");
   }
 
+  const PARK_AND_RIDES = [
+    { name: "Northgate Station Garage & P&R", stalls: 1497, bikes: "BikeLink on-demand lockers & cages", agency: "Sound Transit / Metro", lon: -122.3278, lat: 47.7027, transit: "1 Line Light Rail, Route 40, 67, 320, 345, 348" },
+    { name: "Lynnwood City Center Station Garage", stalls: 1670, bikes: "BikeLink secure lockers & bike cage", agency: "Sound Transit", lon: -122.2963, lat: 47.8152, transit: "1 Line Light Rail, Swift Orange, Swift Blue, CT 201/202" },
+    { name: "Mountlake Terrace Transit Center", stalls: 890, bikes: "BikeLink lockers & racks", agency: "Sound Transit", lon: -122.3135, lat: 47.7885, transit: "1 Line Light Rail, CT 112, 119, 130" },
+    { name: "Shoreline North / 185th Station Garage", stalls: 500, bikes: "Secure bike room & lockers", agency: "Sound Transit", lon: -122.3292, lat: 47.7634, transit: "1 Line Light Rail, Route 333, 348" },
+    { name: "Shoreline South / 148th Station Garage", stalls: 500, bikes: "Secure bike room & lockers", agency: "Sound Transit", lon: -122.3299, lat: 47.7365, transit: "1 Line Light Rail, Route 333, 345, 348" },
+    { name: "Eastgate Park & Ride", stalls: 1614, bikes: "BikeLink lockers & bike shelter", agency: "King County Metro", lon: -122.1456, lat: 47.5768, transit: "Route 212, 218, 226, 240, 241, 245, 271, 554" },
+    { name: "South Kirkland Park & Ride", stalls: 830, bikes: "BikeLink lockers & storage", agency: "King County Metro", lon: -122.1932, lat: 47.6439, transit: "Route 249, 250, 255, RapidRide K Line (future)" },
+    { name: "Mercer Island Park & Ride", stalls: 447, bikes: "BikeLink lockers", agency: "Sound Transit / Metro", lon: -122.2331, lat: 47.5878, transit: "2 Line Light Rail, Route 204, 216, 550, 554" },
+    { name: "Overlake Transit Center", stalls: 320, bikes: "BikeLink lockers", agency: "Sound Transit", lon: -122.1385, lat: 47.6447, transit: "2 Line Light Rail, RapidRide B Line, Route 225, 245, 250, 545" },
+    { name: "South Bellevue Station Garage", stalls: 1500, bikes: "BikeLink lockers & bike room", agency: "Sound Transit", lon: -122.1882, lat: 47.5898, transit: "2 Line Light Rail, Route 241, 249" },
+    { name: "Redmond Technology Station Garage", stalls: 300, bikes: "BikeLink lockers", agency: "Sound Transit", lon: -122.1287, lat: 47.6416, transit: "2 Line Light Rail, RapidRide B Line, Route 245, 249, 542, 545" },
+    { name: "Angle Lake Station Garage", stalls: 1120, bikes: "Secure bike lockers & racks", agency: "Sound Transit", lon: -122.2985, lat: 47.4441, transit: "1 Line Light Rail, RapidRide A Line" },
+    { name: "Federal Way Transit Center", stalls: 1190, bikes: "BikeLink lockers", agency: "Sound Transit", lon: -122.3082, lat: 47.3175, transit: "RapidRide A Line, ST 574, 577, 578, PT 402, 500" },
+    { name: "Tukwila International Blvd Station", stalls: 600, bikes: "BikeLink lockers", agency: "Sound Transit", lon: -122.2858, lat: 47.4636, transit: "1 Line Light Rail, RapidRide F Line, Route 124, 128" },
+    { name: "Kent Station Garage", stalls: 996, bikes: "BikeLink lockers", agency: "Sound Transit", lon: -122.2335, lat: 47.3838, transit: "Sounder S Line, RapidRide I Line, Route 150, 160, 161, 168" },
+    { name: "Auburn Station Garage", stalls: 633, bikes: "BikeLink lockers", agency: "Sound Transit", lon: -122.2285, lat: 47.3075, transit: "Sounder S Line, ST 578, Route 180, 181, 184" },
+    { name: "Sumner Station Park & Ride", stalls: 602, bikes: "Bike lockers & racks", agency: "Sound Transit", lon: -122.2415, lat: 47.2036, transit: "Sounder S Line, PT 496, ST 596" },
+    { name: "Puyallup Station Garage", stalls: 1065, bikes: "Bike lockers & racks", agency: "Sound Transit", lon: -122.2965, lat: 47.1908, transit: "Sounder S Line, PT 400, 402, 409, 425" },
+    { name: "Tacoma Dome Station Garage", stalls: 2283, bikes: "BikeLink lockers & bike room", agency: "Pierce Transit / Sound Transit", lon: -122.4225, lat: 47.2405, transit: "Sounder S Line, T Line Light Rail, Amtrak Cascades, ST 574, 590, 594" },
+    { name: "Kenmore Park & Ride", stalls: 603, bikes: "Bike lockers & racks", agency: "King County Metro", lon: -122.2474, lat: 47.7562, transit: "Route 372, 522 Express" },
+    { name: "Bothell Park & Ride", stalls: 220, bikes: "Bike lockers", agency: "King County Metro", lon: -122.2081, lat: 47.7592, transit: "Route 238, 372, 522 Express" },
+    { name: "Kingsgate Park & Ride", stalls: 502, bikes: "Bike lockers", agency: "King County Metro", lon: -122.1793, lat: 47.7121, transit: "Route 239, 252, 257, 930" }
+  ];
+
+  const STEEP_HILLS = [
+    {
+      id: "hill-counterbalance",
+      name: "Queen Anne Counterbalance (14% - 18.5% Grade)",
+      short: "Counterbalance",
+      grade: "14% - 18.5%",
+      lon: -122.3564,
+      lat: 47.6258,
+      location: "Queen Anne Ave N between W Roy St and W Galer St",
+      routes: ["2", "13", "29"],
+      snowBypass: "Route 2 & 13 bypass Queen Anne Counterbalance via 1st Ave N or 6th Ave W during winter storms.",
+      desc: "One of Seattle's steepest transit street corridors, historically operated with an underground cable counterbalance streetcar from 1898 to 1940. Electric trolleybuses use regenerative electric braking to negotiate this hill."
+    },
+    {
+      id: "hill-james",
+      name: "James Street Hill (16% Grade)",
+      short: "James St Hill",
+      grade: "16%",
+      lon: -122.3275,
+      lat: 47.6045,
+      location: "James St between 3rd Ave and 9th Ave (First Hill)",
+      routes: ["3", "4"],
+      snowBypass: "Route 3 & 4 divert via Yesler Way / Boren Ave during adverse snow weather.",
+      desc: "Steep ascent connecting Downtown Seattle and Pioneer Square with First Hill hospitals (Harborview Medical Center). One of the first transit street segments diverted when icy road conditions occur."
+    },
+    {
+      id: "hill-madison",
+      name: "Madison Street Corridor (12% - 14% Grade)",
+      short: "Madison Incline",
+      grade: "12% - 14%",
+      lon: -122.3282,
+      lat: 47.6095,
+      location: "Madison St between 1st Ave and 8th Ave",
+      routes: ["G-Line", "G", "12"],
+      snowBypass: "RapidRide G Line operates high-traction 60-ft hybrid electric buses. Heavy snow advisory may restrict operation.",
+      desc: "Historic cable car corridor connecting Elliott Bay to First Hill and Capitol Hill. Today traversed by the RapidRide G Line with center-running transit priority and median stations."
+    },
+    {
+      id: "hill-denny",
+      name: "Denny Way Hill (10% - 12% Grade)",
+      short: "Denny Way Hill",
+      grade: "10% - 12%",
+      lon: -122.3385,
+      lat: 47.6186,
+      location: "Denny Way between Broad St and Fairview / Bellevue Ave",
+      routes: ["8"],
+      snowBypass: "Route 8 frequently faces delays and winter diversions at the Denny / Fairview bottleneck.",
+      desc: "Traversed by Metro Route 8 ('The L8') across the Denny Regrade edge between Belltown, South Lake Union, and Capitol Hill."
+    },
+    {
+      id: "hill-yesler",
+      name: "Yesler Way (11% Grade)",
+      short: "Yesler Way",
+      grade: "11%",
+      lon: -122.3235,
+      lat: 47.6018,
+      location: "Yesler Way between 3rd Ave and 8th Ave (First Hill / ID)",
+      routes: ["27"],
+      snowBypass: "Treated as primary winter arterial serving Harborview Hospital and Central District.",
+      desc: "Site of Seattle's first cable car line (1888) connecting Pioneer Square to Lake Washington."
+    }
+  ];
+
   function showRoute(r) {
     const w = r.sched.weekday;
     const freq = w && w.mid_n >= 3 ? `${w.mid}<small> min</small>` : w && (w.am_n || w.pm_n) ? "Rush hour" : w ? `${w.trips}<small> trips</small>` : "Weekends";
@@ -2927,6 +3081,9 @@
     const pats = (r.patterns || []).filter((p) => p.stops && p.stops.length);
     const color = keyColor(dkey(r));
     const fav = isFav("route", r.id);
+    const steepHill = STEEP_HILLS.find((h) => h.routes.includes(r.short) || h.routes.includes(r.label) || h.routes.includes(r.id) || (r.short === "G" && h.id === "hill-madison"));
+    const hillNotice = steepHill ? `<div class="snow-banner" style="border-color:#f59e0b;background:color-mix(in srgb, #f59e0b 14%, var(--glass));"><span class="snow-icon">⚠️</span><span><strong>Steep Grade Corridor (${steepHill.grade}):</strong> Traverses ${esc(steepHill.location)}. ${esc(steepHill.snowBypass)}</span></div>` : "";
+    const snowBanner = specialFilter === "snow" ? `<div class="snow-banner"><span class="snow-icon">${isSnowRoute(r) ? "❄️" : "⚠️"}</span><span>${isSnowRoute(r) ? "<strong>Active Winter Snow Route:</strong> Operates on plowed arterials during winter storms. Avoids steep hills and non-essential branches." : "<strong>Suspended during Snow Emergencies:</strong> This route is not part of the Emergency Snow Network and pauses during severe winter conditions."}</span></div>` : "";
     let html = `${backBtn}
       <div class="hero">${badgeHTML(r, "xl")}<div><h2>${esc(routeTitle(r))}</h2><p>${esc(r.name || "")}</p></div></div>
       <div class="chips"><span class="chip"><span class="dot" style="background:${color}"></span>${esc(CAT_NAME[r.cat])}</span><span class="chip">${esc(r.agency)}</span>${logoChips([r])}<span class="chip live-chip" id="liveChip" hidden><span class="pulse" aria-hidden="true"></span><span class="n"></span></span></div>
@@ -2940,6 +3097,8 @@
           <span>Share</span>
         </button>
       </div>
+      ${snowBanner}
+      ${hillNotice}
       ${routeBadgesHTML(r)}
       <div id="routeAlerts"></div>${r.id.startsWith("wsf-") ? showFerryInfo([...new Set(pats.flatMap((p) => p.stops).filter((id) => /^wsf-\d+$/.test(id)).map((id) => +id.slice(4)))]) : ""}
       <div class="tiles">
@@ -2955,7 +3114,13 @@
     }
     if (r.url) html += `<a class="link-out press" href="${esc(r.url)}" target="_blank" rel="noopener">Official schedule and alerts<span aria-hidden="true">↗</span></a>`;
     setView(html);
-    $("#back").addEventListener("click", clearSelection);
+    $("#back").addEventListener("click", () => {
+      if (history.length > 1 && window.history.state?.hash) {
+        history.back();
+      } else {
+        clearSelection({ push: false });
+      }
+    });
     $("#routeFavBtn")?.addEventListener("click", () => {
       const isNow = toggleFav("route", r.id);
       const b = $("#routeFavBtn");
@@ -3032,7 +3197,12 @@
     const fav = isFav("stop", s.id);
     const keys = [...new Set([s.key, ...((s.stops || []).map((sid) => stopIndex[sid] && stopIndex[sid].key).filter(Boolean))])];
     const stopIds = stopIdsOf(s);
-    let html = `${backBtn}<div class="hero stop-hero press" data-stop="${esc(s.id)}" role="button" tabindex="0" title="Highlight stop on map"><span class="stop-glyph${s.kind === "stop" ? "" : " big"}" aria-hidden="true"></span><div><h2>${esc(s.name)}</h2><p>${esc(kind)}</p></div></div>
+    const bayMatch = s.name.match(/\bBay\s+([A-Z0-9]+)\b/i);
+    const bayBadge = bayMatch ? `<span class="bay-pill">Bay ${esc(bayMatch[1])}</span>` : "";
+    const cleanName = s.name.replace(/\s*-\s*Bay\s+[A-Z0-9]+/i, "").trim();
+    const isRail = s.kind === "station" || rs.some((r) => ["link", "sounder"].includes(r.cat));
+    const elevatorHTML = isRail ? `<a class="elevator-link press" href="https://www.soundtransit.org/ride-with-us/service-alerts" target="_blank" rel="noopener">♿ Live Station Elevators & Escalators Status ↗</a>` : "";
+    let html = `${backBtn}<div class="hero stop-hero press" data-stop="${esc(s.id)}" role="button" tabindex="0" title="Highlight stop on map"><span class="stop-glyph${s.kind === "stop" ? "" : " big"}" aria-hidden="true"></span><div><h2>${esc(cleanName)}${bayBadge}</h2><p>${esc(kind)}</p>${elevatorHTML}</div></div>
       ${logoChips(rs) ? `<div class="chips">${logoChips(rs)}</div>` : ""}
       <div class="card-actions">
         <button type="button" class="action-btn fav-btn press${fav ? " is-fav" : ""}" id="stopFavBtn" data-fav-stop="${esc(s.id)}" aria-label="${fav ? "Remove from favorites" : "Save to favorites"}">
@@ -3055,8 +3225,12 @@
     }
     setView(html);
     $("#back").addEventListener("click", () => {
-      panelView = "home";
-      clearSelection();
+      if (history.length > 1 && window.history.state?.hash) {
+        history.back();
+      } else {
+        panelView = "home";
+        clearSelection({ push: false });
+      }
     });
     $("#stopFavBtn")?.addEventListener("click", () => {
       const isNow = toggleFav("stop", s.id);
@@ -3122,6 +3296,22 @@
         searchIndex.push({ kind: "trail", id: p.name, key: `${p.name} trail bike bicycle cycling ${p.region || ""}`.toLowerCase(), f });
       }
     }
+    for (const pr of PARK_AND_RIDES) {
+      searchIndex.push({
+        kind: "pr",
+        id: pr.name,
+        key: `${pr.name} park and ride park-and-ride p&r parking lot garage stalls transit center bikelink bike lockers ${pr.agency}`.toLowerCase(),
+        pr
+      });
+    }
+    for (const hill of STEEP_HILLS) {
+      searchIndex.push({
+        kind: "hill",
+        id: hill.id,
+        key: `${hill.name} ${hill.short} steep hill incline grade counterbalance slope snow bypass ${hill.location}`.toLowerCase(),
+        hill
+      });
+    }
   }
   function search(q) {
     q = q.trim().toLowerCase();
@@ -3129,15 +3319,17 @@
     const words = q.split(/\s+/), scored = [];
     for (const it of searchIndex) {
       if (!words.every((w) => it.key.includes(w))) continue;
-      let score = it.kind === "route" ? 0 : it.kind === "station" ? 10 : it.kind === "trail" ? 14 : 20;
+      let score = it.kind === "route" ? 0 : it.kind === "station" ? 10 : it.kind === "pr" ? 12 : it.kind === "trail" ? 14 : it.kind === "hill" ? 16 : 20;
       if (it.kind === "route" && (it.label === q || it.r.short.toLowerCase() === q)) score -= 100;
       if (it.key.startsWith(q)) score -= 5;
+      if (it.kind === "pr" && (q.includes("park") || q.includes("ride") || q.includes("p&r") || q.includes("garage") || q.includes("locker"))) score -= 25;
+      if (it.kind === "hill" && (q.includes("hill") || q.includes("steep") || q.includes("incline") || q.includes("grade") || q.includes("slope"))) score -= 25;
       scored.push([score, it]);
     }
     scored.sort((a, b) => a[0] - b[0]);
     const seen = new Set();
     return scored.map((x) => x[1]).filter((it) => {
-      const k = it.kind === "stop" ? it.s.name : it.kind === "trail" ? it.f.properties.name : it.kind + it.id;
+      const k = it.kind === "stop" ? it.s.name : it.kind === "trail" ? it.f.properties.name : it.kind === "pr" ? it.pr.name : it.kind === "hill" ? it.hill.name : it.kind + it.id;
       if (seen.has(k)) return false;
       seen.add(k);
       return true;
@@ -3166,6 +3358,30 @@
     const html = `<div class="pop"><h3>🚲 ${esc(p.name)}</h3><p class="trail-meta"><strong>${p.length_mi ? `${p.length_mi} miles · ` : ""}${isUnpaved ? "Gravel / soft-surface trail" : "Paved multi-use trail"}</strong>${p.region ? ` · ${esc(p.region)}` : ""}</p><p>${esc(p.desc || "Regional multi-use trail for bicycling, walking, and rolling. Connects to regional transit hubs and neighborhood routes.")}</p></div>`;
     openPopup({ lng: mid[0], lat: mid[1] }, html, "290px");
   }
+  function selectPR(pr) {
+    if (!pr) return;
+    map.flyTo({ center: [pr.lon, pr.lat], zoom: 16, padding: fitPadding(), duration: 800 });
+    const html = `<div class="pop">
+      <h3>🅿️ ${esc(pr.name)}</h3>
+      <p class="trail-meta"><strong>${pr.stalls} Parking Stalls</strong> · ${esc(pr.agency)}</p>
+      <p>🚲 <strong>Bicycle Parking:</strong> ${esc(pr.bikes)}</p>
+      <p>🚌 <strong>Transit Connections:</strong> ${esc(pr.transit)}</p>
+      <p class="foot" style="margin-top:6px">Regional commuter park & ride. BikeLink lockers offer secure on-demand bike parking via app or smartcard.</p>
+    </div>`;
+    openPopup({ lng: pr.lon, lat: pr.lat }, html, "300px");
+  }
+  function selectHill(h) {
+    if (!h) return;
+    map.flyTo({ center: [h.lon, h.lat], zoom: 16.2, padding: fitPadding(), duration: 800 });
+    const html = `<div class="pop">
+      <h3>⚠️ ${esc(h.name)}</h3>
+      <p class="trail-meta"><span class="incline-badge">${h.grade} grade</span> · ${esc(h.location)}</p>
+      <p>${esc(h.desc)}</p>
+      <p>🚌 <strong>Traversing Routes:</strong> ${h.routes.join(", ")}</p>
+      <p class="foot" style="color:var(--accent);margin-top:6px">❄️ <strong>Snow Bypass:</strong> ${esc(h.snowBypass)}</p>
+    </div>`;
+    openPopup({ lng: h.lon, lat: h.lat }, html, "320px");
+  }
   function setupSearch() {
     const input = $("#q"), box = $("#results");
     let items = [], active = -1;
@@ -3179,9 +3395,17 @@
           const p = it.f.properties;
           return `<button type="button" class="result${i === active ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true">🚲</span><span class="txt"><span class="name">${esc(p.name)}</span><span class="desc">${p.length_mi ? `${p.length_mi} mi · ` : ""}${p.surface === "unpaved" ? "Gravel trail" : "Paved trail"}${p.region ? ` (${esc(p.region)})` : ""}</span></span></button>`;
         }
+        if (it.kind === "pr") {
+          const pr = it.pr;
+          return `<button type="button" class="result${i === active ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true" style="background:#007aff;color:#fff">🅿️</span><span class="txt"><span class="name">${esc(pr.name)}</span><span class="desc">${pr.stalls} stalls · ${esc(pr.bikes)}</span></span></button>`;
+        }
+        if (it.kind === "hill") {
+          const h = it.hill;
+          return `<button type="button" class="result${i === active ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true" style="background:#f59e0b;color:#fff">⚠️</span><span class="txt"><span class="name">${esc(h.short)} <span class="incline-badge">${h.grade}</span></span><span class="desc">${esc(h.location)}</span></span></button>`;
+        }
         const sub = it.kind === "station" ? "Station" : `Bus stop${it.s.code ? " #" + it.s.code : ""}`;
         return `<button type="button" class="result${i === active ? " active" : ""}" data-i="${i}"><span class="stop-glyph${it.kind === "station" ? " big" : ""}" aria-hidden="true"></span><span class="txt"><span class="name">${esc(it.s.name)}</span><span class="desc">${esc(sub)}</span></span></button>`;
-      }).join("") : `<div class="empty">No routes, stops or trails match “${esc(input.value.trim())}”.</div>`;
+      }).join("") : `<div class="empty">No routes, stops, parking or trails match “${esc(input.value.trim())}”.</div>`;
       box.hidden = false;
     };
     const choose = (i) => {
@@ -3192,6 +3416,8 @@
       input.blur();
       if (it.kind === "route") selectRoute(it.id);
       else if (it.kind === "trail") selectTrail(it.f);
+      else if (it.kind === "pr") selectPR(it.pr);
+      else if (it.kind === "hill") selectHill(it.hill);
       else selectStop(it.id);
     };
     input.addEventListener("input", render);
@@ -3444,6 +3670,17 @@
     map.on("movestart", () => {
       if (moveRaf) { cancelAnimationFrame(moveRaf); moveRaf = 0; }
       cur = null; queuedRoute = null; showLens(null); tipHide(true); focusOff(); highlightStop(null);
+    });
+    map.on("dragstart", () => {
+      if (locateMode !== "idle") {
+        locateMode = "idle";
+        const btn = $("#locateBtn");
+        if (btn) {
+          btn.classList.remove("active", "compass", "locating");
+          btn.setAttribute("aria-label", "Find my location");
+          btn.title = "Find my location";
+        }
+      }
     });
     map.on("click", (e) => {
       tipHide(true);
@@ -3754,11 +3991,11 @@
   }
 
   // ---------------------------------------------------------------- hash routing
-  function applyHash() {
+  function applyHash(fromPop = false) {
     let h;
     try { h = decodeURIComponent((location.hash || "").slice(1)); } catch { return; }
-    if (h.startsWith("route-") && RBY[h.slice(6)]) selectRoute(h.slice(6));
-    else if (/^(stop|station)-/.test(h) && stopIndex[h.replace(/^(stop|station)-/, "")]) selectStop(h.replace(/^(stop|station)-/, ""));
+    if (h.startsWith("route-") && RBY[h.slice(6)]) selectRoute(h.slice(6), { push: false });
+    else if (/^(stop|station)-/.test(h) && stopIndex[h.replace(/^(stop|station)-/, "")]) selectStop(h.replace(/^(stop|station)-/, ""), { push: false });
     else if (h.startsWith("loc=")) {
       const parts = h.slice(4).replace("z", "").split(",");
       if (parts.length >= 2) {
@@ -3766,7 +4003,7 @@
         if (!isNaN(lat) && !isNaN(lon) && map) map.jumpTo({ center: [lon, lat], zoom: z });
       }
     }
-    else if (!h && selected) clearSelection();
+    else if (!h && (selected || panelView !== "home")) clearSelection({ push: false });
   }
 
   // ---------------------------------------------------------------- boot
@@ -3912,16 +4149,18 @@
   // ---------------------------------------------------------------- nearby departures & live hud
   function showNearbyDepartures(lng, lat) {
     panelView = "nearby";
-    if (!STOPS || !STOPS.stops) return;
+    if (!STOPS) return;
+    const allStops = [...(STOPS.stations || []), ...(STOPS.stops || [])];
+    if (!allStops.length) return;
     const cosLat = Math.cos(lat * Math.PI / 180);
-    const candidateStops = STOPS.stops.map((s) => {
+    const candidateStops = allStops.map((s) => {
       const dx = (s.lon - lng) * 111320 * cosLat;
       const dy = (s.lat - lat) * 110540;
       const dist = Math.hypot(dx, dy);
       return { s, dist };
     }).filter((x) => x.dist <= 1200).sort((a, b) => a.dist - b.dist);
 
-    const topStops = candidateStops.slice(0, 5);
+    const topStops = candidateStops.slice(0, 6);
     if (!topStops.length) {
       setView(`${backBtn}<div class="hero"><span class="stop-glyph big" aria-hidden="true"></span><div><h2>Nearby Departures</h2><p>No stops within 1.2 km</p></div></div>
         <p class="hint">You may be outside the Seattle regional transit network. Pan to Seattle, Bellevue, Tacoma, or Everett to view routes.</p>`);
@@ -3942,11 +4181,15 @@
     const cards = topStops.map(({ s, dist }) => {
       const m = Math.round(dist);
       const walkMin = Math.max(1, Math.round(m / 75));
-      const rs = s.routes.map((id) => RBY[id]).filter(Boolean).sort(tagOrder);
+      const rs = (s.routes || []).map((id) => RBY[id]).filter(Boolean).sort(tagOrder);
       const keys = [s.key, ...((s.stops || []).map((sid) => stopIndex[sid] && stopIndex[sid].key).filter(Boolean))];
       const sIds = stopIdsOf(s);
       const live = liveDepartures(sIds, 3), sched = nextDepartures(keys, 3);
       const list = (live && live.length) ? live : (sched && sched.length) ? sched : [];
+
+      const bayMatch = s.name.match(/\bBay\s+([A-Z0-9]+)\b/i);
+      const bayBadge = bayMatch ? `<span class="bay-pill">Bay ${esc(bayMatch[1])}</span>` : "";
+      const cleanName = s.name.replace(/\s*-\s*Bay\s+[A-Z0-9]+/i, "").trim();
 
       let depsHTML = "";
       if (list.length) {
@@ -3966,7 +4209,7 @@
 
       return `<div class="nearby-card">
         <div class="nearby-card-head">
-          <span class="nearby-stop-name press" data-stop="${esc(s.id)}" role="button" tabindex="0" title="Highlight stop on map">${esc(s.name)}</span>
+          <span class="nearby-stop-name press" data-stop="${esc(s.id)}" role="button" tabindex="0" title="Highlight stop on map">${esc(cleanName)}${bayBadge}</span>
           <span class="nearby-dist">🚶 ${walkMin} min · ${m} m</span>
         </div>
         ${depsHTML}
@@ -4050,7 +4293,83 @@
     updateLiveHudStats();
   }
 
+  let locateMode = "idle"; // "idle" | "follow" | "compass"
+  let watchId = null;
+  let userCoords = null;
   let userMarker = null;
+  let currentHeading = null;
+  let orientationListening = false;
+
+  function updateHeadingCone(heading) {
+    if (heading == null || isNaN(heading)) return;
+    currentHeading = heading;
+    if (userMarker) {
+      const el = userMarker.getElement();
+      el.classList.add("has-heading");
+      const cone = el.querySelector(".user-heading-cone");
+      if (cone) cone.style.transform = `rotate(${heading}deg)`;
+    }
+    if (locateMode === "compass" && map) {
+      map.setBearing(heading);
+    }
+  }
+
+  function handleOrientation(e) {
+    let heading = null;
+    if (e.webkitCompassHeading != null) {
+      heading = e.webkitCompassHeading;
+    } else if (e.absolute && e.alpha != null) {
+      heading = (360 - e.alpha) % 360;
+    } else if (e.alpha != null) {
+      heading = (360 - e.alpha) % 360;
+    }
+    updateHeadingCone(heading);
+  }
+
+  function startOrientation() {
+    if (orientationListening) return;
+    orientationListening = true;
+    if (typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function") {
+      DeviceOrientationEvent.requestPermission().then((res) => {
+        if (res === "granted") {
+          window.addEventListener("deviceorientation", handleOrientation, true);
+        }
+      }).catch(() => {});
+    } else {
+      window.addEventListener("deviceorientationabsolute", handleOrientation, true);
+      window.addEventListener("deviceorientation", handleOrientation, true);
+    }
+  }
+
+  function updateUserPosition(pos, isInitial = false) {
+    const { longitude: lng, latitude: lat, heading } = pos.coords;
+    userCoords = { lng, lat };
+    if (heading != null && !isNaN(heading)) updateHeadingCone(heading);
+
+    if (!userMarker) {
+      const el = document.createElement("div");
+      el.className = "user-marker";
+      el.innerHTML = '<div class="user-heading-cone"></div><div class="user-marker-pulse"></div><div class="user-marker-dot"></div>';
+      userMarker = new maplibregl.Marker({ element: el }).setLngLat([lng, lat]).addTo(map);
+    } else {
+      userMarker.setLngLat([lng, lat]);
+    }
+
+    if (locateMode === "follow" || locateMode === "compass") {
+      if (map) {
+        if (isInitial) {
+          map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 15.5), duration: 900, essential: true });
+        } else {
+          map.easeTo({ center: [lng, lat], duration: 500, essential: true });
+        }
+      }
+    }
+
+    if (isInitial && panelView !== "nearby") {
+      showNearbyDepartures(lng, lat);
+    }
+  }
+
   function setupLocate() {
     const btn = $("#locateBtn");
     if (!btn) return;
@@ -4058,35 +4377,56 @@
       btn.style.display = "none";
       return;
     }
+
     btn.addEventListener("click", () => {
-      if (btn.classList.contains("locating")) return;
-      btn.classList.add("locating");
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
+      if (locateMode === "idle") {
+        locateMode = "follow";
+        btn.classList.add("locating");
+        btn.classList.add("active");
+        btn.classList.remove("compass");
+        btn.setAttribute("aria-label", "Location: Following. Tap for compass heading");
+        btn.title = "Location: Following";
+
+        startOrientation();
+
+        if (watchId == null) {
+          watchId = navigator.geolocation.watchPosition(
+            (pos) => {
+              btn.classList.remove("locating");
+              updateUserPosition(pos, !userCoords);
+            },
+            (err) => {
+              btn.classList.remove("locating", "active", "compass");
+              locateMode = "idle";
+              if (watchId != null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+              const msg = err.code === 1 ? "Location permission denied" : "Could not determine location";
+              showToast(msg);
+            },
+            { enableHighAccuracy: true, maximumAge: 4000, timeout: 12000 }
+          );
+        } else if (userCoords && map) {
           btn.classList.remove("locating");
-          btn.classList.add("active");
-          const { longitude: lng, latitude: lat } = pos.coords;
-          if (!userMarker) {
-            const el = document.createElement("div");
-            el.className = "user-marker";
-            el.innerHTML = '<div class="user-marker-pulse"></div><div class="user-marker-dot"></div>';
-            userMarker = new maplibregl.Marker({ element: el }).setLngLat([lng, lat]).addTo(map);
-          } else {
-            userMarker.setLngLat([lng, lat]);
-          }
-          if (map) {
-            map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 15.5), duration: 1000, essential: true });
-          }
-          showNearbyDepartures(lng, lat);
-        },
-        (err) => {
-          btn.classList.remove("locating");
-          btn.classList.remove("active");
-          const msg = err.code === 1 ? "Location access denied" : "Could not determine location";
-          showToast(msg);
-        },
-        { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
-      );
+          map.flyTo({ center: [userCoords.lng, userCoords.lat], zoom: Math.max(map.getZoom(), 15.5), duration: 800, essential: true });
+          showNearbyDepartures(userCoords.lng, userCoords.lat);
+        }
+      } else if (locateMode === "follow") {
+        locateMode = "compass";
+        btn.classList.add("compass");
+        btn.setAttribute("aria-label", "Location: Compass lock. Tap to stop tracking");
+        btn.title = "Location: Compass lock";
+        startOrientation();
+        if (currentHeading != null && map) {
+          map.setBearing(currentHeading);
+        }
+      } else if (locateMode === "compass") {
+        locateMode = "idle";
+        btn.classList.remove("active", "compass", "locating");
+        btn.setAttribute("aria-label", "Find my location");
+        btn.title = "Find my location";
+        if (map && map.getBearing() !== 0) {
+          map.rotateTo(0, { duration: 400 });
+        }
+      }
     });
   }
 
@@ -4117,6 +4457,12 @@
     mq.addEventListener("change", applyTheme);
     new MutationObserver(() => { if (themeName() !== theme) applyTheme(); }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
     window.addEventListener("hashchange", applyHash);
+    window.addEventListener("popstate", () => applyHash(true));
+    if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("sw.js").catch(() => {});
+      });
+    }
     document.documentElement.setAttribute("data-dark", theme === "dark" ? "1" : "0");
   }
 

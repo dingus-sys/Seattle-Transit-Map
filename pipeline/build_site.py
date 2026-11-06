@@ -139,6 +139,10 @@ def main():
     full = build_website(page, css, js, geom, ribbons, logos, "--with-key" in sys.argv)
     open(os.path.join(SITE, "artifact.html"), "w").write(artifact)
     open(os.path.join(SITE, "index.html"), "w").write(full)
+    for extra in ("manifest.json", "sw.js", "logo-mark.svg"):
+        src = os.path.join(web, extra)
+        if os.path.exists(src):
+            shutil.copy2(src, os.path.join(SITE, extra))
     print(f"site/index.html {len(full)/1e3:.0f} KB (+ app.js {len(js)/1e3:.0f} KB, app.css {len(css)/1e3:.0f} KB, "
           f"geom.js {len(geom)/1e3:.0f} KB, {len(logos)} logos), site/artifact.html {len(artifact)/1e3:.0f} KB")
 

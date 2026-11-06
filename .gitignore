@@ -12,5 +12,8 @@ site/app.css
 site/geom.js
 site/ribbons.js
 site/logos/
+site/sw.js
+site/manifest.json
+site/logo-mark.svg
 shots/
 vid2/
