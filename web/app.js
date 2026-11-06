@@ -86,6 +86,9 @@
     { title: "On the water", items: [
       { key: "water", cats: ["watertaxi", "ferry"], name: "Water Taxi & ferries", desc: "King County, WSF and Kitsap", on: true },
     ] },
+    { title: "Trails", items: [
+      { key: "trails", cats: [], name: "Regional bike trails", desc: "Burke-Gilman, Eastrail, 520, I-90, river & valley trails", on: true, area: "trails" },
+    ] },
     { title: "On demand", items: [
       { key: "dart", cats: ["dart"], name: "Dial-a-Ride (DART)", desc: "Can leave its route to pick you up", on: true, area: "dart" },
       { key: "flex", cats: [], name: "Metro Flex zones", desc: "Book a ride inside the zone", on: true, area: "flex" },
@@ -171,8 +174,10 @@
   let stopIndex = {};
   let map, theme = themeName();
   const enabled = new Set();
-  const savedLayers = store.get("layers2", null);
-  LAYERS.forEach((l) => { if (savedLayers ? savedLayers.includes(l.key) : l.on) enabled.add(l.key); });
+  const savedLayers = store.get("layers3", null) || store.get("layers2", null);
+  LAYERS.forEach((l) => {
+    if (savedLayers ? (savedLayers.includes(l.key) || (l.key === "trails" && !store.get("layers3", null))) : l.on) enabled.add(l.key);
+  });
   let selected = null;
 
   const enabledCat = (cat) => LAYERS.some((l) => l.cats.includes(cat) && enabled.has(l.key));
@@ -453,6 +458,10 @@
   }
   function areaLayers(P) {
     const acc = theme === "dark" ? "#bf9cf5" : "#7b5cc4";
+    const trailCol = theme === "dark" ? "#2dd4bf" : "#059669";
+    const trailHalo = theme === "dark" ? "#090d16" : "#ffffff";
+    const trailText = theme === "dark" ? "#5eead4" : "#065f46";
+    const trailCase = theme === "dark" ? "#0f172a" : "#ffffff";
     return [
       { id: "mask", type: "fill", source: "mask", paint: { "fill-color": P.mask, "fill-opacity": 0.55 } },
       { id: "access-fill", type: "fill", source: "access", paint: { "fill-color": acc, "fill-opacity": 0.08 } },
@@ -462,6 +471,34 @@
       { id: "flex-fill", type: "fill", source: "flex", paint: { "fill-color": FLEX[theme], "fill-opacity": theme === "dark" ? 0.12 : 0.09 } },
       { id: "flex-line", type: "line", source: "flex", paint: { "line-color": FLEX[theme], "line-opacity": 0.85,
         "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1, 13, 2, 16, 2.6] } },
+      { id: "trail-case", type: "line", source: "trails",
+        paint: {
+          "line-color": trailCase, "line-opacity": 0.85,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 9, 2.8, 12, 4.2, 15, 6, 17, 7.5],
+        } },
+      { id: "trail-line", type: "line", source: "trails", filter: ["!=", ["get", "surface"], "unpaved"],
+        paint: {
+          "line-color": trailCol,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1.5, 12, 2.4, 15, 3.4, 17, 4.5],
+          "line-opacity": 0.95,
+        } },
+      { id: "trail-dash", type: "line", source: "trails", filter: ["==", ["get", "surface"], "unpaved"],
+        paint: {
+          "line-color": trailCol,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1.4, 12, 2.2, 15, 3.0, 17, 4.0],
+          "line-dasharray": [2.5, 2],
+          "line-opacity": 0.9,
+        } },
+      { id: "trail-labels", type: "symbol", source: "trails", minzoom: 11,
+        layout: {
+          "symbol-placement": "line", "symbol-spacing": 350,
+          "text-field": ["get", "name"], "text-font": F_REG,
+          "text-size": ["interpolate", ["linear"], ["zoom"], 11, 10, 13, 11, 16, 12.5],
+          "text-padding": 8, "text-optional": true,
+        },
+        paint: {
+          "text-color": trailText, "text-halo-color": trailHalo, "text-halo-width": 1.8, "text-opacity": 0.95,
+        } },
     ];
   }
   const VEH_SIZE = ["interpolate", ["linear"], ["zoom"], 9, 0.34, 11, 0.44, 12.5, 0.58, 14, 0.78, 15.5, 0.95, 18, 1.08];
@@ -2544,6 +2581,7 @@
     { key: "Trains", label: "Trains", color: () => LINE[theme].link },
     { key: "Buses", label: "Buses", color: () => LINE[theme].frequent },
     { key: "On the water", label: "Ferries", color: () => LINE[theme].ferry },
+    { key: "Trails", label: "Bike trails", color: () => theme === "dark" ? "#2dd4bf" : "#059669" },
     { key: "On demand", label: "On demand", color: () => FLEX[theme] },
   ];
   const SPECIAL_FILTERS = [
@@ -2598,6 +2636,7 @@
     link: "Link light rail", rail: "Sounder & Amtrak", streetcar: "Streetcar", monorail: "Monorail",
     rapid: "RapidRide & Swift", frequent: "Frequent bus", local: "All-day bus", peak: "Rush-hour bus",
     water: "Ferries & Water Taxi", dart: "Dial-a-Ride area", flex: "Metro Flex zone", access: "Access area",
+    trails: "Regional bike trail",
   };
   const isDefaultLayers = () => LAYERS.every((l) => enabled.has(l.key) === l.on)
     && Object.keys(SETTINGS_DEFAULT).every((k) => settings[k] === SETTINGS_DEFAULT[k]);
@@ -2760,7 +2799,7 @@
         `<button type="button" role="radio" data-v="${v}" aria-checked="${v === cur}" aria-selected="${v === cur}">${esc(t)}</button>`).join("")}<span class="seg-thumb" aria-hidden="true"></span></div></li>`;
     }).join("")}</ul>`);
     parts.push(`<p class="hint">Streets are drawn as service lines: one green line for all the frequent buses on a street, one blue line for the all-day buses, and so on, with the route numbers on tags.</p>
-      <p class="credits">Routes and schedules from the agencies' open GTFS feeds (${esc(feedText())}). DART areas from King County GIS; Metro Flex zones from King County Metro. Base map © OpenStreetMap contributors via OpenFreeMap.</p>`);
+      <p class="credits">Routes and schedules from the agencies' open GTFS feeds (${esc(feedText())}). DART areas and regional trails from King County GIS and regional open data; Metro Flex zones from King County Metro. Base map © OpenStreetMap contributors via OpenFreeMap.</p>`);
     const existing = body().querySelector(".layers-view");
     if (quiet && existing) existing.innerHTML = parts.join("");
     else setView(`<div class="layers-view">${parts.join("")}</div>`);
@@ -2822,6 +2861,10 @@
     }[l.key];
     if (one) return `<svg viewBox="0 0 30 30" aria-hidden="true">${tube(one[0], one[1], 15, one[2])}</svg>`;
     if (l.key === "flex") return `<svg viewBox="0 0 30 30" aria-hidden="true"><rect x="5" y="7" width="20" height="16" rx="4" fill="${FLEX[theme]}" fill-opacity="0.18" stroke="${FLEX[theme]}" stroke-width="2"/></svg>`;
+    if (l.key === "trails") {
+      const c = theme === "dark" ? "#2dd4bf" : "#059669";
+      return `<svg viewBox="0 0 30 30" aria-hidden="true"><circle cx="8" cy="19" r="4.2" stroke="${c}" stroke-width="1.8" fill="none"/><circle cx="22" cy="19" r="4.2" stroke="${c}" stroke-width="1.8" fill="none"/><path d="M8 19 L13.5 12.5 L19.5 12.5 L22 19 M13.5 12.5 L11.5 8.5 M19.5 12.5 L15 19 M15 19 L15 11" stroke="${c}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>`;
+    }
     if (l.key === "access") return `<svg viewBox="0 0 30 30" aria-hidden="true"><rect x="6" y="8" width="18" height="14" rx="4" fill="#7b5cc4" fill-opacity=".18" stroke="#7b5cc4" stroke-width="1.4" stroke-dasharray="3 2"/></svg>`;
     if (l.key === "live") return `<svg viewBox="0 0 30 30" aria-hidden="true"><circle cx="15" cy="15" r="9" fill="${P.frequent}" opacity=".18"/><path d="M15 7.5 L20.5 19.5 L15 16.8 L9.5 19.5 Z" fill="${P.frequent}" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>`;
     if (l.key === "stops") return `<svg viewBox="0 0 30 30" aria-hidden="true">${tube(P.frequent, 4, 15, "glass")}<circle cx="11" cy="15" r="3.2" fill="#fff" stroke="#8e8e93" stroke-width="1.5"/><circle cx="20" cy="15" r="3.2" fill="#fff" stroke="#8e8e93" stroke-width="1.5"/></svg>`;
@@ -3072,6 +3115,13 @@
     }
     for (const s of STOPS.stations) searchIndex.push({ kind: "station", id: s.id, key: s.name.toLowerCase(), s });
     for (const s of STOPS.stops) searchIndex.push({ kind: "stop", id: s.id, key: (s.name + " " + (s.code || "")).toLowerCase(), s });
+    if (AREAS && AREAS.trails && AREAS.trails.features) {
+      for (const f of AREAS.trails.features) {
+        const p = f.properties;
+        if (!p || !p.name) continue;
+        searchIndex.push({ kind: "trail", id: p.name, key: `${p.name} trail bike bicycle cycling ${p.region || ""}`.toLowerCase(), f });
+      }
+    }
   }
   function search(q) {
     q = q.trim().toLowerCase();
@@ -3079,7 +3129,7 @@
     const words = q.split(/\s+/), scored = [];
     for (const it of searchIndex) {
       if (!words.every((w) => it.key.includes(w))) continue;
-      let score = it.kind === "route" ? 0 : it.kind === "station" ? 10 : 20;
+      let score = it.kind === "route" ? 0 : it.kind === "station" ? 10 : it.kind === "trail" ? 14 : 20;
       if (it.kind === "route" && (it.label === q || it.r.short.toLowerCase() === q)) score -= 100;
       if (it.key.startsWith(q)) score -= 5;
       scored.push([score, it]);
@@ -3087,11 +3137,34 @@
     scored.sort((a, b) => a[0] - b[0]);
     const seen = new Set();
     return scored.map((x) => x[1]).filter((it) => {
-      const k = it.kind === "stop" ? it.s.name : it.kind + it.id;
+      const k = it.kind === "stop" ? it.s.name : it.kind === "trail" ? it.f.properties.name : it.kind + it.id;
       if (seen.has(k)) return false;
       seen.add(k);
       return true;
     }).slice(0, 9);
+  }
+  function selectTrail(f) {
+    if (!f || !f.geometry) return;
+    if (!enabled.has("trails")) {
+      enabled.add("trails");
+      store.set("layers3", [...enabled]);
+      applyLayerToggles();
+    }
+    const coords = [];
+    const getCoords = (c) => {
+      if (typeof c[0] === "number") coords.push(c);
+      else c.forEach(getCoords);
+    };
+    getCoords(f.geometry.coordinates);
+    if (!coords.length) return;
+    const lons = coords.map((c) => c[0]), lats = coords.map((c) => c[1]);
+    const bounds = [[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]];
+    map.fitBounds(bounds, { padding: isNarrow() ? { top: 60, bottom: 220, left: 30, right: 30 } : { top: 60, bottom: 60, left: 400, right: 60 }, maxZoom: 14.5 });
+    const mid = coords[Math.floor(coords.length / 2)];
+    const p = f.properties;
+    const isUnpaved = p.surface === "unpaved";
+    const html = `<div class="pop"><h3>🚲 ${esc(p.name)}</h3><p class="trail-meta"><strong>${p.length_mi ? `${p.length_mi} miles · ` : ""}${isUnpaved ? "Gravel / soft-surface trail" : "Paved multi-use trail"}</strong>${p.region ? ` · ${esc(p.region)}` : ""}</p><p>${esc(p.desc || "Regional multi-use trail for bicycling, walking, and rolling. Connects to regional transit hubs and neighborhood routes.")}</p></div>`;
+    openPopup({ lng: mid[0], lat: mid[1] }, html, "290px");
   }
   function setupSearch() {
     const input = $("#q"), box = $("#results");
@@ -3102,9 +3175,13 @@
       active = items.length ? 0 : -1;
       box.innerHTML = items.length ? items.map((it, i) => {
         if (it.kind === "route") return `<button type="button" class="result${i === active ? " active" : ""}" data-i="${i}">${badgeHTML(it.r)}<span class="txt"><span class="name">${esc(routeTitle(it.r))}</span><span class="desc">${esc(it.r.name)}</span></span></button>`;
+        if (it.kind === "trail") {
+          const p = it.f.properties;
+          return `<button type="button" class="result${i === active ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true">🚲</span><span class="txt"><span class="name">${esc(p.name)}</span><span class="desc">${p.length_mi ? `${p.length_mi} mi · ` : ""}${p.surface === "unpaved" ? "Gravel trail" : "Paved trail"}${p.region ? ` (${esc(p.region)})` : ""}</span></span></button>`;
+        }
         const sub = it.kind === "station" ? "Station" : `Bus stop${it.s.code ? " #" + it.s.code : ""}`;
         return `<button type="button" class="result${i === active ? " active" : ""}" data-i="${i}"><span class="stop-glyph${it.kind === "station" ? " big" : ""}" aria-hidden="true"></span><span class="txt"><span class="name">${esc(it.s.name)}</span><span class="desc">${esc(sub)}</span></span></button>`;
-      }).join("") : `<div class="empty">No routes or stops match “${esc(input.value.trim())}”.</div>`;
+      }).join("") : `<div class="empty">No routes, stops or trails match “${esc(input.value.trim())}”.</div>`;
       box.hidden = false;
     };
     const choose = (i) => {
@@ -3113,7 +3190,9 @@
       box.hidden = true;
       input.value = "";
       input.blur();
-      if (it.kind === "route") selectRoute(it.id); else selectStop(it.id);
+      if (it.kind === "route") selectRoute(it.id);
+      else if (it.kind === "trail") selectTrail(it.f);
+      else selectStop(it.id);
     };
     input.addEventListener("input", render);
     input.addEventListener("focus", () => { openSheet("full"); render(); });
@@ -3137,6 +3216,7 @@
     vis("dart", ["dart-fill", "dart-line"]);
     vis("access", ["access-fill", "access-line"]);
     vis("flex", ["flex", "flex-fill", "flex-line"]);
+    vis("trails", ["trail-case", "trail-line", "trail-dash", "trail-labels"]);
     vis("stops", ["stops", "stop-name"]);
     vis("live", ["veh-dir", "veh-icon", "veh-label"]);
     if (enabled.has("live")) startLive(); else stopLive();
@@ -3341,6 +3421,16 @@
             : `<span class="tip-badges">${rs.slice(0, 6).map((x) => badgeHTML(x)).join("")}</span><span class="tt">${rs.length} routes here · Tap to choose</span>`, "", ev(e));
           return;
         }
+        const trailHover = map.queryRenderedFeatures([[e.point.x - 6, e.point.y - 6], [e.point.x + 6, e.point.y + 6]], {
+          layers: ["trail-line", "trail-dash"].filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none")
+        });
+        if (trailHover.length) {
+          const tp = trailHover[0].properties;
+          cur = { kind: "trail", name: tp.name };
+          map.getCanvas().style.cursor = "pointer";
+          tipShow("trail:" + tp.name, `<span class="tt-trail">🚲 <b>${esc(tp.name)}</b>${tp.length_mi ? ` · ${tp.length_mi} mi` : ""}<br>${tp.surface === "unpaved" ? "Gravel trail" : "Paved trail"} · Tap for details</span>`, "", ev(e));
+          return;
+        }
         cur = null;
         map.getCanvas().style.cursor = "";
         tipHide();
@@ -3401,6 +3491,16 @@
       if (rs.length === 1) { selectRoute(rs[0].id, { fit: false }); return; }
       if (rs.length > 1) {
         focusOff(); showCorridor(rs);
+        return;
+      }
+      const trailsHit = map.queryRenderedFeatures([[e.point.x - 7, e.point.y - 7], [e.point.x + 7, e.point.y + 7]], {
+        layers: ["trail-line", "trail-dash"].filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none")
+      });
+      if (trailsHit.length) {
+        const tp = trailsHit[0].properties;
+        const isUnpaved = tp.surface === "unpaved";
+        const html = `<div class="pop"><h3>🚲 ${esc(tp.name)}</h3><p class="trail-meta"><strong>${tp.length_mi ? `${tp.length_mi} miles · ` : ""}${isUnpaved ? "Gravel / soft-surface trail" : "Paved multi-use trail"}</strong>${tp.region ? ` · ${esc(tp.region)}` : ""}</p><p>${esc(tp.desc || "Regional multi-use trail for bicycling, walking, and rolling. Connects to regional transit hubs and neighborhood routes.")}</p></div>`;
+        openPopup(e.lngLat, html, "290px");
         return;
       }
       const area = map.queryRenderedFeatures(e.point, { layers: ["flex-fill", "dart-fill", "access-fill"].filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none") });
@@ -3719,6 +3819,7 @@
           sellabels: { type: "geojson", data: empty, tolerance: 0.5 },
           stations: { type: "geojson", data: empty },
           stops: { type: "geojson", data: empty },
+          trails: { type: "geojson", data: (AREAS && AREAS.trails) || empty, tolerance: 0.5 },
           dart: { type: "geojson", data: AREAS.dart },
           access: { type: "geojson", data: AREAS.access },
           flex: { type: "geojson", data: AREAS.flex },
