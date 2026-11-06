@@ -209,7 +209,11 @@
     "ct-swift-blue", "ct-swift-green", "ct-swift-orange"
   ]);
   const isSnowRoute = (r) => !!(r && (SNOW_IDS.has(r.id) || r.cat === "link" || r.cat === "rapidride"));
-  const routeMatchesFilter = (r) => (!specialFilter ? true : specialFilter === "nightowl" ? isNightOwl(r) : specialFilter === "snow" ? isSnowRoute(r) : true);
+  const routeMatchesFilter = (r) => (!specialFilter ? true
+    : specialFilter === "favs" ? isFav("route", r.id)
+    : specialFilter === "nightowl" ? isNightOwl(r)
+    : specialFilter === "snow" ? isSnowRoute(r)
+    : true);
   const keyColor = (key, th = theme) => LINE[th][key] || LINE[th].local;
   const tagColor = (r, th = theme) => LINE[th][dkey(r)] || LINE[th].local;
   const lum = (hex) => { const n = parseInt(hex.slice(1), 16), c = [n >> 16, (n >> 8) & 255, n & 255].map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
@@ -875,8 +879,8 @@
   // coverage map underneath stays readable and the frequent network stands out, while all-day
   // buses remain clearly visible across the region.
   function minorScale(z) {
-    const f = z <= 10.0 ? 0.72 : z >= 12.5 ? 1 : 0.72 + 0.28 * (z - 10.0) / 2.5;
-    return { local: f, peak: Math.max(0.45, f * 0.65), shuttle: f * 0.85, dart: f * 0.75 };
+    const f = z <= 10.0 ? 0.82 : z >= 12.5 ? 1 : 0.82 + 0.18 * (z - 10.0) / 2.5;
+    return { local: f, peak: Math.max(0.50, f * 0.68), shuttle: f * 0.88, dart: f * 0.78 };
   }
   function tierFor(z) { const t = BUS_TIERS[settings.busDetail]; return z >= t[2] ? 2 : z >= t[1] ? 1 : 0; }
   let lastZ = -1, labelStep = null, needsRebuild = false, builtView = null, lastFeats = [], lastSelFeats = [];
@@ -907,7 +911,10 @@
     const u = interp(UNIT, z) * THICK[settings.thickness];
     const tier = tierFor(zNow);
     let routeFilter = null;
-    if (specialFilter === "nightowl") {
+    if (specialFilter === "favs") {
+      const favSet = new Set(getFavs().routes || []);
+      routeFilter = LINES.map((r, i) => (favSet.has(r.id) ? i : -1)).filter((i) => i >= 0);
+    } else if (specialFilter === "nightowl") {
       routeFilter = LINES.map((r, i) => (isNightOwl(r) ? i : -1)).filter((i) => i >= 0);
     } else if (specialFilter === "snow") {
       routeFilter = LINES.map((r, i) => (isSnowRoute(r) ? i : -1)).filter((i) => i >= 0);
@@ -917,7 +924,7 @@
     for (const k of Object.keys(CAT)) {
       const catBase = CAT[k].base || k;
       const standardOn = (k === "sounder" ? enabledCat("sounder") || enabledCat("amtrak") : enabledCat(catBase)) && CAT[k].tier <= tier;
-      if (specialFilter && !anyCatOn) {
+      if (specialFilter) {
         const catMatches = (routeFilter || []).some((i) => LINES[i] && (dkey(LINES[i]) === k || LINES[i].cat === k || LINES[i].cat === catBase));
         keyOn[k] = catMatches;
       } else {
@@ -2610,9 +2617,14 @@
   function getFavs() {
     try {
       const raw = localStorage.getItem(FAVS_KEY);
-      return raw ? JSON.parse(raw) : { routes: [], stops: [] };
+      const parsed = raw ? JSON.parse(raw) : {};
+      return {
+        routes: Array.isArray(parsed.routes) ? parsed.routes : [],
+        stops: Array.isArray(parsed.stops) ? parsed.stops : [],
+        trips: Array.isArray(parsed.trips) ? parsed.trips : [],
+      };
     } catch {
-      return { routes: [], stops: [] };
+      return { routes: [], stops: [], trips: [] };
     }
   }
   function saveFavs(f) {
@@ -2638,7 +2650,61 @@
     }
     f[key] = list;
     saveFavs(f);
+    if (specialFilter === "favs") {
+      refreshStations();
+      rebuild();
+      renderLive();
+    }
     return added;
+  }
+  function isFavTrip(orig, dest) {
+    if (!orig || !dest) return false;
+    const f = getFavs();
+    return (f.trips || []).some((t) =>
+      Math.abs(t.orig.lat - orig.lat) < 0.001 &&
+      Math.abs(t.orig.lon - orig.lon) < 0.001 &&
+      Math.abs(t.dest.lat - dest.lat) < 0.001 &&
+      Math.abs(t.dest.lon - dest.lon) < 0.001
+    );
+  }
+  function toggleFavTrip(orig, dest, it) {
+    const f = getFavs();
+    const trips = f.trips || [];
+    const idx = trips.findIndex((t) =>
+      Math.abs(t.orig.lat - orig.lat) < 0.001 &&
+      Math.abs(t.orig.lon - orig.lon) < 0.001 &&
+      Math.abs(t.dest.lat - dest.lat) < 0.001 &&
+      Math.abs(t.dest.lon - dest.lon) < 0.001
+    );
+    let added = false;
+    if (idx >= 0) {
+      trips.splice(idx, 1);
+      showToast("Trip removed from saved");
+    } else {
+      const origName = orig.isLocation ? "Your location" : orig.name;
+      const destName = dest.isLocation ? "Your location" : dest.name;
+      const summary = it ? (it.type === "direct" ? it.route.short || it.route.label : it.type === "transfer" ? `${it.r1.short || it.r1.label} ➔ ${it.r2.short || it.r2.label}` : "Walk") : "";
+      trips.push({
+        id: "trip-" + Date.now(),
+        name: `${origName} → ${destName}`,
+        orig: { lat: orig.lat, lon: orig.lon, name: origName, isLocation: !!orig.isLocation },
+        dest: { lat: dest.lat, lon: dest.lon, name: destName, isLocation: !!dest.isLocation },
+        summary,
+        duration: it?.totalDuration || null,
+        type: it?.type || "direct",
+      });
+      added = true;
+      showToast("Trip saved to favorites ★");
+    }
+    f.trips = trips;
+    saveFavs(f);
+    return added;
+  }
+  function removeFavTrip(id) {
+    const f = getFavs();
+    f.trips = (f.trips || []).filter((t) => t.id !== id);
+    saveFavs(f);
+    showToast("Saved trip removed");
   }
 
   let toastTimer = null;
@@ -2741,6 +2807,7 @@
     { key: "On demand", label: "On demand", color: () => FLEX[theme] },
   ];
   const SPECIAL_FILTERS = [
+    { key: "favs", label: "★ Saved lines", color: () => "#ffcc00" },
     { key: "nightowl", label: "🌙 Night Owl", color: () => "#5e5ce6" },
     { key: "snow", label: "❄️ Snow Routes", color: () => "#00c7be" },
   ];
@@ -2812,12 +2879,85 @@
     }
     thumb.style.transform = `translateX(${i * 100}%)`;
   }
+  function renderFavTripRow(t) {
+    return `<li><div class="row trip-fav-row">
+      <span class="icon" style="color:#ffcc00; display:inline-flex; align-items:center; justify-content:center"><svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25z"/></svg></span>
+      <span class="txt" style="cursor:pointer" data-fav-trip-plan="${esc(t.id)}">
+        <span class="name">${esc(t.name)}</span>
+        <span class="desc">${t.duration ? `${t.duration} min · ` : ""}${esc(t.summary || "Saved trip")}</span>
+      </span>
+      <button type="button" class="fav-del-btn press" data-del-trip="${esc(t.id)}" title="Remove saved trip" aria-label="Remove saved trip">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/><path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/></svg>
+      </button>
+    </div></li>`;
+  }
+  function bindFavListEvents() {
+    for (const b of body().querySelectorAll("[data-route]")) {
+      b.addEventListener("click", () => selectRoute(b.dataset.route));
+      previewOnHover(b);
+    }
+    for (const b of body().querySelectorAll("[data-stop]")) {
+      b.addEventListener("click", () => selectStop(b.dataset.stop));
+    }
+    for (const b of body().querySelectorAll("[data-fav-trip-plan]")) {
+      b.addEventListener("click", () => {
+        const id = b.dataset.favTripPlan;
+        const trip = (getFavs().trips || []).find((t) => t.id === id);
+        if (trip) openTripPlanner({ orig: trip.orig, dest: trip.dest });
+      });
+    }
+    for (const b of body().querySelectorAll("[data-del-trip]")) {
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        removeFavTrip(b.dataset.delTrip);
+        showHome(true);
+      });
+    }
+    $("#toggleFavFilter")?.addEventListener("click", () => {
+      specialFilter = specialFilter === "favs" ? null : "favs";
+      renderFilterBar();
+      refreshStations();
+      rebuild();
+      renderLive();
+      showHome(true);
+    });
+    $("#clearFavFilter")?.addEventListener("click", () => {
+      specialFilter = null;
+      renderFilterBar();
+      refreshStations();
+      rebuild();
+      renderLive();
+      showHome(true);
+    });
+  }
   function showHome(quiet) {
     if (panelView === "directions") return renderTripPlanView();
     if (panelView === "layers") return showLayers(quiet);
     if (panelView === "alerts") return showAlerts(quiet);
     if (panelView === "corridor") return showCorridor(null, quiet);
     if (panelView === "nearby") return;
+
+    if (specialFilter === "favs") {
+      const favs = getFavs();
+      const favRoutes = (favs.routes || []).map((id) => RBY[id]).filter(Boolean).sort(tagOrder);
+      const favStops = (favs.stops || []).map((id) => stopIndex[id]).filter(Boolean);
+      const favTrips = (favs.trips || []);
+      const totalSaved = favRoutes.length + favStops.length + favTrips.length;
+      const html = `<div class="home-view">
+        <div class="hero">
+          <span class="icon" style="background:#ffcc00; color:#1a1a1a"><svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M3.612 15.443c-.386.198-.824-.149-.746-.592l.83-4.73L.173 6.765c-.329-.314-.158-.888.283-.95l4.898-.696L7.538.792c.197-.39.73-.39.927 0l2.184 4.327 4.898.696c.441.062.612.636.282.95l-3.522 3.356.83 4.73c.078.443-.36.79-.746.592L8 13.187l-4.389 2.256z"/></svg></span>
+          <div><h2>★ Saved Lines & Commutes</h2><p>${totalSaved} saved item${totalSaved === 1 ? "" : "s"}</p></div>
+        </div>
+        <p class="hint">The map and vehicle tracking are currently filtered to <b>only show your saved lines</b>.</p>
+        <button type="button" class="fchip on" id="clearFavFilter" style="margin: 0 0 14px 0; background: var(--fill); color: var(--ink);">✕ Show all transit lines on map</button>
+        ${favRoutes.length ? `<h3 class="section">${favRoutes.length} saved transit route${favRoutes.length > 1 ? "s" : ""}</h3>${routeRows(favRoutes)}` : `<p class="hint">No transit routes favorited yet. Tap the <b>☆ Favorite</b> button on any route page to display it here.</p>`}
+        ${favTrips.length ? `<h3 class="section" style="margin-top:16px">${favTrips.length} saved trip${favTrips.length > 1 ? "s" : ""} & commute${favTrips.length > 1 ? "s" : ""}</h3><ul class="group" role="list">${favTrips.map(renderFavTripRow).join("")}</ul>` : ""}
+        ${favStops.length ? `<h3 class="section" style="margin-top:16px">${favStops.length} saved stop${favStops.length > 1 ? "s" : ""}</h3><ul class="group" role="list">${favStops.map((s) => `<li><button type="button" class="row" data-stop="${esc(s.key || s.id)}"><span class="icon"><span class="stop-glyph" aria-hidden="true"></span></span><span class="txt"><span class="name">${esc(s.name)}</span><span class="desc">${s.kind === "stop" ? `Bus stop ${s.code ? "#" + s.code : ""}` : "Station"} · ${(s.routes || []).length} routes</span></span><svg class="chev" width="8" height="13" viewBox="0 0 8 13" aria-hidden="true"><path d="M1.5 1.5 6.5 6.5l-5 5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></button></li>`).join("")}</ul>` : ""}
+      </div>`;
+      setView(html);
+      bindFavListEvents();
+      return;
+    }
 
     if (specialFilter === "nightowl") {
       const owlRoutes = ROUTES.filter((r) => isNightOwl(r) && LINEIDX[r.id] != null).sort(tagOrder);
@@ -2842,7 +2982,7 @@
       const snowRoutes = ROUTES.filter((r) => isSnowRoute(r) && LINEIDX[r.id] != null).sort(tagOrder);
       const html = `<div class="home-view">
         <div class="hero">
-          <span class="icon" style="background:#00c7be; color:#fff"><svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a.5.5 0 0 1 .5.5v1.293l.707-.707a.5.5 0 1 1 .708.708L8.707 2.5l1.207 1.207.708-.707a.5.5 0 0 1 .707.707l-.707.707H12a.5.5 0 0 1 0 1h-1.293l.707.707a.5.5 0 0 1-.708.708L9.5 6.707 8.293 7.914l.707.708a.5.5 0 0 1-.707.707l-.707-.707V10a.5.5 0 0 1-1 0V8.621l-.707.707a.5.5 0 0 1-.708-.707l.707-.708L5.293 6.707l-.707.708a.5.5 0 0 1-.708-.708L4.586 6H3.293a.5.5 0 0 1 0-1h1.293l-.707-.707a.5.5 0 0 1 .707-.707l.707.707L6.5 5.5l1.207-1.207-.707-.707a.5.5 0 1 1 .707-.708L8.414 3.5V.5A.5.5 0 0 1 8 0z"/></svg></span>
+          <span class="icon" style="background:#00c7be; color:#fff"><svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a.5.5 0 0 1 .5.5v1.293l.707-.707a.5.5 0 1 1 .708.708L8.707 2.5l1.207 1.207.708-.707a.5.5 0 0 1 .707.707l-.707.707H12a.5.5 0 0 1 0 1h-1.293l.707.707a.5.5 0 0 1-.708.708L9.5 6.707 8.293 7.914l.707.708a.5.5 0 0 1-.707.707l-.707-.707V10a.5.5 0 0 1-1 0V8.621l-.707.707a.5.5 0 0 1-.708-.707l.707-.708L5.293 6.707l-.707.708a.5.5 0 0 1-.708-.708L4.586 6H3.293a.5.5 0 0 1 0-1h1.293l-.707-.707a.5.5 0 0 1 .707-.707l.707.707L6.5 5.5l1.207-1.207-.707-.707a.5.5 0 1 1 .708-.708L8.414 3.5V.5A.5.5 0 0 1 8 0z"/></svg></span>
           <div><h2>❄️ Winter Snow Network</h2><p>Emergency Snow Network (ESN)</p></div>
         </div>
         <p class="hint">Designated arterial routes operating during severe winter storms. Avoids steep hill grades and unplowed neighborhood streets.</p>
@@ -2873,10 +3013,17 @@
     const favs = getFavs();
     const favRoutes = (favs.routes || []).map((id) => RBY[id]).filter(Boolean);
     const favStops = (favs.stops || []).map((id) => stopIndex[id]).filter(Boolean);
-    const hasFavs = favRoutes.length > 0 || favStops.length > 0;
+    const favTrips = (favs.trips || []);
+    const hasFavs = favRoutes.length > 0 || favStops.length > 0 || favTrips.length > 0;
     const favSectionHTML = hasFavs ? `
-      <h3 class="section fav-header">Favorites <span class="fav-sub">${favRoutes.length + favStops.length} saved</span></h3>
+      <div class="fav-header-wrap">
+        <h3 class="section fav-header">Favorites <span class="fav-sub">${favRoutes.length + favStops.length + favTrips.length} saved</span></h3>
+        <button type="button" class="fav-filter-toggle${specialFilter === "favs" ? " active" : ""}" id="toggleFavFilter">
+          ${specialFilter === "favs" ? "★ Showing saved only" : "Filter map to saved"}
+        </button>
+      </div>
       <ul class="group" role="list">
+        ${favTrips.map(renderFavTripRow).join("")}
         ${favRoutes.map((r) => `<li><button type="button" class="row route-row" data-route="${esc(r.id)}">
           ${badgeHTML(r)}
           <span class="txt"><span class="name">${esc(routeTitle(r))}</span><span class="desc">${esc(r.name)}</span></span>
@@ -2910,13 +3057,7 @@
     $("#openLayers")?.addEventListener("click", () => { panelView = "layers"; showLayers(); openSheet("half"); });
     const oa = $("#openAlerts");
     if (oa) oa.addEventListener("click", () => { panelView = "alerts"; showAlerts(); openSheet("half"); });
-    for (const b of body().querySelectorAll("[data-route]")) {
-      b.addEventListener("click", () => selectRoute(b.dataset.route));
-      previewOnHover(b);
-    }
-    for (const b of body().querySelectorAll("[data-stop]")) {
-      b.addEventListener("click", () => selectStop(b.dataset.stop));
-    }
+    bindFavListEvents();
   }
   const layersHead = () => `<h2 class="view-title">Layers</h2>${isDefaultLayers() ? "" : `<button class="text-btn" id="resetLayers" type="button">Reset</button>`}`;
   function bindReset() {
@@ -4095,11 +4236,15 @@
     const appleUrl = `https://maps.apple.com/?saddr=${dirOrigin.lat},${dirOrigin.lon}&daddr=${dirDest.lat},${dirDest.lon}&dirflg=r`;
     const googleUrl = `https://www.google.com/maps/dir/?api=1&origin=${dirOrigin.lat},${dirOrigin.lon}&destination=${dirDest.lat},${dirDest.lon}&travelmode=transit`;
 
+    const isSaved = isFavTrip(dirOrigin, dirDest);
     const html = `<div class="home-view">
       <div class="planner-summary-card">
         <div class="planner-summary-title">
           <span>${cur.totalDuration} min · ${currentItineraries.length} route option${currentItineraries.length > 1 ? "s" : ""}</span>
-          <button class="planner-reverse-btn press" id="planRevBtn" type="button">Reverse ⇄</button>
+          <div style="display:flex; gap:6px; align-items:center;">
+            <button class="planner-fav-btn press${isSaved ? " is-fav" : ""}" id="planFavBtn" type="button">${isSaved ? "★ Saved" : "☆ Save trip"}</button>
+            <button class="planner-reverse-btn press" id="planRevBtn" type="button">Reverse ⇄</button>
+          </div>
         </div>
         <p class="planner-sub">From ${esc(origTitle)} to ${esc(destTitle)}</p>
       </div>
@@ -4126,6 +4271,10 @@
 
     setView(html);
     $("#planRevBtn")?.addEventListener("click", swapDirections);
+    $("#planFavBtn")?.addEventListener("click", () => {
+      toggleFavTrip(dirOrigin, dirDest, cur);
+      renderTripPlanView();
+    });
     for (const b of body().querySelectorAll("[data-plan-idx]")) {
       b.addEventListener("click", () => {
         const idx = +b.dataset.planIdx;
@@ -4351,6 +4500,21 @@
       }
     });
 
+    if (q.length < 2) {
+      const fTrips = getFavs().trips || [];
+      for (const t of fTrips) {
+        items.push({
+          kind: "favtrip",
+          name: t.name,
+          desc: `Saved trip · ${t.duration ? `${t.duration} min · ` : ""}${t.summary || ""}`,
+          action: () => {
+            box.hidden = true;
+            openTripPlanner({ orig: t.orig, dest: t.dest });
+          }
+        });
+      }
+    }
+
     if (q.length >= 2) {
       const locals = searchLocalStopsAndPois(q);
       for (const loc of locals) {
@@ -4372,7 +4536,7 @@
     }
 
     box.innerHTML = items.map((it, idx) => {
-      const glyph = it.kind === "currloc" ? "📍" : it.kind === "mapchoice" ? "🗺️" : it.kind === "station" ? "🚆" : it.kind === "pr" ? "🅿️" : "🚌";
+      const glyph = it.kind === "favtrip" ? "⭐" : it.kind === "currloc" ? "📍" : it.kind === "mapchoice" ? "🗺️" : it.kind === "station" ? "🚆" : it.kind === "pr" ? "🅿️" : "🚌";
       return `<button type="button" class="result" data-sug-idx="${idx}">
         <span class="trail-glyph" aria-hidden="true">${glyph}</span>
         <span class="txt"><span class="name">${esc(it.name)}</span><span class="desc">${esc(it.desc)}</span></span>
