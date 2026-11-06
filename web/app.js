@@ -462,13 +462,13 @@
   }
   function areaLayers(P) {
     const acc = theme === "dark" ? "#bf9cf5" : "#7b5cc4";
-    const trailCol = theme === "dark" ? "#2dd4bf" : "#059669";
+    const trailCol = theme === "dark" ? "#2dd4bf" : "#047857";
     const trailGreenway = theme === "dark" ? "#34d399" : "#10b981";
-    const trailLane = theme === "dark" ? "#14b8a6" : "#0d9488";
-    const trailSharrow = theme === "dark" ? "#2dd4bf" : "#059669";
+    const trailLane = theme === "dark" ? "#22d3ee" : "#0891b2";
+    const trailSharrow = theme === "dark" ? "#86efac" : "#15803d";
     const trailHalo = theme === "dark" ? "#090d16" : "#ffffff";
     const trailText = theme === "dark" ? "#5eead4" : "#065f46";
-    const trailCase = theme === "dark" ? "#0f172a" : "#ffffff";
+    const trailCase = theme === "dark" ? "#041d16" : "#ffffff";
     return [
       { id: "mask", type: "fill", source: "mask", paint: { "fill-color": P.mask, "fill-opacity": 0.55 } },
       { id: "access-fill", type: "fill", source: "access", paint: { "fill-color": acc, "fill-opacity": 0.08 } },
@@ -482,58 +482,58 @@
       { id: "trail-case", type: "line", source: "trails",
         filter: ["in", ["get", "facility"], ["literal", ["trail", "pbl"]]],
         paint: {
-          "line-color": trailCase, "line-opacity": 0.85,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 9, 2.6, 12, 3.8, 15, 5.5, 17, 7.0],
+          "line-color": trailCase, "line-opacity": theme === "dark" ? 0.95 : 0.9,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 9, 3.2, 11, 4.4, 13, 5.8, 15, 7.2, 17, 8.5],
         } },
       // 2. Multi-use trails and Protected Bike Lanes (PBL) - solid emerald line
       { id: "trail-pbl", type: "line", source: "trails",
         filter: ["all", ["in", ["get", "facility"], ["literal", ["trail", "pbl"]]], ["!=", ["get", "surface"], "unpaved"]],
         paint: {
           "line-color": trailCol,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1.5, 12, 2.5, 15, 3.6, 17, 4.8],
+          "line-width": ["interpolate", ["linear"], ["zoom"], 9, 2.0, 11, 2.8, 13, 3.8, 15, 5.0, 17, 6.2],
           "line-opacity": 0.95,
         } },
-      // 3. Neighborhood Greenways & Healthy Streets - distinct green line with subtle dash
-      { id: "trail-greenway", type: "line", source: "trails", minzoom: 11,
+      // 3. Neighborhood Greenways & Healthy Streets - distinct green line with subtle dash (visible from regional view)
+      { id: "trail-greenway", type: "line", source: "trails", minzoom: 9,
         filter: ["==", ["get", "facility"], "greenway"],
         paint: {
           "line-color": trailGreenway,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 11, 1.3, 13, 2.0, 15, 3.0, 17, 4.0],
-          "line-dasharray": [4, 1.8],
-          "line-opacity": 0.9,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1.4, 11, 2.0, 13, 2.8, 15, 3.8, 17, 4.8],
+          "line-dasharray": [4, 2],
+          "line-opacity": 0.92,
         } },
-      // 4. Bicycle Lanes (Buffered, Climbing & Striped Lanes) - clean lane stroke
-      { id: "trail-lane", type: "line", source: "trails", minzoom: 11.5,
+      // 4. Bicycle Lanes (Buffered, Climbing & Striped Lanes) - clean teal lane stroke
+      { id: "trail-lane", type: "line", source: "trails", minzoom: 9.8,
         filter: ["==", ["get", "facility"], "lane"],
         paint: {
           "line-color": trailLane,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 11.5, 1.1, 13, 1.8, 15, 2.5, 17, 3.4],
-          "line-opacity": 0.88,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 9.8, 1.2, 11.5, 1.6, 13, 2.4, 15, 3.2, 17, 4.0],
+          "line-opacity": 0.9,
         } },
       // 5. Sharrows & Shared Streets - dotted bike green stroke
-      { id: "trail-sharrow", type: "line", source: "trails", minzoom: 13,
+      { id: "trail-sharrow", type: "line", source: "trails", minzoom: 11,
         filter: ["==", ["get", "facility"], "sharrow"],
         paint: {
           "line-color": trailSharrow,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 13, 1.1, 15, 1.6, 17, 2.2],
-          "line-dasharray": [2, 2.5],
-          "line-opacity": 0.8,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 11, 1.1, 13, 1.5, 15, 2.0, 17, 2.6],
+          "line-dasharray": [1.5, 2.5],
+          "line-opacity": 0.85,
         } },
       // 6. Unpaved / gravel trails
       { id: "trail-dash", type: "line", source: "trails",
         filter: ["==", ["get", "surface"], "unpaved"],
         paint: {
           "line-color": theme === "dark" ? "#fbbf24" : "#b45309",
-          "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1.4, 12, 2.2, 15, 3.0, 17, 4.0],
-          "line-dasharray": [2.5, 2],
-          "line-opacity": 0.9,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1.8, 11, 2.2, 13, 2.8, 15, 3.6, 17, 4.5],
+          "line-dasharray": [3, 2],
+          "line-opacity": 0.92,
         } },
       // 7. Labels along major trails and protected bike lanes
-      { id: "trail-labels", type: "symbol", source: "trails", minzoom: 11.5,
+      { id: "trail-labels", type: "symbol", source: "trails", minzoom: 11,
         layout: {
           "symbol-placement": "line", "symbol-spacing": 350,
           "text-field": ["get", "name"], "text-font": F_REG,
-          "text-size": ["interpolate", ["linear"], ["zoom"], 11.5, 9.5, 13, 10.5, 16, 12],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 11, 9.5, 13, 10.5, 16, 12],
           "text-padding": 8, "text-optional": true,
         },
         paint: {
@@ -3037,6 +3037,46 @@
         </button></li>`).join("")}
       </ul>` : "";
 
+    const nonTrailKeys = keys.filter((l) => l.key !== "trails");
+    const hasTrails = enabled.has("trails");
+    const bikeLegendHTML = hasTrails ? `
+      <div class="bike-legend-card">
+        <div class="bike-legend-head">
+          <h4 class="bike-legend-title">Bicycle Network & Trails</h4>
+          <span class="muted" style="font-size:11px">SDOT 2025 Legend</span>
+        </div>
+        <div class="bike-filter-pills" role="group" aria-label="Filter bike facilities">
+          <button type="button" class="bike-filter-pill${!bikeFacilityFilter ? " active" : ""}" data-bike-cat="">All types</button>
+          <button type="button" class="bike-filter-pill${bikeFacilityFilter === "pbl" ? " active" : ""}" data-bike-cat="pbl">Protected & Trails</button>
+          <button type="button" class="bike-filter-pill${bikeFacilityFilter === "greenway" ? " active" : ""}" data-bike-cat="greenway">Greenways</button>
+          <button type="button" class="bike-filter-pill${bikeFacilityFilter === "lane" ? " active" : ""}" data-bike-cat="lane">Bike Lanes</button>
+          <button type="button" class="bike-filter-pill${bikeFacilityFilter === "sharrow" ? " active" : ""}" data-bike-cat="sharrow">Sharrows</button>
+          <button type="button" class="bike-filter-pill${bikeFacilityFilter === "unpaved" ? " active" : ""}" data-bike-cat="unpaved">Regional / Gravel</button>
+        </div>
+        <ul class="bike-legend-list" role="list">
+          <li class="bike-legend-row${bikeFacilityFilter === "pbl" ? " active" : ""}" data-bike-cat="pbl" title="Filter to Protected Bike Lanes & Trails">
+            <span class="sw">${bikeSwatch("pbl")}</span>
+            <span class="lbl"><span class="lbl-name">Separated Bikeway / Multi-Use Trail</span><span class="lbl-desc">Protected bike lanes & paved paths</span></span>
+          </li>
+          <li class="bike-legend-row${bikeFacilityFilter === "greenway" ? " active" : ""}" data-bike-cat="greenway" title="Filter to Neighborhood Greenways">
+            <span class="sw">${bikeSwatch("greenway")}</span>
+            <span class="lbl"><span class="lbl-name">Neighborhood Greenway</span><span class="lbl-desc">Calm residential streets (20 mph, humps)</span></span>
+          </li>
+          <li class="bike-legend-row${bikeFacilityFilter === "lane" ? " active" : ""}" data-bike-cat="lane" title="Filter to Bicycle Lanes">
+            <span class="sw">${bikeSwatch("lane")}</span>
+            <span class="lbl"><span class="lbl-name">Bicycle Lane</span><span class="lbl-desc">Buffered, climbing & street lanes</span></span>
+          </li>
+          <li class="bike-legend-row${bikeFacilityFilter === "sharrow" ? " active" : ""}" data-bike-cat="sharrow" title="Filter to Shared Streets">
+            <span class="sw">${bikeSwatch("sharrow")}</span>
+            <span class="lbl"><span class="lbl-name">Shared Street / Sharrows</span><span class="lbl-desc">Streets with shared-lane markings</span></span>
+          </li>
+          <li class="bike-legend-row${bikeFacilityFilter === "unpaved" ? " active" : ""}" data-bike-cat="unpaved" title="Filter to Regional & Gravel Trails">
+            <span class="sw">${bikeSwatch("unpaved")}</span>
+            <span class="lbl"><span class="lbl-name">Regional & Gravel Trail</span><span class="lbl-desc">Unpaved regional corridors</span></span>
+          </li>
+        </ul>
+      </div>` : "";
+
     const html = `<div class="home-view">
       <p class="live-line${live ? "" : " off"}"><span class="pulse" aria-hidden="true"></span><span${live ? ' id="liveDesc"' : ""}>${live ? esc(liveStatusText()) : "Vehicles are hidden"}</span></p>
       ${favSectionHTML}
@@ -3046,10 +3086,10 @@
         <span class="txt"><span class="name">Layers</span><span class="desc">${shown} of ${LAYERS.length} shown${isDefaultLayers() ? "" : " · customized"}</span></span>
         <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="m1.5 1.5 5 5.5-5 5.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button></li>${alertRow}</ul>
-      ${keys.length ? `<h2 class="section">On the map</h2><ul class="key-grid" role="list">${keys.map((l) =>
-        `<li><span class="sw">${swatch(l)}</span><span>${esc(KEY_NAME[l.key])}</span></li>`).join("")}</ul>`
-        : `<p class="hint">Every layer is off. Turn some on in Layers.</p>`}
-      <p class="hint">Tap a colored band to choose a route. Its path, stops, and vehicles will stand out.</p>
+      ${nonTrailKeys.length ? `<h2 class="section">On the map</h2><ul class="key-grid" role="list">${nonTrailKeys.map((l) =>
+        `<li><span class="sw">${swatch(l)}</span><span>${esc(KEY_NAME[l.key])}</span></li>`).join("")}</ul>` : ""}
+      ${bikeLegendHTML}
+      ${!keys.length ? `<p class="hint">Every layer is off. Turn some on in Layers.</p>` : `<p class="hint">Tap a colored band or bike route to choose it. Its path, stops, and details will stand out.</p>`}
     </div>`;
     const existing = body().querySelector(".home-view");
     if (quiet && existing) existing.outerHTML = html;
@@ -3058,6 +3098,14 @@
     const oa = $("#openAlerts");
     if (oa) oa.addEventListener("click", () => { panelView = "alerts"; showAlerts(); openSheet("half"); });
     bindFavListEvents();
+    body().querySelectorAll(".bike-filter-pill, .bike-legend-row").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const cat = btn.dataset.bikeCat || null;
+        bikeFacilityFilter = (bikeFacilityFilter === cat && cat !== null) ? null : cat;
+        applyLayerToggles();
+        showHome(true);
+      });
+    });
   }
   const layersHead = () => `<h2 class="view-title">Layers</h2>${isDefaultLayers() ? "" : `<button class="text-btn" id="resetLayers" type="button">Reset</button>`}`;
   function bindReset() {
@@ -3141,6 +3189,31 @@
       li.addEventListener("click", (e) => { if (!e.target.closest(".switch")) toggle(!input.checked); });
     }
   }
+  function bikeSwatch(type) {
+    const trailCol = theme === "dark" ? "#2dd4bf" : "#047857";
+    const trailGreenway = theme === "dark" ? "#34d399" : "#10b981";
+    const trailLane = theme === "dark" ? "#22d3ee" : "#0891b2";
+    const trailSharrow = theme === "dark" ? "#86efac" : "#15803d";
+    const trailDash = theme === "dark" ? "#fbbf24" : "#b45309";
+    const trailCase = theme === "dark" ? "#041d16" : "#ffffff";
+    if (type === "pbl") {
+      return `<svg viewBox="0 0 30 30" aria-hidden="true"><path d="M4 15 H26" stroke="${trailCase}" stroke-width="6" stroke-linecap="round"/><path d="M4 15 H26" stroke="${trailCol}" stroke-width="3.5" stroke-linecap="round"/></svg>`;
+    }
+    if (type === "greenway") {
+      return `<svg viewBox="0 0 30 30" aria-hidden="true"><path d="M4 15 H26" stroke="${trailGreenway}" stroke-width="3.2" stroke-linecap="round" stroke-dasharray="4 2.5"/></svg>`;
+    }
+    if (type === "lane") {
+      return `<svg viewBox="0 0 30 30" aria-hidden="true"><path d="M4 15 H26" stroke="${trailLane}" stroke-width="3.2" stroke-linecap="round"/></svg>`;
+    }
+    if (type === "sharrow") {
+      return `<svg viewBox="0 0 30 30" aria-hidden="true"><path d="M4 15 H26" stroke="${trailSharrow}" stroke-width="2.6" stroke-linecap="round" stroke-dasharray="1.5 3"/></svg>`;
+    }
+    if (type === "unpaved") {
+      return `<svg viewBox="0 0 30 30" aria-hidden="true"><path d="M4 15 H26" stroke="${trailDash}" stroke-width="3" stroke-linecap="round" stroke-dasharray="3.5 2.5"/></svg>`;
+    }
+    return `<svg viewBox="0 0 30 30"></svg>`;
+  }
+
   function swatch(l) {
     const P = LINE[theme];
     const tube = (c, w, y, kind) => {
@@ -3731,9 +3804,19 @@
     const p = f.properties;
     const isUnpaved = p.surface === "unpaved";
     const catName = p.cat_name || "Bicycle Facility";
-    const icon = p.facility === "trail" ? "🚲" : p.facility === "pbl" ? "🛡️" : p.facility === "greenway" ? "🌿" : "🚲";
+    const icon = p.facility === "trail" ? "🚲" : p.facility === "pbl" ? "🛡️" : p.facility === "greenway" ? "🌿" : p.facility === "lane" ? "🚲" : p.facility === "sharrow" ? "🚴" : "🚲";
+    const badgeColor = p.facility === "pbl" || p.facility === "trail" ? "#047857" : p.facility === "greenway" ? "#10b981" : p.facility === "lane" ? "#0891b2" : p.facility === "sharrow" ? "#15803d" : "#b45309";
     const statusBadge = p.status === "UNDERCONS" ? ` · <span class="incline-badge" style="background:#fbbf24;color:#78350f">Under Construction</span>` : "";
-    const html = `<div class="pop"><h3>${icon} ${esc(p.name)}</h3><p class="trail-meta"><strong>${esc(catName)}</strong>${p.length_mi ? ` · ${p.length_mi} miles` : ""}${isUnpaved ? " · Gravel surface" : " · Paved"}${p.region ? ` · ${esc(p.region)}` : ""}${statusBadge}</p><p>${esc(p.desc || "Seattle & Puget Sound bicycle network facility connecting transit hubs, neighborhoods, and commercial centers.")}</p></div>`;
+    const html = `<div class="pop">
+      <div style="display:flex;align-items:center;gap:6px;margin:2px 0 6px">
+        <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;background:${badgeColor};color:#fff;padding:2px 8px;border-radius:6px">${esc(catName)}</span>
+        ${statusBadge}
+      </div>
+      <h3 style="margin:0 0 4px">${icon} ${esc(p.name)}</h3>
+      <p class="trail-meta"><strong>${isUnpaved ? "Gravel / Unpaved Surface" : "Paved Surface"}</strong>${p.length_mi ? ` · ${p.length_mi} miles` : ""}${p.region ? ` · ${esc(p.region)}` : ""}</p>
+      <p>${esc(p.desc || "Seattle & Puget Sound bicycle network facility connecting transit hubs, neighborhoods, and commercial centers.")}</p>
+      <p class="foot" style="margin-top:8px;font-size:11px;color:var(--muted)">City of Seattle SDOT & King County GIS Data</p>
+    </div>`;
     openPopup({ lng: mid[0], lat: mid[1] }, html, "300px");
   }
   function selectPR(pr) {
@@ -4773,13 +4856,28 @@
   }
 
   // ---------------------------------------------------------------- layer toggles
+  let bikeFacilityFilter = null;
   function applyLayerToggles() {
     if (!map) return;
     const vis = (key, ids) => ids.forEach((id) => map.getLayer(id) && map.setLayoutProperty(id, "visibility", enabled.has(key) ? "visible" : "none"));
     vis("dart", ["dart-fill", "dart-line"]);
     vis("access", ["access-fill", "access-line"]);
     vis("flex", ["flex", "flex-fill", "flex-line"]);
-    vis("trails", ["trail-case", "trail-pbl", "trail-greenway", "trail-lane", "trail-sharrow", "trail-dash", "trail-labels"]);
+    const trailLayers = ["trail-case", "trail-pbl", "trail-greenway", "trail-lane", "trail-sharrow", "trail-dash", "trail-labels"];
+    if (!enabled.has("trails")) {
+      trailLayers.forEach((id) => map.getLayer(id) && map.setLayoutProperty(id, "visibility", "none"));
+    } else if (!bikeFacilityFilter) {
+      trailLayers.forEach((id) => map.getLayer(id) && map.setLayoutProperty(id, "visibility", "visible"));
+    } else {
+      const allowed = {
+        pbl: ["trail-case", "trail-pbl", "trail-labels"],
+        greenway: ["trail-greenway"],
+        lane: ["trail-lane"],
+        sharrow: ["trail-sharrow"],
+        unpaved: ["trail-dash"],
+      }[bikeFacilityFilter] || trailLayers;
+      trailLayers.forEach((id) => map.getLayer(id) && map.setLayoutProperty(id, "visibility", allowed.includes(id) ? "visible" : "none"));
+    }
     vis("stops", ["stops", "stop-name"]);
     vis("live", ["veh-dir", "veh-icon", "veh-label"]);
     if (enabled.has("live")) startLive(); else stopLive();
@@ -5002,8 +5100,9 @@
           const tp = trailHover[0].properties;
           cur = { kind: "trail", name: tp.name };
           map.getCanvas().style.cursor = "pointer";
-          const icon = tp.facility === "trail" ? "🚲" : tp.facility === "pbl" ? "🛡️" : tp.facility === "greenway" ? "🌿" : "🚲";
-          tipShow("trail:" + tp.name, `<span class="tt-trail">${icon} <b>${esc(tp.name)}</b>${tp.length_mi ? ` · ${tp.length_mi} mi` : ""}<br>${esc(tp.cat_name || "Bike Facility")}${tp.surface === "unpaved" ? " · Gravel" : ""} · Tap for details</span>`, "", ev(e));
+          const icon = tp.facility === "trail" ? "🚲" : tp.facility === "pbl" ? "🛡️" : tp.facility === "greenway" ? "🌿" : tp.facility === "lane" ? "🚲" : tp.facility === "sharrow" ? "🚴" : "🚲";
+          const badgeColor = tp.facility === "pbl" || tp.facility === "trail" ? "#047857" : tp.facility === "greenway" ? "#10b981" : tp.facility === "lane" ? "#0891b2" : tp.facility === "sharrow" ? "#15803d" : "#b45309";
+          tipShow("trail:" + tp.name, `<span class="tt-trail">${icon} <b>${esc(tp.name)}</b>${tp.length_mi ? ` · ${tp.length_mi} mi` : ""}<br><span style="color:${badgeColor};font-weight:700">${esc(tp.cat_name || "Bike Facility")}</span>${tp.surface === "unpaved" ? " · Gravel" : " · Paved"} · Tap for details</span>`, "", ev(e));
           return;
         }
         cur = null;
@@ -5091,9 +5190,19 @@
         const tp = trailsHit[0].properties;
         const isUnpaved = tp.surface === "unpaved";
         const catName = tp.cat_name || "Bicycle Facility";
-        const icon = tp.facility === "trail" ? "🚲" : tp.facility === "pbl" ? "🛡️" : tp.facility === "greenway" ? "🌿" : "🚲";
+        const icon = tp.facility === "trail" ? "🚲" : tp.facility === "pbl" ? "🛡️" : tp.facility === "greenway" ? "🌿" : tp.facility === "lane" ? "🚲" : tp.facility === "sharrow" ? "🚴" : "🚲";
+        const badgeColor = tp.facility === "pbl" || tp.facility === "trail" ? "#047857" : tp.facility === "greenway" ? "#10b981" : tp.facility === "lane" ? "#0891b2" : tp.facility === "sharrow" ? "#15803d" : "#b45309";
         const statusBadge = tp.status === "UNDERCONS" ? ` · <span class="incline-badge" style="background:#fbbf24;color:#78350f">Under Construction</span>` : "";
-        const html = `<div class="pop"><h3>${icon} ${esc(tp.name)}</h3><p class="trail-meta"><strong>${esc(catName)}</strong>${tp.length_mi ? ` · ${tp.length_mi} miles` : ""}${isUnpaved ? " · Gravel surface" : " · Paved"}${tp.region ? ` · ${esc(tp.region)}` : ""}${statusBadge}</p><p>${esc(tp.desc || "Seattle & Puget Sound bicycle network facility connecting transit hubs, neighborhoods, and commercial centers.")}</p></div>`;
+        const html = `<div class="pop">
+          <div style="display:flex;align-items:center;gap:6px;margin:2px 0 6px">
+            <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;background:${badgeColor};color:#fff;padding:2px 8px;border-radius:6px">${esc(catName)}</span>
+            ${statusBadge}
+          </div>
+          <h3 style="margin:0 0 4px">${icon} ${esc(tp.name)}</h3>
+          <p class="trail-meta"><strong>${isUnpaved ? "Gravel / Unpaved Surface" : "Paved Surface"}</strong>${tp.length_mi ? ` · ${tp.length_mi} miles` : ""}${tp.region ? ` · ${esc(tp.region)}` : ""}</p>
+          <p>${esc(tp.desc || "Seattle & Puget Sound bicycle network facility connecting transit hubs, neighborhoods, and commercial centers.")}</p>
+          <p class="foot" style="margin-top:8px;font-size:11px;color:var(--muted)">City of Seattle SDOT & King County GIS Data</p>
+        </div>`;
         openPopup(e.lngLat, html, "300px");
         return;
       }
@@ -5375,7 +5484,7 @@
     registerProtocols();
     const getJSON = (u) => fetch(u).then((r) => { if (!r.ok) throw new Error(`${u}: ${r.status}`); return r.json(); });
     const [routes, net, stops, areas, manifest, live] = await Promise.all([
-      getJSON("data/routes.json"), getJSON("data/network.json"), getJSON("data/stops.json"), getJSON("data/areas.json"),
+      getJSON("data/routes.json"), getJSON("data/network.json"), getJSON("data/stops.json"), getJSON("data/areas.json?v=20261106_sdot"),
       getJSON("tiles/manifest.json").catch(() => null), liveTiles(),
     ]);
     MANIFEST = manifest;

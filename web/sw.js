@@ -1,5 +1,5 @@
 /* Seattle Transit Map Service Worker - Offline Tunnel Mode & App Caching */
-const CACHE_NAME = "seattle-transit-v1";
+const CACHE_NAME = "seattle-transit-v2";
 const STATIC_ASSETS = [
   "./",
   "index.html",
@@ -50,7 +50,21 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // App core assets, static data, vector tiles: Cache-first with network fallback
+  // Transit and map data: Network-first with cache fallback so fresh routes, areas & schedules load immediately
+  if (url.pathname.includes("/data/")) {
+    event.respondWith(
+      fetch(req).then((response) => {
+        if (response && response.status === 200) {
+          const cloned = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(req, cloned));
+        }
+        return response;
+      }).catch(() => caches.match(req))
+    );
+    return;
+  }
+
+  // App core assets, vector tiles: Cache-first with network fallback
   event.respondWith(
     caches.match(req).then((cached) => {
       if (cached) return cached;
@@ -61,7 +75,7 @@ self.addEventListener("fetch", (event) => {
         const cloned = response.clone();
         caches.open(CACHE_NAME).then((cache) => {
           // Cache vector tiles, fonts, and static assets dynamically
-          if (url.pathname.includes("/data/") || url.pathname.includes("/tiles/") || url.pathname.includes("/fonts/") || url.pathname.endsWith(".js") || url.pathname.endsWith(".css") || url.pathname.endsWith(".svg")) {
+          if (url.pathname.includes("/tiles/") || url.pathname.includes("/fonts/") || url.pathname.endsWith(".js") || url.pathname.endsWith(".css") || url.pathname.endsWith(".svg")) {
             cache.put(req, cloned);
           }
         });

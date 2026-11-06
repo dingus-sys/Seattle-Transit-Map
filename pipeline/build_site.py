@@ -29,7 +29,7 @@ WSDOT_PLACEHOLDER = "__WSDOT_ACCESS_CODE__"
 LOGO_TYPES = {".svg": "image/svg+xml", ".png": "image/png"}
 # fetched by the page as soon as it starts, so the browser can start downloading them
 # while it is still loading the scripts
-PRELOAD = ["data/network.json", "data/routes.json", "data/stops.json"]
+PRELOAD = ["data/network.json", "data/routes.json", "data/stops.json", "data/areas.json"]
 
 
 def maplibre_css():
