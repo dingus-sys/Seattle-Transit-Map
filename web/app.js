@@ -3932,6 +3932,154 @@
     }
   }
 
+  function getPlaceBadge(p) {
+    if (!p) return { emoji: "📍", bg: "#007aff", label: "Location" };
+    const k = (p.osm_key || p.class || "").toLowerCase();
+    const v = (p.osm_value || p.type || "").toLowerCase();
+    const str = `${p.name || ""} ${p.desc || ""} ${v} ${k}`.toLowerCase();
+
+    // 1. Airports & Aviation
+    if (k === "aeroway" || v === "aerodrome" || v === "airport" || /\b(airport|airfield|aerodrome|heliport|helipad|seatac|sea-tac|boeing field|paine field)\b/i.test(str)) {
+      return { emoji: "✈️", bg: "#0284c7", label: "Airport" };
+    }
+    // 2. Ferry Terminals & Marine Docks
+    if (v === "ferry_terminal" || k === "ferry" || /\b(ferry|colman dock|water taxi|pier 50|pier 52|fauntleroy|bainbridge ferry|bremerton ferry|kingston ferry|edmonds ferry|mukilteo ferry)\b/i.test(str)) {
+      return { emoji: "⛴️", bg: "#0369a1", label: "Ferry Terminal" };
+    }
+    // 3. Marinas & Boat Launches
+    if (v === "marina" || /\b(marina|boat launch|yacht club|boat ramp)\b/i.test(str)) {
+      return { emoji: "⛵", bg: "#0284c7", label: "Marina" };
+    }
+    // 4. Beaches & Coastline
+    if (v === "beach" || /\b(beach|beaches|seashore|shoreline|cove|golden gardens|alki beach|madison park beach)\b/i.test(str)) {
+      return { emoji: "🏖️", bg: "#d97706", label: "Beach" };
+    }
+    // 5. Aquariums
+    if (v === "aquarium" || /\b(aquarium|oceanarium)\b/i.test(str)) {
+      return { emoji: "🐠", bg: "#0284c7", label: "Aquarium" };
+    }
+    // 6. Zoos
+    if (v === "zoo" || /\b(zoo|zoological|woodland park zoo|safari)\b/i.test(str)) {
+      return { emoji: "🦁", bg: "#15803d", label: "Zoo" };
+    }
+    // 7. Dog Parks
+    if (v === "dog_park" || /\b(dog park|off-leash|dog area)\b/i.test(str)) {
+      return { emoji: "🐕", bg: "#10b981", label: "Dog Park" };
+    }
+    // 8. Golf Courses
+    if (v === "golf_course" || /\b(golf course|golf club|driving range|golf links)\b/i.test(str)) {
+      return { emoji: "⛳", bg: "#15803d", label: "Golf Course" };
+    }
+    // 9. Lakes, Rivers, Bays & Water Bodies
+    if (k === "water" || k === "waterway" || v === "lake" || v === "water" || v === "river" || v === "bay" || /\b(lake|pond|river|canal|creek|sound|bay\b|reservoir|lake washington|lake union|green lake|puget sound|elliott bay)\b/i.test(str)) {
+      return { emoji: "🌊", bg: "#0891b2", label: "Lake / Water" };
+    }
+    // 10. Hospitals & Medical Centers
+    if (v === "hospital" || v === "clinic" || v === "doctors" || v === "urgent_care" || /\b(hospital|medical center|medical centre|clinic|urgent care|emergency room|swedish|harborview|virginia mason|kaiser permanente|children\x27s hospital|uw medical|polyclinic)\b/i.test(str)) {
+      return { emoji: "🏥", bg: "#e11d48", label: "Hospital / Medical" };
+    }
+    // 11. Universities & Colleges
+    if (v === "university" || v === "college" || /\b(university|college|campus|uw\b|u-district|seattle university|seattle u\b|spu\b|seattle pacific|bellevue college)\b/i.test(str)) {
+      return { emoji: "🎓", bg: "#4f46e5", label: "University" };
+    }
+    // 12. Schools & Academies
+    if (v === "school" || v === "kindergarten" || /\b(high school|middle school|elementary|school\b|academy|prep\b|preschool|daycare|kindergarten)\b/i.test(str)) {
+      return { emoji: "🏫", bg: "#2563eb", label: "School" };
+    }
+    // 13. Stadiums & Arenas
+    if (v === "stadium" || v === "arena" || v === "sports_centre" || /\b(stadium|arena|ballpark|coliseum|lumen field|t-mobile park|climate pledge|husky stadium)\b/i.test(str)) {
+      return { emoji: "🏟️", bg: "#ea580c", label: "Stadium / Arena" };
+    }
+    // 14. Parks, Gardens & Nature
+    if (v === "park" || v === "garden" || v === "nature_reserve" || v === "playground" || /\b(park|parks|garden|gardens|arboretum|preserve|greenbelt|cemetery|shelterhouse|gatehouse|cal anderson|discovery park|volunteer park|seward park|gas works)\b/i.test(str)) {
+      return { emoji: "🌳", bg: "#059669", label: "Park" };
+    }
+    // 15. Campgrounds
+    if (v === "camp_site" || /\b(campground|campsite|camping)\b/i.test(str)) {
+      return { emoji: "⛺", bg: "#b45309", label: "Campground" };
+    }
+    // 16. Libraries
+    if (v === "library" || /\b(library|libraries|spl\b|kcls\b)\b/i.test(str)) {
+      return { emoji: "📚", bg: "#0f766e", label: "Library" };
+    }
+    // 17. Museums & Science Centers
+    if (v === "museum" || v === "gallery" || /\b(museum|art gallery|gallery|mopop|seattle art museum|pacific science center|chihuly|mohai|burke museum)\b/i.test(str)) {
+      return { emoji: "🏛️", bg: "#7c3aed", label: "Museum" };
+    }
+    // 18. Theaters & Performance Arts
+    if (v === "theatre" || v === "cinema" || /\b(theater|theatre|cinema|playhouse|opera|symphony|benaroya|paramount|5th avenue|cinerama|siff\b)\b/i.test(str)) {
+      return { emoji: "🎭", bg: "#9333ea", label: "Theater / Arts" };
+    }
+    // 19. Music Venues
+    if (v === "nightclub" || /\b(music hall|showbox|neumos|jazz alley|ballroom)\b/i.test(str)) {
+      return { emoji: "🎵", bg: "#8b5cf6", label: "Music Venue" };
+    }
+    // 20. Observation Towers, Bridges & Peaks
+    if (/\b(space needle|smith tower|columbia center|tower)\b/i.test(str) || v === "tower") {
+      return { emoji: "🗼", bg: "#d97706", label: "Landmark / Tower" };
+    }
+    if (/\b(bridge|viaduct)\b/i.test(str) || v === "bridge") {
+      return { emoji: "🌉", bg: "#0284c7", label: "Bridge" };
+    }
+    if (v === "viewpoint" || v === "peak" || /\b(viewpoint|lookout|overlook|mountain|summit|peak)\b/i.test(str)) {
+      return { emoji: "⛰️", bg: "#b45309", label: "Viewpoint" };
+    }
+    // 21. Markets & Shopping
+    if (k === "shop" || v === "marketplace" || v === "mall" || v === "supermarket" || /\b(market|marketplace|pike place|mall|grocery|safeway|qfc|trader joe|whole foods|costco|target|h mart|uwajimaya)\b/i.test(str)) {
+      return { emoji: "🛍️", bg: "#db2777", label: "Market / Shopping" };
+    }
+    // 22. Hotels & Lodging
+    if (v === "hotel" || v === "motel" || v === "hostel" || /\b(hotel|motel|inn\b|hostel|resort|marriott|hilton|hyatt|sheraton|westin)\b/i.test(str)) {
+      return { emoji: "🏨", bg: "#3b82f6", label: "Hotel" };
+    }
+    // 23. Coffee & Bakeries
+    if (v === "cafe" || v === "bakery" || /\b(coffee|cafe|café|espresso|roaster|roastery|bakery|bakehouse|starbucks)\b/i.test(str)) {
+      return { emoji: "☕", bg: "#b45309", label: "Coffee / Cafe" };
+    }
+    // 24. Restaurants & Dining
+    if (v === "restaurant" || v === "bar" || v === "pub" || /\b(restaurant|grill|bistro|brewery|pub\b|tavern|pizzeria|sushi|diner)\b/i.test(str)) {
+      return { emoji: "🍽️", bg: "#c2410c", label: "Restaurant" };
+    }
+    // 25. Post Office
+    if (v === "post_office" || /\b(post office|usps|fedex|ups store)\b/i.test(str)) {
+      return { emoji: "📮", bg: "#0284c7", label: "Post Office" };
+    }
+    // 26. Places of Worship
+    if (v === "place_of_worship" || /\b(church|cathedral|temple|mosque|synagogue|chapel|parish)\b/i.test(str)) {
+      return { emoji: "⛪", bg: "#7e22ce", label: "Place of Worship" };
+    }
+    // 27. Civic / Government
+    if (v === "townhall" || v === "courthouse" || v === "police" || v === "fire_station" || /\b(city hall|courthouse|justice center|convention center|police|fire station)\b/i.test(str)) {
+      return { emoji: "🏛️", bg: "#475569", label: "Civic / Government" };
+    }
+    // 28. Pharmacy
+    if (v === "pharmacy" || /\b(pharmacy|drugstore|walgreens|cvs|bartell)\b/i.test(str)) {
+      return { emoji: "💊", bg: "#059669", label: "Pharmacy" };
+    }
+    // 29. Bank
+    if (v === "bank" || /\b(bank|credit union|chase|wells fargo|becu)\b/i.test(str)) {
+      return { emoji: "🏦", bg: "#047857", label: "Bank" };
+    }
+    // 30. Stations & Transit
+    if (p.kind === "station" || v === "station" || /\b(station|link light rail|sounder|amtrak)\b/i.test(str)) {
+      return { emoji: "🚆", bg: "#059669", label: "Transit Station" };
+    }
+    if (p.kind === "stop") {
+      return { emoji: "🚌", bg: "#2563eb", label: "Bus Stop" };
+    }
+    if (p.kind === "pr") {
+      return { emoji: "🅿️", bg: "#0284c7", label: "Park & Ride" };
+    }
+    if (p.kind === "trail") {
+      return { emoji: "🚲", bg: "#059669", label: "Trail / Bike" };
+    }
+    // 31. Residential / Street Address
+    if (v === "house" || v === "building" || k === "building" || /\b\d+\s+[A-Za-z0-9\s]+(st|ave|blvd|rd|way|dr|ct|pl|lane|street|avenue|boulevard|road|drive)\b/i.test(str)) {
+      return { emoji: "🏠", bg: "#2563eb", label: "Address" };
+    }
+    return { emoji: "📍", bg: "#007aff", label: "Location" };
+  }
+
   function showPlaceCard(place) {
     if (!place || typeof place.lat !== "number" || typeof place.lon !== "number") return;
     selected = null;
@@ -3942,9 +4090,11 @@
     applySelectionStyle();
     showRouteStops(null);
 
+    const badge = place.badge || getPlaceBadge(place);
+
     const el = document.createElement("div");
     el.className = "place-pin-marker";
-    el.innerHTML = `<svg width="34" height="44" viewBox="0 0 24 32" fill="none"><filter id="pin-shd" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="#000" flood-opacity="0.35"/></filter><path d="M12 0C5.373 0 0 5.373 0 12c0 9 12 20 12 20s12-11 12-20c0-6.627-5.373-12-12-12z" fill="#007aff" filter="url(#pin-shd)"/><circle cx="12" cy="11" r="4.5" fill="#ffffff"/></svg>`;
+    el.innerHTML = `<svg width="36" height="46" viewBox="0 0 24 32" fill="none"><filter id="pin-shd" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="#000" flood-opacity="0.35"/></filter><path d="M12 0C5.373 0 0 5.373 0 12c0 9 12 20 12 20s12-11 12-20c0-6.627-5.373-12-12-12z" fill="${badge.bg}" filter="url(#pin-shd)"/><circle cx="12" cy="11" r="5.5" fill="#ffffff"/><text x="12" y="14" text-anchor="middle" font-size="8.5">${badge.emoji}</text></svg>`;
     placeMarker = new maplibregl.Marker({ element: el, anchor: "bottom" })
       .setLngLat([place.lon, place.lat])
       .addTo(map);
@@ -3968,11 +4118,11 @@
     const routes = [...nearbyRouteIds].map((rid) => RBY[rid]).filter(Boolean).sort(tagOrder);
 
     const placeTitle = place.name;
-    const placeSubtitle = place.desc || "Address / Location";
+    const placeSubtitle = place.desc ? `${place.desc} · ${badge.label}` : badge.label;
 
     let html = `${backBtn}
       <div class="hero stop-hero" style="cursor:default">
-        <span class="stop-glyph big" style="background:var(--accent,#007aff);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:18px" aria-hidden="true">📍</span>
+        <span class="stop-glyph big" style="background:${badge.bg};color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:20px" aria-hidden="true">${badge.emoji}</span>
         <div>
           <h2>${esc(placeTitle)}</h2>
           <p>${esc(placeSubtitle)}</p>
@@ -4054,7 +4204,8 @@
         }
         if (it.kind === "address") {
           const p = it.place;
-          return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true" style="background:var(--accent,#007aff);color:#fff">📍</span><span class="txt"><span class="name">${esc(p.name)}</span><span class="desc">${esc(p.desc)} · Address / Place</span></span></button>`;
+          const badge = p.badge || getPlaceBadge(p);
+          return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true" style="background:${badge.bg};color:#fff">${badge.emoji}</span><span class="txt"><span class="name">${esc(p.name)}</span><span class="desc">${esc(p.desc)} · ${esc(badge.label)}</span></span></button>`;
         }
         const sub = it.kind === "station" ? "Station" : `Bus stop${it.s.code ? " #" + it.s.code : ""}`;
         return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="stop-glyph${it.kind === "station" ? " big" : ""}" aria-hidden="true"></span><span class="txt"><span class="name">${esc(it.s.name)}</span><span class="desc">${esc(sub)}</span></span></button>`;
@@ -4670,16 +4821,19 @@
     const origPt = [dirOrigin.lon, dirOrigin.lat];
     const destPt = [dirDest.lon, dirDest.lat];
 
+    const origBadge = dirOrigin.isLocation ? { emoji: "📍", bg: "#10b981", label: "Start" } : (dirOrigin.badge || getPlaceBadge(dirOrigin));
+    const destBadge = dirDest.badge || getPlaceBadge(dirDest);
+
     ptFeatures.push({
       type: "Feature",
       geometry: { type: "Point", coordinates: origPt },
-      properties: { role: "orig", color: "#10b981", label: "A" }
+      properties: { role: "orig", color: origBadge.bg || "#10b981", label: origBadge.emoji ? `${origBadge.emoji} ${origBadge.label || "Start"}` : "A" }
     });
 
     ptFeatures.push({
       type: "Feature",
       geometry: { type: "Point", coordinates: destPt },
-      properties: { role: "dest", color: "#ef4444", label: "B" }
+      properties: { role: "dest", color: destBadge.bg || "#ef4444", label: destBadge.emoji ? `${destBadge.emoji} ${destBadge.label || "Destination"}` : "B" }
     });
 
     const allCoords = [origPt, destPt];
@@ -4936,12 +5090,17 @@
       </button>`;
     }).join("");
 
+    const origBadge = dirOrigin.isLocation ? { emoji: "📍", bg: "#2563eb", label: "Your location" } : (dirOrigin.badge || getPlaceBadge(dirOrigin));
+    const destBadge = dirDest.badge || getPlaceBadge(dirDest);
+    const origIconHtml = `<span class="step-icon" style="background:${origBadge.bg};color:#fff;font-size:14px">${origBadge.emoji}</span>`;
+    const destIconHtml = `<span class="step-icon" style="background:${destBadge.bg};color:#fff;font-size:14px">${destBadge.emoji}</span>`;
+
     let stepsHtml = "";
     if (cur.type === "walk") {
       stepsHtml = `<div class="trip-steps">
         <div class="step-row">
           <span class="step-line"></span>
-          <span class="step-icon">📍</span>
+          ${origIconHtml}
           <div class="step-content">
             <div class="step-main">Start at ${esc(origTitle)}</div>
           </div>
@@ -4955,7 +5114,7 @@
           </div>
         </div>
         <div class="step-row">
-          <span class="step-icon">🏁</span>
+          ${destIconHtml}
           <div class="step-content">
             <div class="step-main">Arrive at ${esc(destTitle)}</div>
           </div>
@@ -4965,7 +5124,7 @@
       stepsHtml = `<div class="trip-steps">
         <div class="step-row">
           <span class="step-line"></span>
-          <span class="step-icon">📍</span>
+          ${origIconHtml}
           <div class="step-content">
             <div class="step-main">Start at ${esc(origTitle)}</div>
           </div>
@@ -4995,7 +5154,7 @@
           </div>
         </div>
         <div class="step-row">
-          <span class="step-icon">🏁</span>
+          ${destIconHtml}
           <div class="step-content">
             <div class="step-main">Arrive at ${esc(destTitle)}</div>
           </div>
@@ -5005,7 +5164,7 @@
       stepsHtml = `<div class="trip-steps">
         <div class="step-row">
           <span class="step-line"></span>
-          <span class="step-icon">📍</span>
+          ${origIconHtml}
           <div class="step-content">
             <div class="step-main">Start at ${esc(origTitle)}</div>
           </div>
@@ -5051,7 +5210,7 @@
           </div>
         </div>
         <div class="step-row">
-          <span class="step-icon">🏁</span>
+          ${destIconHtml}
           <div class="step-content">
             <div class="step-main">Arrive at ${esc(destTitle)}</div>
           </div>
@@ -5363,7 +5522,11 @@
             kind: "poi",
             name: title,
             desc: desc || "Puget Sound, WA",
-            lat, lon
+            lat, lon,
+            osm_key: p.osm_key,
+            osm_value: p.osm_value,
+            osm_type: p.osm_type,
+            type: p.type
           });
         }
         if (results.length > 0) return results;
@@ -5393,7 +5556,11 @@
           kind: "poi",
           name: title,
           desc,
-          lat, lon
+          lat, lon,
+          osm_key: item.class,
+          osm_value: item.type,
+          class: item.class,
+          type: item.type
         });
       }
       return results;
@@ -5435,9 +5602,22 @@
       return;
     }
     box.innerHTML = items.map((it, idx) => {
-      const glyph = it.kind === "favtrip" ? "⭐" : it.kind === "currloc" ? "📍" : it.kind === "mapchoice" ? "🗺️" : it.kind === "station" ? "🚆" : it.kind === "pr" ? "🅿️" : it.kind === "poi" ? "📍" : "🚌";
+      let glyph = "📍";
+      let bg = "var(--accent,#007aff)";
+      if (it.kind === "favtrip") { glyph = "⭐"; bg = "#f59e0b"; }
+      else if (it.kind === "currloc") { glyph = "📍"; bg = "#2563eb"; }
+      else if (it.kind === "mapchoice") { glyph = "🗺️"; bg = "#0891b2"; }
+      else if (it.kind === "station") { glyph = "🚆"; bg = "#059669"; }
+      else if (it.kind === "stop") { glyph = "🚌"; bg = "#2563eb"; }
+      else if (it.kind === "pr") { glyph = "🅿️"; bg = "#0284c7"; }
+      else if (it.kind === "trail") { glyph = "🚲"; bg = "#059669"; }
+      else {
+        const badge = it.badge || getPlaceBadge(it);
+        glyph = badge.emoji;
+        bg = badge.bg;
+      }
       return `<button type="button" class="result" data-sug-idx="${idx}">
-        <span class="trail-glyph" aria-hidden="true" style="${it.kind === "poi" ? "background:var(--accent,#007aff);color:#fff" : ""}">${glyph}</span>
+        <span class="trail-glyph" aria-hidden="true" style="background:${bg};color:#fff">${glyph}</span>
         <span class="txt"><span class="name">${esc(it.name)}</span><span class="desc">${esc(it.desc)}</span></span>
       </button>`;
     }).join("");
@@ -5449,26 +5629,26 @@
     const q = (query || "").trim();
 
     const items = [];
-    items.push({
-      kind: "currloc",
-      name: "Your current location",
-      desc: userCoords ? "GPS location available" : "Acquire GPS fix",
-      action: () => {
-        setOriginToCurrentLocation();
-        box.hidden = true;
-      }
-    });
-    items.push({
-      kind: "mapchoice",
-      name: "Choose on map",
-      desc: "Tap anywhere on the map to set point",
-      action: () => {
-        showToast(`Tap anywhere on the map to set ${dirActiveField === "orig" ? "starting point" : "destination"}`);
-        box.hidden = true;
-      }
-    });
 
     if (q.length < 2) {
+      items.push({
+        kind: "currloc",
+        name: "Your current location",
+        desc: userCoords ? "GPS location available" : "Acquire GPS fix",
+        action: () => {
+          setOriginToCurrentLocation();
+          box.hidden = true;
+        }
+      });
+      items.push({
+        kind: "mapchoice",
+        name: "Choose on map",
+        desc: "Tap anywhere on the map to set point",
+        action: () => {
+          showToast(`Tap anywhere on the map to set ${dirActiveField === "orig" ? "starting point" : "destination"}`);
+          box.hidden = true;
+        }
+      });
       const fTrips = getFavs().trips || [];
       for (const t of fTrips) {
         items.push({
@@ -5481,17 +5661,17 @@
           }
         });
       }
-    }
-
-    if (q.length >= 2) {
+    } else {
       const locals = searchLocalStopsAndPois(q);
       for (const loc of locals) {
+        const badge = getPlaceBadge(loc);
         items.push({
           kind: loc.kind,
           name: loc.name,
-          desc: loc.desc,
+          desc: `${loc.desc} · ${badge.label}`,
+          badge,
           action: () => {
-            const pt = { lat: loc.lat, lon: loc.lon, name: loc.name };
+            const pt = { lat: loc.lat, lon: loc.lon, name: loc.name, badge };
             if (dirActiveField === "orig") dirOrigin = pt; else dirDest = pt;
             dirActiveField = null;
             box.hidden = true;
@@ -5521,29 +5701,50 @@
         const currentInputVal = (dirActiveField === "orig" ? $("#dirOrig")?.value : $("#dirDest")?.value) || "";
         if (currentInputVal.trim() !== q || box.hidden) return;
 
-        const poiItems = pois.map((p) => ({
-          kind: "poi",
-          name: p.name,
-          desc: `${p.desc} · Address / Place`,
-          action: () => {
-            const pt = { lat: p.lat, lon: p.lon, name: p.name };
-            if (dirActiveField === "orig") dirOrigin = pt; else dirDest = pt;
-            dirActiveField = null;
-            box.hidden = true;
-            updateDirInputs();
-            if (dirOrigin && dirDest) {
-              executeTripPlan();
-            } else if (!dirOrigin) {
-              focusDirField("orig");
-              renderTripPlanView();
-            } else if (!dirDest) {
-              focusDirField("dest");
-              renderTripPlanView();
+        const poiItems = pois.map((p) => {
+          const badge = getPlaceBadge(p);
+          return {
+            kind: "poi",
+            name: p.name,
+            desc: `${p.desc} · ${badge.label}`,
+            lat: p.lat,
+            lon: p.lon,
+            osm_key: p.osm_key,
+            osm_value: p.osm_value,
+            type: p.type,
+            class: p.class,
+            badge,
+            action: () => {
+              const pt = { lat: p.lat, lon: p.lon, name: p.name, desc: p.desc, badge };
+              if (dirActiveField === "orig") dirOrigin = pt; else dirDest = pt;
+              dirActiveField = null;
+              box.hidden = true;
+              updateDirInputs();
+              if (dirOrigin && dirDest) {
+                executeTripPlan();
+              } else if (!dirOrigin) {
+                focusDirField("orig");
+                renderTripPlanView();
+              } else if (!dirDest) {
+                focusDirField("dest");
+                renderTripPlanView();
+              }
             }
-          }
-        }));
+          };
+        });
 
         currentDirSuggestions = [...items, ...poiItems];
+        if (q.length >= 2 && currentDirSuggestions.length === 0) {
+          currentDirSuggestions.push({
+            kind: "mapchoice",
+            name: "Choose on map",
+            desc: "Tap anywhere on the map to set point",
+            action: () => {
+              showToast(`Tap anywhere on the map to set ${dirActiveField === "orig" ? "starting point" : "destination"}`);
+              box.hidden = true;
+            }
+          });
+        }
         paintDirSuggestions(box, currentDirSuggestions);
       }, 220);
     }
