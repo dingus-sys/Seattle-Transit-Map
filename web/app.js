@@ -1746,8 +1746,8 @@
             const rawFrom = vehPos(prev, now);
             const d = geoDist(rawFrom, to);
             const routeChanged = prev.r && r && prev.r.id !== r.id;
-            const isStale = (prev.t0 && (now - prev.t0 > 35000)) || (prev.ts && v.ts && (v.ts - prev.ts > 60));
-            const maxGlide = a === "95" ? 1100 : 550;
+            const isStale = (prev.t0 && (now - prev.t0 > 25000)) || (prev.ts && v.ts && (v.ts - prev.ts > 45));
+            const maxGlide = a === "95" ? 1100 : 380;
             const snap = routeChanged || isStale || d > maxGlide || prev.snap;
             const from = snap ? to : rawFrom;
             const b = v.bearing != null && v.bearing > 0 ? v.bearing : d > 12 ? geoBearing(from, to) : prev.b;
@@ -1868,7 +1868,9 @@
       if (sel ? sel !== r.id : ((anyCatOn && !enabledCat(r.cat)) || CAT[dkey(r)].tier > tier)) continue;
       if (CAT[dkey(r)].group !== "water" && !nearView(v.pos)) continue;
       const c = tagColor(r);
-      const [pos, b] = onLine(r, v.pos, v.b == null ? -1 : v.b);
+      const snapped = onLine(r, v.pos, v.b == null ? -1 : v.b);
+      if (!snapped) continue;
+      const [pos, b] = snapped;
       if (!nearView(pos)) continue;
       // Keep the overview readable. A chosen route shows every one of its vehicles.
       if (!sel && CAT[dkey(r)].group !== "water") {
@@ -1895,15 +1897,17 @@
   let vehIx = null, vehIxSel = null;
   function onLine(r, pos, b) {
     const i = LINEIDX[r.id], key = dkey(r);
+    const isWater = CAT[key]?.group === "water";
     const sel = selected && selected.type === "route" && selected.id === r.id;
     const ix = sel ? (vehIxSel = vehIxSel || segIndex(lastSelFeats)) : (vehIx = vehIx || segIndex(lastFeats));
+    if (!ix) return isWater ? [pos, b] : null;
     const mpp = MPP0 / 2 ** map.getZoom();
     // a boat only ever sails its own lane, so it goes onto it from any distance (a position report
     // can be a long way off the drawn line, which put boats in open water); on land, only when close
-    const reach = CAT[key].group === "water" ? 8000 : Math.max(40, 26 * mpp);
+    const reach = isWater ? 8000 : Math.max(50, 26 * mpp);
     const hit = nearestOn(ix, toM(pos[0], pos[1]), reach,
       sel ? null : (pr) => (pr.r >= 0 ? pr.r === i : pr.cat === key && EDGES[pr.e] && EDGES[pr.e].l.includes(i)));
-    if (!hit) return [pos, b];
+    if (!hit) return isWater ? [pos, b] : null;
     let hb = (Math.atan2(hit.dir[0], hit.dir[1]) * 180 / Math.PI + 360) % 360;
     if (b >= 0) { const diff = Math.abs(((hb - b + 540) % 360) - 180); if (diff > 90) hb = (hb + 180) % 360; }
     return [toLonLat(hit.q), b >= 0 ? hb : b];
@@ -2127,8 +2131,8 @@
   function onTabResumed() {
     const elapsed = Date.now() - lastActiveTime;
     lastActiveTime = Date.now();
-    if (elapsed > 20000) {
-      // The tab was inactive or in background for longer than a polling interval:
+    if (elapsed > 3000) {
+      // The tab was inactive or in background:
       // Snap all existing vehicles to their latest known spot immediately so they
       // never skate across water or parks from old positions.
       for (const v of live.vehicles.values()) {
