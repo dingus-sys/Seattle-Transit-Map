@@ -179,6 +179,7 @@
     if (savedLayers ? (savedLayers.includes(l.key) || (l.key === "trails" && !store.get("layers3", null))) : l.on) enabled.add(l.key);
   });
   let selected = null;
+  let placeMarker = null;
 
   const enabledCat = (cat) => LAYERS.some((l) => l.cats.includes(cat) && enabled.has(l.key));
 
@@ -2591,6 +2592,7 @@
     corridorRoutes = [];
     setHash("", push);
     closePopup();
+    if (typeof clearPlaceMarker === "function") clearPlaceMarker();
     rebuild();
     applySelectionStyle();
     showRouteStops(null);
@@ -2758,11 +2760,11 @@
     return `<div class="dir-actions">
       <span class="dir-label">Trip Directions</span>
       <div class="dir-app-btns">
-        <button class="dir-inapp-btn dest press" type="button" data-dir-dest="${lat},${lon},${esc(name)}">
+        <button class="dir-inapp-btn dest press" type="button" data-dir-dest-lat="${lat}" data-dir-dest-lon="${lon}" data-dir-dest-name="${esc(name)}" data-dir-dest="${lat},${lon},${esc(name)}" aria-label="Plan trip to ${esc(name)}">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
           <span>Plan Trip Here</span>
         </button>
-        <button class="dir-inapp-btn orig press" type="button" data-dir-orig="${lat},${lon},${esc(name)}">
+        <button class="dir-inapp-btn orig press" type="button" data-dir-orig-lat="${lat}" data-dir-orig-lon="${lon}" data-dir-orig-name="${esc(name)}" data-dir-orig="${lat},${lon},${esc(name)}" aria-label="Trip from ${esc(name)}">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
           <span>Trip from Here</span>
         </button>
@@ -3815,6 +3817,7 @@
       <h3 style="margin:0 0 4px">${icon} ${esc(p.name)}</h3>
       <p class="trail-meta"><strong>${isUnpaved ? "Gravel / Unpaved Surface" : "Paved Surface"}</strong>${p.length_mi ? ` · ${p.length_mi} miles` : ""}${p.region ? ` · ${esc(p.region)}` : ""}</p>
       <p>${esc(p.desc || "Seattle & Puget Sound bicycle network facility connecting transit hubs, neighborhoods, and commercial centers.")}</p>
+      <div style="margin-top:10px">${directionsHTML(mid[1], mid[0], p.name)}</div>
       <p class="foot" style="margin-top:8px;font-size:11px;color:var(--muted)">City of Seattle SDOT & King County GIS Data</p>
     </div>`;
     openPopup({ lng: mid[0], lat: mid[1] }, html, "300px");
@@ -3827,6 +3830,7 @@
       <p class="trail-meta"><strong>${pr.stalls} Parking Stalls</strong> · ${esc(pr.agency)}</p>
       <p>🚲 <strong>Bicycle Parking:</strong> ${esc(pr.bikes)}</p>
       <p>🚌 <strong>Transit Connections:</strong> ${esc(pr.transit)}</p>
+      <div style="margin-top:10px">${directionsHTML(pr.lat, pr.lon, pr.name)}</div>
       <p class="foot" style="margin-top:6px">Regional commuter park & ride. BikeLink lockers offer secure on-demand bike parking via app or smartcard.</p>
     </div>`;
     openPopup({ lng: pr.lon, lat: pr.lat }, html, "300px");
@@ -3843,36 +3847,145 @@
     </div>`;
     openPopup({ lng: h.lon, lat: h.lat }, html, "320px");
   }
+  function clearPlaceMarker() {
+    if (placeMarker) {
+      placeMarker.remove();
+      placeMarker = null;
+    }
+  }
+
+  function showPlaceCard(place) {
+    if (!place || typeof place.lat !== "number" || typeof place.lon !== "number") return;
+    selected = null;
+    corridorRoutes = [];
+    closePopup();
+    clearPlaceMarker();
+    rebuild();
+    applySelectionStyle();
+    showRouteStops(null);
+
+    const el = document.createElement("div");
+    el.className = "place-pin-marker";
+    el.innerHTML = `<svg width="34" height="44" viewBox="0 0 24 32" fill="none"><filter id="pin-shd" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="#000" flood-opacity="0.35"/></filter><path d="M12 0C5.373 0 0 5.373 0 12c0 9 12 20 12 20s12-11 12-20c0-6.627-5.373-12-12-12z" fill="#007aff" filter="url(#pin-shd)"/><circle cx="12" cy="11" r="4.5" fill="#ffffff"/></svg>`;
+    placeMarker = new maplibregl.Marker({ element: el, anchor: "bottom" })
+      .setLngLat([place.lon, place.lat])
+      .addTo(map);
+
+    el.addEventListener("click", () => showPlaceCard(place));
+
+    map.flyTo({
+      center: [place.lon, place.lat],
+      zoom: Math.max(map.getZoom(), 16),
+      padding: fitPadding(),
+      duration: 800
+    });
+
+    const nearby = findNearbyStops(place.lat, place.lon, 500);
+    const nearbyRouteIds = new Set();
+    for (const nb of nearby) {
+      for (const rid of (nb.stop.routes || [])) {
+        nearbyRouteIds.add(rid);
+      }
+    }
+    const routes = [...nearbyRouteIds].map((rid) => RBY[rid]).filter(Boolean).sort(tagOrder);
+
+    const placeTitle = place.name;
+    const placeSubtitle = place.desc || "Address / Location";
+
+    let html = `${backBtn}
+      <div class="hero stop-hero" style="cursor:default">
+        <span class="stop-glyph big" style="background:var(--accent,#007aff);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:18px" aria-hidden="true">📍</span>
+        <div>
+          <h2>${esc(placeTitle)}</h2>
+          <p>${esc(placeSubtitle)}</p>
+        </div>
+      </div>
+      <div class="card-actions">
+        <button type="button" class="action-btn share-btn press" id="placeShareBtn" aria-label="Share location">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+          <span>Share</span>
+        </button>
+      </div>
+      ${directionsHTML(place.lat, place.lon, place.name)}`;
+
+    if (routes.length) {
+      html += `<h3 class="section" style="margin-top:16px">${routes.length} transit route${routes.length === 1 ? "" : "s"} within walking distance</h3>${routeRows(routes)}`;
+    } else {
+      html += `<div class="empty" style="padding:16px;font-size:13px">No frequent transit stops within 500 meters of this address. Tap “Plan Trip Here” above to find transit connections across Puget Sound.</div>`;
+    }
+
+    setView(html);
+    openSheet("half");
+
+    $("#back")?.addEventListener("click", () => {
+      clearPlaceMarker();
+      panelView = "home";
+      showHome();
+    });
+
+    $("#placeShareBtn")?.addEventListener("click", () => {
+      const q = encodeURIComponent(`${place.lat},${place.lon}`);
+      shareTarget({
+        title: `${place.name} - Seattle Transit Map`,
+        text: `Seattle Transit Map location: ${place.name}`,
+        url: `https://www.google.com/maps/search/?api=1&query=${q}`
+      });
+    });
+
+    for (const b of body().querySelectorAll("[data-route]")) {
+      b.addEventListener("click", () => selectRoute(b.dataset.route));
+      previewOnHover(b);
+    }
+  }
+
+  let searchDebounceTimer = null;
+  let currentSearchResults = [];
+  let activeSearchIdx = -1;
+
   function setupSearch() {
     const input = $("#q"), box = $("#results");
-    let items = [], active = -1;
-    const render = () => {
-      if (!input.value.trim()) { box.hidden = true; return; }
-      items = search(input.value);
-      active = items.length ? 0 : -1;
-      box.innerHTML = items.length ? items.map((it, i) => {
-        if (it.kind === "route") return `<button type="button" class="result${i === active ? " active" : ""}" data-i="${i}">${badgeHTML(it.r)}<span class="txt"><span class="name">${esc(routeTitle(it.r))}</span><span class="desc">${esc(it.r.name)}</span></span></button>`;
+
+    const renderResults = (transitItems, addressItems = [], isGeocoding = false) => {
+      currentSearchResults = [...transitItems, ...addressItems];
+      if (!currentSearchResults.length) {
+        if (isGeocoding) {
+          box.innerHTML = `<div class="empty" style="color:var(--muted)">Searching transit & addresses for “${esc(input.value.trim())}”…</div>`;
+        } else {
+          box.innerHTML = `<div class="empty">No routes, stops, parking, trails or addresses match “${esc(input.value.trim())}”.</div>`;
+        }
+        box.hidden = false;
+        return;
+      }
+      activeSearchIdx = Math.max(0, Math.min(activeSearchIdx, currentSearchResults.length - 1));
+      box.innerHTML = currentSearchResults.map((it, i) => {
+        const isAct = i === activeSearchIdx;
+        if (it.kind === "route") return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}">${badgeHTML(it.r)}<span class="txt"><span class="name">${esc(routeTitle(it.r))}</span><span class="desc">${esc(it.r.name)}</span></span></button>`;
         if (it.kind === "trail") {
           const p = it.f.properties;
           const icon = p.facility === "trail" ? "🚲" : p.facility === "pbl" ? "🛡️" : p.facility === "greenway" ? "🌿" : "🚲";
           const cat = p.cat_name || "Bicycle Facility";
-          return `<button type="button" class="result${i === active ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true">${icon}</span><span class="txt"><span class="name">${esc(p.name)}</span><span class="desc">${esc(cat)}${p.length_mi ? ` · ${p.length_mi} mi` : ""}${p.surface === "unpaved" ? " · Gravel" : ""}${p.region ? ` (${esc(p.region)})` : ""}</span></span></button>`;
+          return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true">${icon}</span><span class="txt"><span class="name">${esc(p.name)}</span><span class="desc">${esc(cat)}${p.length_mi ? ` · ${p.length_mi} mi` : ""}${p.surface === "unpaved" ? " · Gravel" : ""}${p.region ? ` (${esc(p.region)})` : ""}</span></span></button>`;
         }
         if (it.kind === "pr") {
           const pr = it.pr;
-          return `<button type="button" class="result${i === active ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true" style="background:#007aff;color:#fff">🅿️</span><span class="txt"><span class="name">${esc(pr.name)}</span><span class="desc">${pr.stalls} stalls · ${esc(pr.bikes)}</span></span></button>`;
+          return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true" style="background:#007aff;color:#fff">🅿️</span><span class="txt"><span class="name">${esc(pr.name)}</span><span class="desc">${pr.stalls} stalls · ${esc(pr.bikes)}</span></span></button>`;
         }
         if (it.kind === "hill") {
           const h = it.hill;
-          return `<button type="button" class="result${i === active ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true" style="background:#f59e0b;color:#fff">⚠️</span><span class="txt"><span class="name">${esc(h.short)} <span class="incline-badge">${h.grade}</span></span><span class="desc">${esc(h.location)}</span></span></button>`;
+          return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true" style="background:#f59e0b;color:#fff">⚠️</span><span class="txt"><span class="name">${esc(h.short)} <span class="incline-badge">${h.grade}</span></span><span class="desc">${esc(h.location)}</span></span></button>`;
+        }
+        if (it.kind === "address") {
+          const p = it.place;
+          return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true" style="background:var(--accent,#007aff);color:#fff">📍</span><span class="txt"><span class="name">${esc(p.name)}</span><span class="desc">${esc(p.desc)} · Address / Place</span></span></button>`;
         }
         const sub = it.kind === "station" ? "Station" : `Bus stop${it.s.code ? " #" + it.s.code : ""}`;
-        return `<button type="button" class="result${i === active ? " active" : ""}" data-i="${i}"><span class="stop-glyph${it.kind === "station" ? " big" : ""}" aria-hidden="true"></span><span class="txt"><span class="name">${esc(it.s.name)}</span><span class="desc">${esc(sub)}</span></span></button>`;
-      }).join("") : `<div class="empty">No routes, stops, parking or trails match “${esc(input.value.trim())}”.</div>`;
+        return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="stop-glyph${it.kind === "station" ? " big" : ""}" aria-hidden="true"></span><span class="txt"><span class="name">${esc(it.s.name)}</span><span class="desc">${esc(sub)}</span></span></button>`;
+      }).join("");
       box.hidden = false;
     };
+
     const choose = (i) => {
-      const it = items[i];
+      const it = currentSearchResults[i];
       if (!it) return;
       box.hidden = true;
       input.value = "";
@@ -3881,21 +3994,76 @@
       else if (it.kind === "trail") selectTrail(it.f);
       else if (it.kind === "pr") selectPR(it.pr);
       else if (it.kind === "hill") selectHill(it.hill);
+      else if (it.kind === "address") showPlaceCard(it.place);
       else selectStop(it.id);
     };
-    input.addEventListener("input", render);
-    input.addEventListener("focus", () => { openSheet("full"); render(); });
+
+    let lastTransitItems = [];
+    const onSearchInput = () => {
+      const val = input.value.trim();
+      if (!val) {
+        box.hidden = true;
+        currentSearchResults = [];
+        return;
+      }
+      lastTransitItems = search(val);
+      activeSearchIdx = lastTransitItems.length ? 0 : -1;
+      const willGeocode = val.length >= 3;
+      renderResults(lastTransitItems, [], willGeocode && !lastTransitItems.length);
+
+      if (willGeocode) {
+        clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = setTimeout(async () => {
+          if (input.value.trim() !== val) return;
+          const pois = await searchAddressesAndPois(val);
+          if (input.value.trim() !== val) return;
+          const addressItems = pois.map((p) => ({ kind: "address", place: p }));
+          renderResults(lastTransitItems, addressItems, false);
+        }, 220);
+      }
+    };
+
+    input.addEventListener("input", onSearchInput);
+    input.addEventListener("focus", () => {
+      openSheet("full");
+      onSearchInput();
+    });
     input.addEventListener("keydown", (e) => {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
-        if (!items.length) return;
-        active = (active + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length;
-        box.querySelectorAll(".result").forEach((el, i) => el.classList.toggle("active", i === active));
-      } else if (e.key === "Enter") { e.preventDefault(); choose(Math.max(0, active)); }
-      else if (e.key === "Escape") { box.hidden = true; input.blur(); }
+        if (!currentSearchResults.length) return;
+        activeSearchIdx = (activeSearchIdx + (e.key === "ArrowDown" ? 1 : currentSearchResults.length - 1)) % currentSearchResults.length;
+        box.querySelectorAll(".result").forEach((el, i) => el.classList.toggle("active", i === activeSearchIdx));
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        if (currentSearchResults.length > 0) {
+          choose(Math.max(0, activeSearchIdx));
+        } else if (input.value.trim().length >= 3) {
+          const val = input.value.trim();
+          showToast("Locating address…");
+          searchAddressesAndPois(val).then((pois) => {
+            if (pois.length) {
+              box.hidden = true;
+              input.value = "";
+              input.blur();
+              showPlaceCard(pois[0]);
+            } else {
+              showToast("No matching address found");
+            }
+          });
+        }
+      } else if (e.key === "Escape") {
+        box.hidden = true;
+        input.blur();
+      }
     });
-    box.addEventListener("click", (e) => { const b = e.target.closest(".result"); if (b) choose(+b.dataset.i); });
-    document.addEventListener("click", (e) => { if (!e.target.closest(".search")) box.hidden = true; });
+    box.addEventListener("click", (e) => {
+      const b = e.target.closest(".result");
+      if (b) choose(+b.dataset.i);
+    });
+    document.addEventListener("click", (e) => {
+      if (!e.target.closest(".search")) box.hidden = true;
+    });
   }
 
   // ---------------------------------------------------------------- Dynamic A to B Trip Planner
@@ -3946,11 +4114,11 @@
     const directWalkDist = distMeters(orig.lat, orig.lon, dest.lat, dest.lon);
     const directWalkTime = Math.round(directWalkDist / 80);
 
-    let origStops = findNearbyStops(orig.lat, orig.lon, 800);
-    if (!origStops.length) origStops = findNearbyStops(orig.lat, orig.lon, 1600);
+    let origStops = findNearbyStops(orig.lat, orig.lon, 950);
+    if (origStops.length < 3) origStops = findNearbyStops(orig.lat, orig.lon, 1800);
 
-    let destStops = findNearbyStops(dest.lat, dest.lon, 800);
-    if (!destStops.length) destStops = findNearbyStops(dest.lat, dest.lon, 1600);
+    let destStops = findNearbyStops(dest.lat, dest.lon, 950);
+    if (destStops.length < 3) destStops = findNearbyStops(dest.lat, dest.lon, 1800);
 
     const origStopMap = new Map();
     for (const o of origStops) {
@@ -3974,52 +4142,70 @@
       if (LINEIDX[r.id] == null) continue;
       for (const pat of (r.patterns || [])) {
         const stops = pat.stops;
-        let firstOrig = -1, bestDest = -1;
-        let origMatch = null, destMatch = null;
+        let bestPair = null;
+        let minTotal = Infinity;
 
         for (let i = 0; i < stops.length; i++) {
-          const sid = stops[i];
-          if (firstOrig === -1 && origStopMap.has(sid)) {
-            firstOrig = i;
-            origMatch = origStopMap.get(sid);
-          } else if (firstOrig !== -1 && destStopMap.has(sid)) {
-            bestDest = i;
-            destMatch = destStopMap.get(sid);
+          const sid1 = stops[i];
+          const oMatch = origStopMap.get(sid1);
+          if (!oMatch) continue;
+          for (let j = i + 1; j < stops.length; j++) {
+            const sid2 = stops[j];
+            const dMatch = destStopMap.get(sid2);
+            if (!dMatch) continue;
+
+            const bStop = stopIndex[sid1] || oMatch.stop;
+            const aStop = stopIndex[sid2] || dMatch.stop;
+            const transitDist = distMeters(bStop.lat, bStop.lon, aStop.lat, aStop.lon);
+            const speedMpm = r.cat === "link" || r.cat === "sounder" ? 580 : r.cat === "ferry" ? 500 : 380;
+            const numStops = j - i;
+            const rideTime = Math.max(3, Math.round(transitDist / speedMpm) + Math.round(numStops * 0.4));
+            const walk1Time = Math.round(oMatch.dist / 80);
+            const walk2Time = Math.round(dMatch.dist / 80);
+            const total = walk1Time + rideTime + walk2Time;
+
+            if (total < minTotal) {
+              minTotal = total;
+              bestPair = {
+                firstOrig: i,
+                bestDest: j,
+                origMatch: oMatch,
+                destMatch: dMatch,
+                boardStop: bStop,
+                alightStop: aStop,
+                numStops,
+                rideTime,
+                walk1Dist: oMatch.dist,
+                walk1Time,
+                walk2Dist: dMatch.dist,
+                walk2Time,
+                transitDist,
+              };
+            }
           }
         }
 
-        if (firstOrig !== -1 && bestDest !== -1 && bestDest > firstOrig) {
-          const boardSid = stops[firstOrig];
-          const alightSid = stops[bestDest];
-          const numStops = bestDest - firstOrig;
-          const boardStop = stopIndex[boardSid] || origMatch.stop;
-          const alightStop = stopIndex[alightSid] || destMatch.stop;
-
-          const transitDist = distMeters(boardStop.lat, boardStop.lon, alightStop.lat, alightStop.lon);
-          const speedMpm = r.cat === "link" || r.cat === "sounder" ? 580 : r.cat === "ferry" ? 500 : 380;
-          const rideTime = Math.max(3, Math.round(transitDist / speedMpm) + Math.round(numStops * 0.4));
-          const walk1Time = Math.round(origMatch.dist / 80);
-          const walk2Time = Math.round(destMatch.dist / 80);
+        if (bestPair) {
           const headway = r.midHeadway || (r.sched?.weekday?.mid) || 15;
           const waitTime = Math.round(Math.min(headway / 2, 10));
-          const totalDuration = walk1Time + waitTime + rideTime + walk2Time;
+          const totalDuration = bestPair.walk1Time + waitTime + bestPair.rideTime + bestPair.walk2Time;
 
           directItineraries.push({
             type: "direct",
             route: r,
             pattern: pat,
-            boardStop,
-            alightStop,
-            numStops,
-            walk1Dist: origMatch.dist,
-            walk1Time,
-            rideTime,
-            walk2Dist: destMatch.dist,
-            walk2Time,
+            boardStop: bestPair.boardStop,
+            alightStop: bestPair.alightStop,
+            numStops: bestPair.numStops,
+            walk1Dist: bestPair.walk1Dist,
+            walk1Time: bestPair.walk1Time,
+            rideTime: bestPair.rideTime,
+            walk2Dist: bestPair.walk2Dist,
+            walk2Time: bestPair.walk2Time,
             waitTime,
             headway,
             totalDuration,
-            transitDist,
+            transitDist: bestPair.transitDist,
           });
         }
       }
@@ -4558,6 +4744,43 @@
     }
   }
 
+  function planTripTo({ lat, lon, name }) {
+    const pt = { lat: Number(lat), lon: Number(lon), name: name || "Destination" };
+    dirDest = pt;
+    if (userCoords) {
+      dirOrigin = { lat: userCoords.lat, lon: userCoords.lng, name: "Your location", isLocation: true };
+      openTripPlanner({ orig: dirOrigin, dest: dirDest });
+      return;
+    }
+    openTripPlanner({ orig: null, dest: dirDest });
+    if (navigator.geolocation) {
+      showToast("Acquiring GPS location for trip…");
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          userCoords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+          dirOrigin = { lat: pos.coords.latitude, lon: pos.coords.longitude, name: "Your location", isLocation: true };
+          updateDirInputs();
+          executeTripPlan();
+        },
+        () => {
+          showToast("Enter starting location above");
+          focusDirField("orig");
+        },
+        { enableHighAccuracy: true, timeout: 6000 }
+      );
+    } else {
+      focusDirField("orig");
+    }
+  }
+
+  function planTripFrom({ lat, lon, name }) {
+    const pt = { lat: Number(lat), lon: Number(lon), name: name || "Start location" };
+    dirOrigin = pt;
+    dirDest = null;
+    openTripPlanner({ orig: dirOrigin, dest: null });
+    focusDirField("dest");
+  }
+
   function closeTripPlanner() {
     $("#searchBar").hidden = false;
     $("#filterBar").hidden = false;
@@ -4569,6 +4792,7 @@
     selectedItinerary = null;
     dirActiveField = null;
     clearTripMap();
+    if (typeof clearPlaceMarker === "function") clearPlaceMarker();
     focusOff();
     panelView = "home";
     showHome();
@@ -4594,6 +4818,7 @@
     showToast("Finding your location…");
     navigator.geolocation.getCurrentPosition(
       (pos) => {
+        userCoords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         dirOrigin = {
           lat: pos.coords.latitude,
           lon: pos.coords.longitude,
@@ -4645,27 +4870,63 @@
 
   async function searchAddressesAndPois(query) {
     if (!query || query.trim().length < 3) return [];
+    const q = query.trim();
+    // 1. Primary: Photon geocoder
     try {
-      const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&lat=47.6062&lon=-122.3321&limit=5`;
-      const res = await fetch(url, { signal: AbortSignal.timeout(3500) });
+      const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&lat=47.6062&lon=-122.3321&limit=6`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(3200) });
+      if (res.ok) {
+        const json = await res.json();
+        const results = [];
+        for (const f of (json.features || [])) {
+          const p = f.properties;
+          const coords = f.geometry?.coordinates;
+          if (!coords || coords.length < 2) continue;
+          const lon = coords[0], lat = coords[1];
+          // Puget Sound metropolitan bounding box
+          if (lat < 47.0 || lat > 48.3 || lon < -122.8 || lon > -121.5) continue;
+
+          const addr = [p.housenumber, p.street].filter(Boolean).join(" ");
+          let title = p.name || addr || p.city || q;
+          if (p.name && addr && !p.name.toLowerCase().includes(addr.toLowerCase())) {
+            title = `${p.name} (${addr})`;
+          }
+          const locality = p.locality || p.district;
+          const desc = [locality, p.city, p.state || "WA", p.postcode].filter(Boolean).join(", ");
+          results.push({
+            kind: "poi",
+            name: title,
+            desc: desc || "Puget Sound, WA",
+            lat, lon
+          });
+        }
+        if (results.length > 0) return results;
+      }
+    } catch {
+      // Fall through to fallback
+    }
+
+    // 2. Fallback: OpenStreetMap Nominatim
+    try {
+      const qWithWa = q.toLowerCase().includes("wa") || q.toLowerCase().includes("washington") ? q : `${q}, Washington`;
+      const nomUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(qWithWa)}&format=json&viewbox=-122.8,48.3,-121.5,47.0&bounded=0&limit=5`;
+      const res = await fetch(nomUrl, {
+        headers: { "Accept-Language": "en" },
+        signal: AbortSignal.timeout(3000)
+      });
       if (!res.ok) return [];
       const json = await res.json();
       const results = [];
-      for (const f of (json.features || [])) {
-        const p = f.properties;
-        const coords = f.geometry?.coordinates;
-        if (!coords || coords.length < 2) continue;
-        const lon = coords[0], lat = coords[1];
-        if (lat < 47.0 || lat > 48.3 || lon < -122.7 || lon > -121.8) continue;
-        const parts = [p.name || `${p.housenumber || ""} ${p.street || ""}`.trim()];
-        if (p.street && p.name && !p.name.includes(p.street)) parts.push(p.street);
-        if (p.locality || p.district) parts.push(p.locality || p.district);
-        if (p.city) parts.push(p.city);
-        const title = parts.filter(Boolean).join(", ");
+      for (const item of json) {
+        const lat = parseFloat(item.lat), lon = parseFloat(item.lon);
+        if (lat < 47.0 || lat > 48.3 || lon < -122.8 || lon > -121.5) continue;
+        const parts = (item.display_name || "").split(",").map((s) => s.trim());
+        const title = item.name || parts[0] || q;
+        const desc = parts.slice(1, 4).join(", ") || "Puget Sound, WA";
         results.push({
           kind: "poi",
           name: title,
-          desc: [p.city, p.state || "WA", p.postcode].filter(Boolean).join(", "),
+          desc,
           lat, lon
         });
       }
@@ -4698,6 +4959,22 @@
       }
     }
     return results.slice(0, 5);
+  }
+
+  let currentDirSuggestions = [];
+
+  function paintDirSuggestions(box, items) {
+    if (!items.length) {
+      box.innerHTML = `<div class="empty" style="padding:10px;font-size:12.5px;color:var(--muted)">Type an address, landmark, or stop name…</div>`;
+      return;
+    }
+    box.innerHTML = items.map((it, idx) => {
+      const glyph = it.kind === "favtrip" ? "⭐" : it.kind === "currloc" ? "📍" : it.kind === "mapchoice" ? "🗺️" : it.kind === "station" ? "🚆" : it.kind === "pr" ? "🅿️" : it.kind === "poi" ? "📍" : "🚌";
+      return `<button type="button" class="result" data-sug-idx="${idx}">
+        <span class="trail-glyph" aria-hidden="true" style="${it.kind === "poi" ? "background:var(--accent,#007aff);color:#fff" : ""}">${glyph}</span>
+        <span class="txt"><span class="name">${esc(it.name)}</span><span class="desc">${esc(it.desc)}</span></span>
+      </button>`;
+    }).join("");
   }
 
   function renderDirSuggestions(query) {
@@ -4753,58 +5030,55 @@
             dirActiveField = null;
             box.hidden = true;
             updateDirInputs();
-            if (dirOrigin && dirDest) executeTripPlan();
-            else renderTripPlanView();
+            if (dirOrigin && dirDest) {
+              executeTripPlan();
+            } else if (!dirOrigin) {
+              focusDirField("orig");
+              renderTripPlanView();
+            } else if (!dirDest) {
+              focusDirField("dest");
+              renderTripPlanView();
+            }
           }
         });
       }
     }
 
-    box.innerHTML = items.map((it, idx) => {
-      const glyph = it.kind === "favtrip" ? "⭐" : it.kind === "currloc" ? "📍" : it.kind === "mapchoice" ? "🗺️" : it.kind === "station" ? "🚆" : it.kind === "pr" ? "🅿️" : "🚌";
-      return `<button type="button" class="result" data-sug-idx="${idx}">
-        <span class="trail-glyph" aria-hidden="true">${glyph}</span>
-        <span class="txt"><span class="name">${esc(it.name)}</span><span class="desc">${esc(it.desc)}</span></span>
-      </button>`;
-    }).join("");
-
-    for (const b of box.querySelectorAll("[data-sug-idx]")) {
-      b.addEventListener("click", () => {
-        const idx = +b.dataset.sugIdx;
-        if (items[idx]) items[idx].action();
-      });
-    }
-
+    currentDirSuggestions = items;
+    paintDirSuggestions(box, currentDirSuggestions);
     box.hidden = false;
 
     if (q.length >= 3) {
       clearTimeout(dirDebounceTimer);
       dirDebounceTimer = setTimeout(async () => {
         const pois = await searchAddressesAndPois(q);
-        if (pois.length && !box.hidden) {
-          const poiHtml = pois.map((p, i) => {
-            return `<button type="button" class="result" data-poi-idx="${i}">
-              <span class="trail-glyph" aria-hidden="true">📍</span>
-              <span class="txt"><span class="name">${esc(p.name)}</span><span class="desc">${esc(p.desc)}</span></span>
-            </button>`;
-          }).join("");
-          box.innerHTML += poiHtml;
-          for (const b of box.querySelectorAll("[data-poi-idx]")) {
-            b.addEventListener("click", () => {
-              const i = +b.dataset.poiIdx;
-              const p = pois[i];
-              if (p) {
-                const pt = { lat: p.lat, lon: p.lon, name: p.name };
-                if (dirActiveField === "orig") dirOrigin = pt; else dirDest = pt;
-                dirActiveField = null;
-                box.hidden = true;
-                updateDirInputs();
-                if (dirOrigin && dirDest) executeTripPlan();
-                else renderTripPlanView();
-              }
-            });
+        const currentInputVal = (dirActiveField === "orig" ? $("#dirOrig")?.value : $("#dirDest")?.value) || "";
+        if (currentInputVal.trim() !== q || box.hidden) return;
+
+        const poiItems = pois.map((p) => ({
+          kind: "poi",
+          name: p.name,
+          desc: `${p.desc} · Address / Place`,
+          action: () => {
+            const pt = { lat: p.lat, lon: p.lon, name: p.name };
+            if (dirActiveField === "orig") dirOrigin = pt; else dirDest = pt;
+            dirActiveField = null;
+            box.hidden = true;
+            updateDirInputs();
+            if (dirOrigin && dirDest) {
+              executeTripPlan();
+            } else if (!dirOrigin) {
+              focusDirField("orig");
+              renderTripPlanView();
+            } else if (!dirDest) {
+              focusDirField("dest");
+              renderTripPlanView();
+            }
           }
-        }
+        }));
+
+        currentDirSuggestions = [...items, ...poiItems];
+        paintDirSuggestions(box, currentDirSuggestions);
       }, 220);
     }
   }
@@ -4837,6 +5111,13 @@
         renderDirSuggestions(oInput.value);
       });
       oInput.addEventListener("input", () => renderDirSuggestions(oInput.value));
+      oInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          const first = currentDirSuggestions[0];
+          if (first) first.action();
+        }
+      });
     }
     if (dInput) {
       dInput.addEventListener("focus", () => {
@@ -4845,12 +5126,53 @@
         renderDirSuggestions(dInput.value);
       });
       dInput.addEventListener("input", () => renderDirSuggestions(dInput.value));
+      dInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          const first = currentDirSuggestions[0];
+          if (first) first.action();
+        }
+      });
     }
+
+    const dirSugBox = $("#dirSuggestions");
+    dirSugBox?.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-sug-idx]");
+      if (!b) return;
+      const idx = +b.dataset.sugIdx;
+      if (currentDirSuggestions[idx]?.action) {
+        currentDirSuggestions[idx].action();
+      }
+    });
 
     document.addEventListener("click", (e) => {
       if (!e.target.closest(".dir-panel") && !e.target.closest("#dirSuggestions") && !e.target.closest("#planTripBtn")) {
         const box = $("#dirSuggestions");
         if (box) box.hidden = true;
+      }
+    });
+
+    // Delegated click handler for "Plan Trip Here" and "Trip from Here" across all cards & popups
+    document.addEventListener("click", (e) => {
+      const destBtn = e.target.closest(".dir-inapp-btn.dest, [data-dir-dest-lat]");
+      if (destBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const lat = parseFloat(destBtn.dataset.dirDestLat || destBtn.dataset.lat);
+        const lon = parseFloat(destBtn.dataset.dirDestLon || destBtn.dataset.lon);
+        const name = destBtn.dataset.dirDestName || destBtn.dataset.name || "Destination";
+        planTripTo({ lat, lon, name });
+        return;
+      }
+      const origBtn = e.target.closest(".dir-inapp-btn.orig, [data-dir-orig-lat]");
+      if (origBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const lat = parseFloat(origBtn.dataset.dirOrigLat || origBtn.dataset.lat);
+        const lon = parseFloat(origBtn.dataset.dirOrigLon || origBtn.dataset.lon);
+        const name = origBtn.dataset.dirOrigName || origBtn.dataset.name || "Start location";
+        planTripFrom({ lat, lon, name });
+        return;
       }
     });
   }
