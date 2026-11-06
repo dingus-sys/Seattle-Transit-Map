@@ -93,6 +93,98 @@ def restore_spans(g, routes):
     return restored
 
 
+def load_stops_by_route():
+    path = os.path.join(graph.SITE, "data", "stops.json")
+    if not os.path.exists(path):
+        return {}
+    with open(path) as f:
+        data = json.load(f)
+    stops_by_slug = {}
+    for s in data.get("stops", []):
+        pt = Point(graph.fwd.transform(s["lon"], s["lat"]))
+        for r in s.get("routes", []):
+            stops_by_slug.setdefault(r, []).append((pt, s["id"]))
+    return stops_by_slug
+
+
+def restore_stop_spans(g, routes, stops_by_slug):
+    """Restore source-path spans for active transit stops that were omitted or collapsed away."""
+    restored, shared = 0, {}
+    for slug, shape in routes.items():
+        if slug not in stops_by_slug:
+            continue
+        def mine():
+            return [(k, LineString(e["c"])) for k, e in g.edges.items() if slug in e["lines"]]
+        lines_list = mine()
+        if not lines_list:
+            continue
+        drawn = unary_union([line for _, line in lines_list])
+        uncovered = [pt for pt, sid in stops_by_slug[slug] if drawn.distance(pt) > 22.0]
+        if not uncovered:
+            continue
+
+        cover = drawn.buffer(20.0)
+        for part in shape.geoms:
+            part_stops = [pt for pt in uncovered if part.distance(pt) < 18.0]
+            if not part_stops:
+                continue
+            missing = part.difference(cover)
+            if missing.is_empty:
+                continue
+            ds = np.append(np.arange(0, part.length, 10.0), part.length)
+            distances = shapely.distance(shapely.line_interpolate_point(part, ds), drawn)
+            far = distances > 20.0
+            starts = np.flatnonzero(far & ~np.r_[False, far[:-1]])
+            ends = np.flatnonzero(far & ~np.r_[far[1:], False])
+            for first, last in zip(starts, ends):
+                lo, hi = first, last
+                while lo > 0 and distances[lo] > 8.0:
+                    lo -= 1
+                while hi < len(ds) - 1 and distances[hi] > 8.0:
+                    hi += 1
+                if ds[hi] - ds[lo] < 20 or ds[hi] - ds[lo] > 10000:
+                    continue
+                sub = substring(part, ds[lo], ds[hi])
+                if not any(sub.distance(pt) < 18.0 for pt in part_stops):
+                    continue
+                anchors, new_ends = [], 0
+                for d in (ds[lo], ds[hi]):
+                    p = part.interpolate(d)
+                    candidates = mine()
+                    k, line = min(candidates, key=lambda item: item[1].distance(p))
+                    if line.distance(p) <= 25:
+                        anchors.append(("edge", k, p.coords[0]))
+                    elif d == 0 or d == part.length:
+                        anchors.append(("end", None, p.coords[0]))
+                        new_ends += 1
+                    else:
+                        anchors = []
+                        break
+                if len(anchors) != 2 or new_ends > 1:
+                    continue
+                nodes = []
+                for kind, _, p in anchors:
+                    if kind == "end":
+                        n = max(g.pos) + 1
+                        g.pos[n] = p
+                    else:
+                        k, _ = min(mine(), key=lambda item: item[1].distance(Point(p)))
+                        n = graph.split_edge(g, k, p)
+                    nodes.append(n)
+                a, b = nodes
+                key = frozenset(nodes)
+                coords = [g.pos[a]] + list(sub.coords)[1:-1] + [g.pos[b]]
+                same = next((k for k in shared.get(key, []) if k in g.edges and LineString(g.edges[k]["c"]).hausdorff_distance(LineString(coords)) < 40), None)
+                if same is not None:
+                    g.edges[same]["lines"] |= {slug}
+                else:
+                    shared.setdefault(key, []).append(g.add(a, b, coords, frozenset({slug})))
+                restored += 1
+                drawn = unary_union([line for _, line in mine()])
+                cover = drawn.buffer(20.0)
+    return restored
+
+
 def main():
     path = os.path.join(graph.SITE, "data", "network.json")
     with open(path) as f:
@@ -120,13 +212,15 @@ def main():
     filled = graph.fill_gaps(g, surface, mask, max_span=20000)
     bridged = graph.bridge_loose_ends(g, surface, mask, max_span=20000)
     restored = restore_spans(g, surface)
+    stops_by_slug = load_stops_by_route()
+    stop_spans = restore_stop_spans(g, surface, stops_by_slug)
     raw = {}
     if graph.MATCHED:
         raw_routes, _, _ = graph.load_routes(prefer_matched=False)
         raw = {slug: shape for slug, (layer, shape) in raw_routes.items() if layer == "surface"}
     turnarounds = restore_turnarounds(g, surface, raw)
     print(f"final continuity: {filled} gaps filled, {bridged} loose ends reconnected, "
-          f"{restored} omitted spans and {turnarounds} turnarounds restored", flush=True)
+          f"{restored} omitted spans, {stop_spans} stop spans and {turnarounds} turnarounds restored", flush=True)
     # Infer direction only for new links; split links retain their original metadata.
     new = graph.Graph(g.pos, [])
     source_ids = {}

@@ -2334,9 +2334,9 @@
   let selStopsFor = null, hovStopsKey = "";
   // A stop usually comes as a pair, one on each side of the street (one per direction). On the
   // single line the map draws they land close together and read as double dots, so stops
-  // within ~24 px (and 40 m) of each other along the line become one dot that stands for both.
-  function mergeStops(feats) {
-    const mpp = MPP0 / 2 ** map.getZoom(), d = Math.max(40, 24 * mpp), out = [];
+  // within ~24 px (and at most 38 m) of each other along the line become one dot that stands for both.
+  function mergeStops(feats, lineFeats) {
+    const mpp = MPP0 / 2 ** map.getZoom(), d = Math.min(38, Math.max(16, 20 * mpp)), out = [];
     for (const f of feats) {
       const p = toM(...f.geometry.coordinates);
       const g = out.find((o) => Math.hypot(o.m[0] - p[0], o.m[1] - p[1]) < d);
@@ -2346,12 +2346,16 @@
       g.f.properties.ids += "," + f.properties.id;
       g.f.properties.end = Math.max(g.f.properties.end || 0, f.properties.end || 0);
     }
-    return out.map((g) => ({ ...g.f, geometry: { type: "Point", coordinates: toLonLat(g.m) } }));
+    const ix = lineFeats && lineFeats.length ? segIndex(lineFeats) : null;
+    return out.map((g) => {
+      const pt = ix ? (nearestOn(ix, g.m, 80)?.q || g.m) : g.m;
+      return { ...g.f, geometry: { type: "Point", coordinates: toLonLat(pt) } };
+    });
   }
   function setStops(prefix, stopFeats, lineFeats, mode, animate) {
     const src = map && map.getSource(prefix === "sel" ? "selstops" : "hoverstops");
     if (!src) return;
-    src.setData(fc(lineFeats ? mergeStops(snapStops(stopFeats, lineFeats, mode)) : []));
+    src.setData(fc(lineFeats ? mergeStops(snapStops(stopFeats, lineFeats, mode), lineFeats) : []));
     if (animate) popIn(prefix);
   }
   function showRouteStops(r) {
@@ -6519,7 +6523,7 @@
           const own = lines.filter((f) => f.properties.r === LINEIDX[r.id]);
           all.push(...snapStops(stopFeatures([r], routes.length === 1), own, "route"));
         }
-        map.getSource("hoverstops").setData(fc(mergeStops(all)));
+        map.getSource("hoverstops").setData(fc(mergeStops(all, lines)));
         if (hovStopsKey !== key) popIn("hov");
       } else map.getSource("hoverstops").setData(fc([]));
       hovStopsKey = key;

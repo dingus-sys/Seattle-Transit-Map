@@ -83,6 +83,23 @@ def out_dir(pts, look=25.0):
     return (dx / d, dy / d)
 
 
+def dist_to_poly(p, pts):
+    min_d = float('inf')
+    for i in range(len(pts) - 1):
+        a, b = pts[i], pts[i + 1]
+        vx, vy = b[0] - a[0], b[1] - a[1]
+        L2 = vx * vx + vy * vy
+        if L2 < 1e-12:
+            d = math.hypot(p[0] - a[0], p[1] - a[1])
+        else:
+            t = max(0.0, min(1.0, ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / L2))
+            proj = (a[0] + t * vx, a[1] + t * vy)
+            d = math.hypot(p[0] - proj[0], p[1] - proj[1])
+        if d < min_d:
+            min_d = d
+    return min_d
+
+
 def main():
     path = os.path.join(SITE, "network.json")
     net = json.load(open(path))
@@ -292,11 +309,31 @@ def main():
                             move_end(j, end, M)
                 done |= {a, b, c}
                 triangles += 1
+    stops_file = os.path.join(SITE, "stops.json")
+    stop_pts_by_line = defaultdict(list)
+    if os.path.exists(stops_file):
+        s_data = json.load(open(stops_file))
+        for s in s_data.get("stops", []):
+            pt = to_m((s["lon"], s["lat"]))
+            for r in s.get("routes", []):
+                if r in lines:
+                    stop_pts_by_line[lines.index(r)].append(pt)
+
     # links that now start and end at the same junction (a loop through a park & ride)
+    # preserve any loop that carries active passenger stops
     at = index()
     for j, e in enumerate(edges):
         if e is not None and nkey(e, 0) == nkey(e, 1) and length(e["p"]) < 800:
-            edges[j] = None
+            has_stop = False
+            for r_idx in e["l"]:
+                for spt in stop_pts_by_line.get(r_idx, []):
+                    if dist_to_poly(spt, e["p"]) < 30.0:
+                        has_stop = True
+                        break
+                if has_stop:
+                    break
+            if not has_stop:
+                edges[j] = None
     # two links between a knot's new junction and the same neighbor, side by side (two ramps
     # that now meet in one place): one link carrying both. Elsewhere, two links between the same
     # junctions are usually a one-way pair on two streets, and stay as they are.

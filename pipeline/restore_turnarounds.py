@@ -45,13 +45,13 @@ def turnaround_candidates(shape):
     # departure shapes meet at a stop on the circle. The grid absorbs rounding.
     noded = shapely.union_all(shape.geoms, grid_size=1.0)
     for poly in shapely.get_parts(shapely.polygonize(shapely.get_parts(noded))):
-        if not 28 <= poly.length <= 300 or poly.area < 45:
+        if not 28 <= poly.length <= 750 or poly.area < 45:
             continue
         roundness = 4 * math.pi * poly.area / poly.length ** 2
-        if roundness < 0.35 or (roundness < 0.47 and poly.buffer(-7).area < 80):
+        if roundness < 0.20 or (roundness < 0.35 and poly.buffer(-7).area < 40):
             continue
         ring = LineString(poly.exterior)
-        if len(ring.simplify(1).coords) < 6:
+        if len(ring.simplify(1).coords) < 4:
             continue
         local = line_parts(shape.intersection(poly.buffer(5)))
         if travel_direction(ring, local):
@@ -64,10 +64,10 @@ def turnaround_candidates(shape):
     for band in shapely.get_parts(shape.buffer(4)):
         for interior in band.interiors:
             hole = Polygon(interior)
-            if hole.area < 18 or 4 * math.pi * hole.area < 0.5 * hole.length ** 2:
+            if hole.area < 18 or 4 * math.pi * hole.area < 0.3 * hole.length ** 2:
                 continue
             poly = hole.buffer(4)
-            if poly.length > 300:
+            if poly.length > 750:
                 continue
             ring = LineString(poly.exterior)
             if travel_direction(ring, line_parts(shape.intersection(poly.buffer(5)))):
