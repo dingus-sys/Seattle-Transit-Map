@@ -25,6 +25,7 @@
     set(k, v) { try { localStorage.setItem("kctm:" + k, JSON.stringify(v)); } catch { /* storage unavailable */ } },
   };
   const FONT = '-apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif';
+  const EMPTY_FC = { type: "FeatureCollection", features: [] };
 
   // ---------------------------------------------------------------- service types
   // w = line width in "units"; tier = zoom band it appears in; inner = the line's center
@@ -3730,7 +3731,7 @@
       $("#corridorCount").textContent = words.length ? `${matching.length} of ${rs.length} routes` : "All routes here";
       $("#corridorList").innerHTML = matching.length ? routeRows(matching) : '<p class="hint">No matching routes.</p>';
       for (const b of $("#corridorList").querySelectorAll("[data-route]")) {
-        b.addEventListener("click", () => { focusOff(); selectRoute(b.dataset.route, { fit: false }); }); previewOnHover(b);
+        b.addEventListener("click", () => { focusOff(); selectRoute(b.dataset.route, { fit: true }); }); previewOnHover(b);
       }
     };
     input.addEventListener("input", () => { focusOff(); render(); }); render();
@@ -5991,7 +5992,7 @@
     if (specialFilter === "snow" || !slugOrRoute || !enabled.has("dart")) {
       if (activeDartHlKey !== null) {
         activeDartHlKey = null;
-        map.getSource("darthl").setData(empty);
+        map.getSource("darthl").setData(EMPTY_FC);
       }
       return;
     }
@@ -6119,7 +6120,7 @@
     closePopup();
     popup = new maplibregl.Popup({ maxWidth, className: "glass-pop" }).setLngLat(lngLat).setHTML(html).addTo(map);
     popup.getElement().querySelectorAll("[data-route]").forEach((b) => {
-      b.addEventListener("click", () => { closePopup(); selectRoute(b.dataset.route, { fit: false }); });
+      b.addEventListener("click", () => { closePopup(); selectRoute(b.dataset.route, { fit: true }); });
       previewOnHover(b);
     });
   }
@@ -6189,6 +6190,10 @@
         moveRaf = 0;
         if (!lastMoveEvent || map.isMoving()) return;
         const e = lastMoveEvent;
+        if (cur && cur.kind === "dart" && !(selected && selected.type === "route" && RBY[selected.id]?.cat === "dart")) {
+          const stillDart = map.queryRenderedFeatures(e.point, { layers: ["dart-fill"] });
+          if (!stillDart.length) highlightDartArea(null);
+        }
         const vh = pickVehicle(e.point);
         if (vh) {
           const r = RBY[vh.properties.r];
@@ -6298,6 +6303,9 @@
     map.getCanvas().addEventListener("mouseleave", () => {
       if (moveRaf) { cancelAnimationFrame(moveRaf); moveRaf = 0; }
       cur = null; tipHide(true); setHover(null); highlightStop(null); showLens(null);
+      if (!(selected && selected.type === "route" && RBY[selected.id]?.cat === "dart")) {
+        highlightDartArea(null);
+      }
     });
     map.on("movestart", () => {
       if (moveRaf) { cancelAnimationFrame(moveRaf); moveRaf = 0; }
@@ -6346,7 +6354,7 @@
       const tg = tagAt(e.point);
       if (tg) {
         showLens(null);
-        if (tg.item.r != null) selectRoute(LINES[tg.item.r].id, { fit: false });
+        if (tg.item.r != null) selectRoute(LINES[tg.item.r].id, { fit: true });
         else showCorridor(tg.item.more.map((i) => LINES[i]).sort(tagOrder));
         return;
       }
@@ -6390,6 +6398,10 @@
         openPopup(e.lngLat, html, "300px");
         return;
       }
+      if (selected) {
+        clearSelection();
+        return;
+      }
       const area = map.queryRenderedFeatures(e.point, { layers: ["flex-fill", "dart-fill", "access-fill"].filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none") });
       if (area.length) {
         const f = area.find((a) => a.layer.id === "flex-fill") || area.find((a) => a.layer.id === "dart-fill") || area[0];
@@ -6407,7 +6419,7 @@
         showHome();
         return;
       }
-      if (selected) clearSelection();
+      clearSelection();
     });
     map.on("zoom", onZoom);
     map.on("moveend", onMoveEnd);
