@@ -247,9 +247,11 @@ button, input { font: inherit; color: inherit; letter-spacing: inherit; }
 .dir-close-btn:hover { color: var(--ink); background: var(--fill-2); transform: scale(1.05); }
 .dir-close-btn:active { transform: scale(0.94); }
 .dir-suggestions {
-  position: absolute; left: 0; right: 0; top: 82px; z-index: 25; max-height: 48vh; overflow-y: auto;
+  position: absolute; left: 0; right: 0; top: 82px; z-index: 50; max-height: 48vh; overflow-y: auto;
   border-radius: 18px; padding: 6px; animation: jelly-pop .25s var(--spring) both;
   background: var(--dropdown-bg) !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
   box-shadow: 0 16px 40px rgba(0, 0, 0, .24), 0 0 0 1px var(--rim), inset 0 1px 0 rgba(255, 255, 255, .5);
 }
 

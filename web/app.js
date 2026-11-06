@@ -4369,6 +4369,22 @@
     return routeEdgesCache.get(ridx) || [];
   }
 
+  function findNearestEdgePt(edges, lon, lat) {
+    let bestE = null, bestIdx = 0, bestD = Infinity;
+    for (let k = 0; k < edges.length; k++) {
+      const e = edges[k];
+      for (let i = 0; i < e.c.length; i++) {
+        const d = distMeters(lat, lon, e.c[i][1], e.c[i][0]);
+        if (d < bestD) {
+          bestD = d;
+          bestE = e;
+          bestIdx = i;
+        }
+      }
+    }
+    return { edge: bestE, idx: bestIdx, dist: bestD };
+  }
+
   function getRouteSegmentGeometry(routeIdx, boardStop, alightStop, intermediateStopIds = []) {
     if (routeIdx == null || !boardStop || !alightStop) return [];
     const edges = getEdgesForRoute(routeIdx);
@@ -4382,68 +4398,94 @@
       return coords;
     }
 
+    const bNear = findNearestEdgePt(edges, boardStop.lon, boardStop.lat);
+    const aNear = findNearestEdgePt(edges, alightStop.lon, alightStop.lat);
+    if (!bNear.edge || !aNear.edge) {
+      const coords = [[boardStop.lon, boardStop.lat]];
+      for (const sid of intermediateStopIds) {
+        const s = stopIndex[sid];
+        if (s) coords.push([s.lon, s.lat]);
+      }
+      coords.push([alightStop.lon, alightStop.lat]);
+      return coords;
+    }
+
+    const polyLen = (pts) => {
+      let len = 0;
+      for (let i = 0; i < pts.length - 1; i++) {
+        len += distMeters(pts[i][1], pts[i][0], pts[i + 1][1], pts[i + 1][0]);
+      }
+      return len;
+    };
+
     const qk = (c) => Math.round(c[0] * 100000) + "," + Math.round(c[1] * 100000);
     const adj = new Map();
+    function addEdge(u, v, cost, pts) {
+      if (!adj.has(u)) adj.set(u, []);
+      adj.get(u).push({ to: v, cost, pts });
+    }
+
     for (const e of edges) {
       const u = qk(e.c[0]), v = qk(e.c[e.c.length - 1]);
-      let len = 0;
-      for (let i = 0; i < e.c.length - 1; i++) {
-        len += distMeters(e.c[i][1], e.c[i][0], e.c[i + 1][1], e.c[i + 1][0]);
-      }
-      if (!adj.has(u)) adj.set(u, []);
-      adj.get(u).push({ to: v, cost: len, edge: e, fwd: true });
-      if (!adj.has(v)) adj.set(v, []);
-      adj.get(v).push({ to: u, cost: len, edge: e, fwd: false });
+      const cost = polyLen(e.c);
+      addEdge(u, v, cost, e.c);
+      addEdge(v, u, cost, [...e.c].reverse());
     }
 
-    function nearestNode(lon, lat) {
-      let best = null, bd = Infinity;
-      for (const [k] of adj) {
-        const [kx, ky] = k.split(",").map(Number);
-        const d = distMeters(lat, lon, ky / 100000, kx / 100000);
-        if (d < bd) { bd = d; best = k; }
-      }
-      return best;
+    const sNode = "START", tNode = "END";
+    const eB = bNear.edge, iB = bNear.idx;
+    const eA = aNear.edge, iA = aNear.idx;
+
+    const ptsTo0 = [...eB.c.slice(0, iB + 1)].reverse();
+    const ptsToEnd = eB.c.slice(iB);
+    addEdge(sNode, qk(eB.c[0]), polyLen(ptsTo0), ptsTo0);
+    addEdge(sNode, qk(eB.c[eB.c.length - 1]), polyLen(ptsToEnd), ptsToEnd);
+
+    const ptsFrom0 = eA.c.slice(0, iA + 1);
+    const ptsFromEnd = [...eA.c.slice(iA)].reverse();
+    addEdge(qk(eA.c[0]), tNode, polyLen(ptsFrom0), ptsFrom0);
+    addEdge(qk(eA.c[eA.c.length - 1]), tNode, polyLen(ptsFromEnd), ptsFromEnd);
+
+    if (eB === eA) {
+      const directPts = iB <= iA ? eB.c.slice(iB, iA + 1) : [...eB.c.slice(iA, iB + 1)].reverse();
+      addEdge(sNode, tNode, polyLen(directPts), directPts);
+      addEdge(tNode, sNode, polyLen(directPts), [...directPts].reverse());
     }
 
-    const startNode = nearestNode(boardStop.lon, boardStop.lat);
-    const endNode = nearestNode(alightStop.lon, alightStop.lat);
-
-    if (startNode && endNode && startNode !== endNode) {
-      const dist = new Map(), prev = new Map();
-      dist.set(startNode, 0);
-      const q = [[0, startNode]];
-      while (q.length) {
-        q.sort((a, b) => a[0] - b[0]);
-        const [d, u] = q.shift();
-        if (u === endNode) break;
-        if (d > dist.get(u)) continue;
-        for (const edge of (adj.get(u) || [])) {
-          const nd = d + edge.cost;
-          if (!dist.has(edge.to) || nd < dist.get(edge.to)) {
-            dist.set(edge.to, nd);
-            prev.set(edge.to, { from: u, edge: edge.edge, fwd: edge.fwd });
-            q.push([nd, edge.to]);
-          }
+    const dist = new Map(), prev = new Map();
+    dist.set(sNode, 0);
+    const pq = [[0, sNode]];
+    while (pq.length) {
+      pq.sort((a, b) => a[0] - b[0]);
+      const [d, u] = pq.shift();
+      if (u === tNode) break;
+      if (d > dist.get(u)) continue;
+      for (const edge of (adj.get(u) || [])) {
+        const nd = d + edge.cost;
+        if (!dist.has(edge.to) || nd < dist.get(edge.to)) {
+          dist.set(edge.to, nd);
+          prev.set(edge.to, { from: u, pts: edge.pts });
+          pq.push([nd, edge.to]);
         }
       }
+    }
 
-      if (prev.has(endNode)) {
-        const pathEdges = [];
-        let cur = endNode;
-        while (cur !== startNode) {
-          const p = prev.get(cur);
-          pathEdges.unshift(p);
-          cur = p.from;
-        }
-        const coords = [[boardStop.lon, boardStop.lat]];
-        for (const pe of pathEdges) {
-          const pts = pe.fwd ? pe.edge.c : [...pe.edge.c].reverse();
-          for (const pt of pts) coords.push(pt);
-        }
-        coords.push([alightStop.lon, alightStop.lat]);
-        return coords;
+    if (prev.has(tNode)) {
+      let path = [];
+      let cur = tNode;
+      while (cur !== sNode) {
+        const p = prev.get(cur);
+        path = [...p.pts, ...(path.length ? path.slice(1) : [])];
+        cur = p.from;
       }
+      const raw = [[boardStop.lon, boardStop.lat], ...path, [alightStop.lon, alightStop.lat]];
+      const out = [];
+      for (let i = 0; i < raw.length; i++) {
+        if (!i || Math.hypot(raw[i][0] - out[out.length - 1][0], raw[i][1] - out[out.length - 1][1]) > 1e-7) {
+          out.push(raw[i]);
+        }
+      }
+      return out;
     }
 
     const coords = [[boardStop.lon, boardStop.lat]];
@@ -4605,7 +4647,7 @@
       const s1 = stopIndex[s1Id], s2 = stopIndex[s2Id];
       if (!s1 || !s2) return Infinity;
       const d = distMeters(s1.lat, s1.lon, s2.lat, s2.lon);
-      return d <= 250 ? d : Infinity;
+      return d <= 360 ? d : Infinity;
     }
 
     const transferItineraries = [];
@@ -4635,7 +4677,7 @@
               for (let j = 0; j < lastDest; j++) {
                 const sid2 = p2.stops[j];
                 const tDist = transferDistance(sid1, sid2);
-                if (tDist <= 250) {
+                if (tDist <= 360) {
                   const s1 = stopIndex[sid1], s2 = stopIndex[sid2];
                   if (!s1 || !s2) continue;
                   const origSid = p1.stops[firstOrig], destSid = p2.stops[lastDest];
@@ -4654,6 +4696,9 @@
 
                   const d1 = distMeters(boardStop.lat, boardStop.lon, s1.lat, s1.lon);
                   const d2 = distMeters(s2.lat, s2.lon, alightStop.lat, alightStop.lon);
+
+                  // Avoid boarding a vehicle for < 500m / 1 stop just to transfer when transfer stop is within walking range
+                  if (numStops1 < 2 && d1 < 500) continue;
 
                   const ride1 = Math.max(2, Math.round(d1 / speed1) + Math.round(numStops1 * (isR1Rail ? 0.3 : 0.35)));
                   const ride2 = Math.max(2, Math.round(d2 / speed2) + Math.round(numStops2 * (isR2Rail ? 0.3 : 0.35)));
@@ -5013,16 +5058,23 @@
     if (!dirOrigin || !dirDest) return;
     const sug = $("#dirSuggestions");
     if (sug) sug.hidden = true;
+    $("#panelBody") && ($("#panelBody").style.visibility = "");
     dirActiveField = null;
     $("#dirOrig")?.blur();
     $("#dirDest")?.blur();
     const plan = planTransitTrip(dirOrigin, dirDest);
-    currentItineraries = [];
+    const allItins = [];
     if (plan) {
-      if (plan.direct && plan.direct.length) currentItineraries.push(...plan.direct);
-      if (plan.transfer && plan.transfer.length) currentItineraries.push(...plan.transfer);
-      if (plan.directWalk) currentItineraries.push(plan.directWalk);
+      if (plan.direct && plan.direct.length) allItins.push(...plan.direct);
+      if (plan.transfer && plan.transfer.length) allItins.push(...plan.transfer);
+      if (plan.directWalk) allItins.push(plan.directWalk);
     }
+    allItins.sort((a, b) => {
+      const aDur = a.totalDuration - (a.type === "direct" ? 3 : 0);
+      const bDur = b.totalDuration - (b.type === "direct" ? 3 : 0);
+      return aDur - bDur;
+    });
+    currentItineraries = allItins;
     selectedItinerary = currentItineraries[0] || null;
     panelView = "directions";
     renderTripPlanView();
@@ -5032,8 +5084,7 @@
 
   function renderTripPlanView() {
     if (dirOrigin && dirDest) {
-      const sug = $("#dirSuggestions");
-      if (sug) sug.hidden = true;
+      hideDirSuggestionsBox();
     }
     if (!dirOrigin || !dirDest) {
       const html = `${backBtn}
@@ -5368,8 +5419,7 @@
   }
 
   function swapDirections() {
-    const sug = $("#dirSuggestions");
-    if (sug) sug.hidden = true;
+    hideDirSuggestionsBox();
     dirActiveField = null;
     $("#dirOrig")?.blur();
     $("#dirDest")?.blur();
@@ -5446,7 +5496,7 @@
     $("#searchBar").hidden = false;
     $("#filterBar").hidden = false;
     $("#dirPanel").hidden = true;
-    $("#dirSuggestions").hidden = true;
+    hideDirSuggestionsBox();
     dirOrigin = null;
     dirDest = null;
     currentItineraries = [];
@@ -5520,7 +5570,7 @@
       showToast("Destination set from map 🏁");
     }
     dirActiveField = null;
-    $("#dirSuggestions").hidden = true;
+    hideDirSuggestionsBox();
     updateDirInputs();
     if (dirOrigin && dirDest) {
       executeTripPlan();
@@ -5632,6 +5682,20 @@
 
   let currentDirSuggestions = [];
 
+  function showDirSuggestionsBox() {
+    const box = $("#dirSuggestions");
+    if (box) box.hidden = false;
+    const body = $("#panelBody");
+    if (body) body.style.visibility = "hidden";
+  }
+
+  function hideDirSuggestionsBox() {
+    const box = $("#dirSuggestions");
+    if (box) box.hidden = true;
+    const body = $("#panelBody");
+    if (body) body.style.visibility = "";
+  }
+
   function paintDirSuggestions(box, items) {
     if (!items.length) {
       box.innerHTML = `<div class="empty" style="padding:10px;font-size:12.5px;color:var(--muted)">Type an address, landmark, or stop name…</div>`;
@@ -5673,7 +5737,7 @@
         desc: userCoords ? "GPS location available" : "Acquire GPS fix",
         action: () => {
           setOriginToCurrentLocation();
-          box.hidden = true;
+          hideDirSuggestionsBox();
         }
       });
       items.push({
@@ -5682,7 +5746,7 @@
         desc: "Tap anywhere on the map to set point",
         action: () => {
           showToast(`Tap anywhere on the map to set ${dirActiveField === "orig" ? "starting point" : "destination"}`);
-          box.hidden = true;
+          hideDirSuggestionsBox();
         }
       });
       const fTrips = getFavs().trips || [];
@@ -5692,7 +5756,7 @@
           name: t.name,
           desc: `Saved trip · ${t.duration ? `${t.duration} min · ` : ""}${t.summary || ""}`,
           action: () => {
-            box.hidden = true;
+            hideDirSuggestionsBox();
             openTripPlanner({ orig: t.orig, dest: t.dest });
           }
         });
@@ -5710,7 +5774,7 @@
             const pt = { lat: loc.lat, lon: loc.lon, name: loc.name, badge };
             if (dirActiveField === "orig") dirOrigin = pt; else dirDest = pt;
             dirActiveField = null;
-            box.hidden = true;
+            hideDirSuggestionsBox();
             updateDirInputs();
             if (dirOrigin && dirDest) {
               executeTripPlan();
@@ -5728,7 +5792,7 @@
 
     currentDirSuggestions = items;
     paintDirSuggestions(box, currentDirSuggestions);
-    box.hidden = false;
+    showDirSuggestionsBox();
 
     if (q.length >= 3) {
       clearTimeout(dirDebounceTimer);
@@ -5754,7 +5818,7 @@
               const pt = { lat: p.lat, lon: p.lon, name: p.name, desc: p.desc, badge };
               if (dirActiveField === "orig") dirOrigin = pt; else dirDest = pt;
               dirActiveField = null;
-              box.hidden = true;
+              hideDirSuggestionsBox();
               updateDirInputs();
               if (dirOrigin && dirDest) {
                 executeTripPlan();
@@ -5777,7 +5841,7 @@
             desc: "Tap anywhere on the map to set point",
             action: () => {
               showToast(`Tap anywhere on the map to set ${dirActiveField === "orig" ? "starting point" : "destination"}`);
-              box.hidden = true;
+              hideDirSuggestionsBox();
             }
           });
         }
@@ -5819,8 +5883,7 @@
       oInput.addEventListener("blur", () => {
         setTimeout(() => {
           if (!document.activeElement?.closest(".dir-field, #dirSuggestions")) {
-            const box = $("#dirSuggestions");
-            if (box) box.hidden = true;
+            hideDirSuggestionsBox();
           }
         }, 180);
       });
@@ -5852,8 +5915,7 @@
       dInput.addEventListener("blur", () => {
         setTimeout(() => {
           if (!document.activeElement?.closest(".dir-field, #dirSuggestions")) {
-            const box = $("#dirSuggestions");
-            if (box) box.hidden = true;
+            hideDirSuggestionsBox();
           }
         }, 180);
       });
@@ -5889,8 +5951,7 @@
 
     document.addEventListener("click", (e) => {
       if (!e.target.closest(".dir-field") && !e.target.closest("#dirSuggestions") && !e.target.closest("#planTripBtn")) {
-        const box = $("#dirSuggestions");
-        if (box) box.hidden = true;
+        hideDirSuggestionsBox();
       }
     });
 
@@ -6357,7 +6418,13 @@
   // A line carrying several: the stretch of street they share, bold, with the stops along it.
   // Nothing else on the map changes. Stops pop in once per line, not on every mouse move.
   let hoverKey = "", hoverTimer = 0, hoverRoutes = [];
-  const withColor = (feats) => feats.map((f) => ({ ...f, properties: { ...f.properties, c: keyColor(f.properties.cat) } }));
+  const withColor = (feats) => feats.map((f) => ({
+    ...f,
+    properties: {
+      ...f.properties,
+      c: (f.properties.r >= 0 && LINES[f.properties.r]) ? tagColor(LINES[f.properties.r]) : keyColor(f.properties.cat)
+    }
+  }));
   // each hover slot eases between hidden (0) and shown (1); shown lines are a little bolder
   // than their lines, and swell to that from their own width as they appear
   let hSlot = 0;

@@ -23,6 +23,7 @@ const KCTMGeom = (() => {
   const toM = (lon, lat) => [(lon - LON0) * KX, (lat - LAT0) * KY];
   const toLL = (p) => [Math.round((LON0 + p[0] / KX) * 1e6) / 1e6, Math.round((LAT0 + p[1] / KY) * 1e6) / 1e6];
   const VKEY = (cat) => (cat === "amtrak" ? "sounder" : cat); // Amtrak shares Sounder's tracks and line
+  const dkey = (r) => (r.cat === "link" ? (r.label === "1" ? "link1" : r.label === "T" ? "linkT" : "link2") : VKEY(r.cat));
 
   function simplify(pts, tol) {
     if (pts.length < 3) return pts.slice();
@@ -556,7 +557,7 @@ const KCTMGeom = (() => {
       const S = u * MPP0 / 2 ** z; // meters per unit at this zoom
       // line width per service type; all-day and rush-hour buses are drawn slimmer when zoomed out
       const W = (v) => CAT[v].w * ((p.wscale && p.wscale[v]) || 1);
-      const selKey = selIdx >= 0 ? VKEY(LINES[selIdx].cat) : null;
+      const selKey = selIdx >= 0 ? dkey(LINES[selIdx]) : null;
       const color = (key) => p.colors[key] || p.colors.local;
 
       // 1. each segment in (or near) view: which corridors show, their lanes and squeeze
@@ -787,7 +788,7 @@ const KCTMGeom = (() => {
       const { lay, S, W, easeAt, zu, colors } = last, out = [];
       for (const idx of idxs) {
         if (!LINES[idx]) continue;
-        const v = VKEY(LINES[idx].cat), c = CAT[v];
+        const v = dkey(LINES[idx]), c = CAT[v] || CAT.link;
         // drawn as one line of its type would be, centered on its own strand
         const wide = c.group === "bus" || c.group === "rapid";
         for (const ch of ROUTE_CHAINS[idx]) {
@@ -795,7 +796,7 @@ const KCTMGeom = (() => {
             drawPath((Lo) => [Lo.sp.get(idx), Lo.sw.get(idx) / 2], run, lay, S, (k, coords) => {
               if (coords.length < 2) return;
               const Lo = lay[run[k].E.k], w = wide ? Math.min(Lo.wk.get(v), W(v)) * Lo.s : Lo.sw.get(idx);
-              out.push({ type: "Feature", properties: { r: idx, cat: v, e: run[k].E.k, zu, c: colors[v] || colors.local, d: c.dash ? 1 : 0,
+              out.push({ type: "Feature", properties: { r: idx, cat: v, e: run[k].E.k, zu, c: colors[v] || colors.link || colors.local, d: c.dash ? 1 : 0,
                 ar: c.group === "water" ? 0 : arrow(run[k].E.dirOf(idx), run[k].fwd), wm: w + 0.14, cm: w + 0.55, gm: w + 2.8 },
               geometry: { type: "LineString", coordinates: coords.map(toLL) } });
             }, c.group === "water", false, easeAt);
