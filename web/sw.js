@@ -1,5 +1,5 @@
 /* Seattle Transit Map Service Worker - Offline Tunnel Mode & App Caching */
-const CACHE_NAME = "seattle-transit-v3";
+const CACHE_NAME = "seattle-transit-v4";
 const STATIC_ASSETS = [
   "./",
   "index.html",

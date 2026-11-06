@@ -58,14 +58,14 @@
   };
   const LINE = {
     light: {
-      link: "#1d3f86", link1: "#28813f", link2: "#0072a8", linkT: "#e57a00", sounder: "#4b5563", streetcar: "#e8772e", monorail: "#8a8f98", rapidride: "#d0213b",
-      swift: "#1f6fe0", frequent: "#0a9b7b", local: "#3f8ee0", peak: "#6f9a0c", shuttle: "#e3a118",
-      dart: "#c0508a", watertaxi: "#1690ad", ferry: "#3d6fa8",
+      link: "#1d3f86", link1: "#28813f", link2: "#0072a8", linkT: "#e57a00", sounder: "#4b5563", streetcar: "#e8772e", monorail: "#8a8f98", rapidride: "#c8102e",
+      swift: "#1f6fe0", frequent: "#1d4ed8", local: "#455db2", peak: "#7c3aed", shuttle: "#e3a118",
+      dart: "#0a2095", watertaxi: "#1690ad", ferry: "#3d6fa8",
     },
     dark: {
       link: "#86a8f2", link1: "#4cc46a", link2: "#4ab3e8", linkT: "#ffa94d", sounder: "#a3acb9", streetcar: "#ff9450", monorail: "#b5bac2", rapidride: "#ff5468",
-      swift: "#5b9bff", frequent: "#2fd3a6", local: "#6eaef5", peak: "#b8e04a", shuttle: "#ffc44d",
-      dart: "#ea7ab5", watertaxi: "#45c1e3", ferry: "#7aa6dc",
+      swift: "#5b9bff", frequent: "#38bdf8", local: "#a5b4fc", peak: "#c4b5fd", shuttle: "#ffc44d",
+      dart: "#93c5fd", watertaxi: "#45c1e3", ferry: "#7aa6dc",
     },
   };
   const FLEX = { light: "#8a3cc0", dark: "#c47ef0" }; // Metro Flex zones
