@@ -4835,6 +4835,11 @@
 
   function executeTripPlan() {
     if (!dirOrigin || !dirDest) return;
+    const sug = $("#dirSuggestions");
+    if (sug) sug.hidden = true;
+    dirActiveField = null;
+    $("#dirOrig")?.blur();
+    $("#dirDest")?.blur();
     const plan = planTransitTrip(dirOrigin, dirDest);
     currentItineraries = [];
     if (plan) {
@@ -4850,6 +4855,10 @@
   }
 
   function renderTripPlanView() {
+    if (dirOrigin && dirDest) {
+      const sug = $("#dirSuggestions");
+      if (sug) sug.hidden = true;
+    }
     if (!dirOrigin || !dirDest) {
       const html = `<div class="home-view">
         <div class="planner-summary-card">
@@ -5164,6 +5173,11 @@
   }
 
   function swapDirections() {
+    const sug = $("#dirSuggestions");
+    if (sug) sug.hidden = true;
+    dirActiveField = null;
+    $("#dirOrig")?.blur();
+    $("#dirDest")?.blur();
     const temp = dirOrigin;
     dirOrigin = dirDest;
     dirDest = temp;
@@ -5562,6 +5576,14 @@
         openSheet("full");
         renderDirSuggestions(oInput.value);
       });
+      oInput.addEventListener("blur", () => {
+        setTimeout(() => {
+          if (!document.activeElement?.closest(".dir-field, #dirSuggestions")) {
+            const box = $("#dirSuggestions");
+            if (box) box.hidden = true;
+          }
+        }, 180);
+      });
       oInput.addEventListener("input", () => renderDirSuggestions(oInput.value));
       oInput.addEventListener("keydown", (e) => {
         if (e.key === "Enter") {
@@ -5576,6 +5598,14 @@
         dirActiveField = "dest";
         openSheet("full");
         renderDirSuggestions(dInput.value);
+      });
+      dInput.addEventListener("blur", () => {
+        setTimeout(() => {
+          if (!document.activeElement?.closest(".dir-field, #dirSuggestions")) {
+            const box = $("#dirSuggestions");
+            if (box) box.hidden = true;
+          }
+        }, 180);
       });
       dInput.addEventListener("input", () => renderDirSuggestions(dInput.value));
       dInput.addEventListener("keydown", (e) => {
@@ -5598,7 +5628,7 @@
     });
 
     document.addEventListener("click", (e) => {
-      if (!e.target.closest(".dir-panel") && !e.target.closest("#dirSuggestions") && !e.target.closest("#planTripBtn")) {
+      if (!e.target.closest(".dir-field") && !e.target.closest("#dirSuggestions") && !e.target.closest("#planTripBtn")) {
         const box = $("#dirSuggestions");
         if (box) box.hidden = true;
       }
