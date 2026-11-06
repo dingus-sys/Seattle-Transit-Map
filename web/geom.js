@@ -283,7 +283,7 @@ const KCTMGeom = (() => {
       const la = Math.hypot(ax, ay), lb = Math.hypot(bx, by);
       if (la < 0.5 || lb < 0.5) continue; // closer than the line is accurate: no corner to judge
       const need = hwAt(c[i]) * Math.abs(Math.atan2(ax * by - ay * bx, ax * bx + ay * by)) / ((la + lb) / 2); // offset / radius
-      if (need > 0.8) tight[i] = Math.max(0.5, 0.8 / need);
+      if (need > 0.75) tight[i] = Math.max(0.25, 0.75 / need);
     }
     for (let i = 0; i < nL; i++) { // each point takes the tightest squeeze within a half-width either way
       const W = Math.max(hwAt(c[i]), 4);
@@ -331,9 +331,19 @@ const KCTMGeom = (() => {
       for (let j = start + 1; j <= end; j++) {
         const a = piece[piece.length - 1];
         const fwd = (Q[j][0] - a[0]) * (P[j][0] - P[j - 1][0]) + (Q[j][1] - a[1]) * (P[j][1] - P[j - 1][1]);
-        if (fwd > 0 || j === end) piece.push(Q[j]);
+        if (fwd > 0) piece.push(Q[j]);
+        else if (j === end && piece.length > 0) {
+          const dir = [P[j][0] - P[j - 1][0], P[j][1] - P[j - 1][1]];
+          const L = Math.hypot(dir[0], dir[1]) || 1;
+          const u = [dir[0] / L, dir[1] / L];
+          const dot = (Q[j][0] - a[0]) * u[0] + (Q[j][1] - a[1]) * u[1];
+          if (dot <= 0) piece.push([a[0] + u[0] * 0.05, a[1] + u[1] * 0.05]);
+          else piece.push(Q[j]);
+        }
       }
-      const clean = water ? piece : clipSmallLoops(piece, Math.max(12, Math.min(160, 4 * seg[s].hw)));
+      const isLoop = steps[s].E.a === steps[s].E.b;
+      if (isLoop && piece.length >= 3) piece.push(piece[0]);
+      const clean = water || isLoop ? piece : clipSmallLoops(piece, Math.max(12, Math.min(160, 4 * seg[s].hw)));
       // Offset easing adds many points along straight stretches. Retain subpixel accuracy
       // without sending every sample to the renderer and map's tile workers.
       emit(s, simplify(clean, 0.1 * S));

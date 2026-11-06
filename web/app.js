@@ -102,7 +102,7 @@
   //   tags       how many route-number tags: gap between repeats, spacing along long streets, and the zoom
   //              where bus tags start
   //   thickness  line width multiplier
-  const SETTINGS_DEFAULT = { busDetail: "more", tags: "normal", thickness: "normal" };
+  const SETTINGS_DEFAULT = { busDetail: "normal", tags: "normal", thickness: "normal" };
   const BUS_TIERS = { less: [0, 10.2, 12.0], normal: [0, 0, 10.0], more: [0, 0, 0] };
   // gap: same tag repeating; every: spacing along long streets; any: between any two tags (px,
   // grows when zoomed out, see tagSpacing); busZ: zoom where bus tags start
@@ -764,7 +764,7 @@
     for (const k of Object.keys(CAT)) keyOn[k] = (k === "sounder" ? enabledCat("sounder") || enabledCat("amtrak") : enabledCat(CAT[k].base || k)) && CAT[k].tier <= tier;
     const p = { z, zs, zNow, u, capU: interp(CAP_PX, z) / u, keyOn,
       selIdx: selected && selected.type === "route" ? LINEIDX[selected.id] : -1,
-      view: (builtView = viewBox(0.35)), tags: tagSpacing(TAG_DENSITY[settings.tags], zNow), theme: theme[0], colors: netColors(theme),
+      view: (builtView = viewBox(0.45)), tags: tagSpacing(TAG_DENSITY[settings.tags], zNow), theme: theme[0], colors: netColors(theme),
       wscale: minorScale(zNow) };
     lastParams = p;
     const msg = { id: ++buildSeq, p };
@@ -2878,76 +2878,89 @@
       return { f, r: pr.r < 0 ? all[0] : pr.r, routes: all.map((i) => LINES[i]).filter(Boolean).sort(tagOrder), n: pr.n || 1 };
     };
     const ev = (e, dy = 0) => ({ clientX: e.originalEvent.clientX, clientY: e.originalEvent.clientY + dy });
+    let moveRaf = 0, lastMoveEvent = null;
     map.on("mousemove", (e) => {
-      if (map.isMoving()) return;
-      const vh = pickVehicle(e.point);
-      if (vh) {
-        const r = RBY[vh.properties.r];
-        cur = { kind: "veh", id: vh.properties.id };
-        showLens(null);
-        map.getCanvas().style.cursor = "pointer";
-        highlightStop(null);
-        tipShow("veh:" + vh.properties.id, `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b>${vesselLine(vh.properties.id)}<span class="vs-row">${vehicleLines(vh.properties.id, vh.properties.est)}</span></span>`, "", ev(e));
-        return;
-      }
-      // a number on a route tag
-      const tg = tagAt(e.point);
-      showLens(tg);
-      if (tg) {
-        map.getCanvas().style.cursor = "pointer";
-        highlightStop(null);
-        if (tg.item.r != null) {
-          const r = LINES[tg.item.r];
-          cur = { kind: "tag", id: tg.item.r };
-          if (!(selected && selected.type === "route")) focusRoute(r);
-          tipShow("tag:" + tg.item.r, `<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}</span>`, "", ev(e, 14));
-        } else {
-          cur = { kind: "tag", id: "more" };
-          setHover(null);
-          tipShow("more:" + tg.item.more.join("."), `<span class="tip-badges">${tg.item.more.slice(0, 12).map((i) => badgeHTML(LINES[i])).join("")}</span>`, "", ev(e, 14));
-        }
-        return;
-      }
-      const st = pickStop(e.point);
-      if (st) {
-        const p = st.properties, lid = st.layer.id;
-        cur = { kind: "stop", id: p.id };
-        map.getCanvas().style.cursor = "pointer";
-        if (lid === "flex") {
+      lastMoveEvent = e;
+      if (moveRaf || map.isMoving()) return;
+      moveRaf = requestAnimationFrame(() => {
+        moveRaf = 0;
+        if (!lastMoveEvent || map.isMoving()) return;
+        const e = lastMoveEvent;
+        const vh = pickVehicle(e.point);
+        if (vh) {
+          const r = RBY[vh.properties.r];
+          cur = { kind: "veh", id: vh.properties.id };
+          showLens(null);
+          map.getCanvas().style.cursor = "pointer";
           highlightStop(null);
-          tipShow("flex:" + p.name, `<span class="tt">${esc("Metro Flex · " + p.name)}</span>`, "", ev(e));
-        } else {
-          highlightStop(st);
-          const end = lid === "sel-stops" || lid === "hov-stops" ? p.end : 0;
-          tipShow(`stop:${p.id}:${end}`, stopCard(p.id, end, p.ids), "tip-card", ev(e));
+          tipShow("veh:" + vh.properties.id, `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b>${vesselLine(vh.properties.id)}<span class="vs-row">${vehicleLines(vh.properties.id, vh.properties.est)}</span></span>`, "", ev(e));
+          return;
         }
-        return;
-      }
-      highlightStop(null);
-      const ln = pickLine(e.point);
-      if (ln) {
-        cur = { kind: "line", id: ln.r, cat: ln.f.properties.cat };
-        map.getCanvas().style.cursor = "pointer";
-        if (!(selected && selected.type === "route")) {
-          if (ln.routes.length > 1) focusCorridor(ln.f);
-          else focusRoutes(ln.routes);
+        // a number on a route tag
+        const tg = tagAt(e.point);
+        showLens(tg);
+        if (tg) {
+          map.getCanvas().style.cursor = "pointer";
+          highlightStop(null);
+          if (tg.item.r != null) {
+            const r = LINES[tg.item.r];
+            cur = { kind: "tag", id: tg.item.r };
+            if (!(selected && selected.type === "route")) focusRoute(r);
+            tipShow("tag:" + tg.item.r, `<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}</span>`, "", ev(e, 14));
+          } else {
+            cur = { kind: "tag", id: "more" };
+            setHover(null);
+            tipShow("more:" + tg.item.more.join("."), `<span class="tip-badges">${tg.item.more.slice(0, 12).map((i) => badgeHTML(LINES[i])).join("")}</span>`, "", ev(e, 14));
+          }
+          return;
         }
-        const rs = ln.routes, r = rs[0];
-        const nal = rs.length === 1 ? routeAlerts(rs[0].id) : [];
-        const more = (ln.n > 1 ? `<span class="tt-more">${ln.n} routes share this street</span>` : "")
-          + (nal.length ? `<span class="tt-alert al-${LEVEL[nal[0].level][0]}">${alertIcon(nal[0].level)}${nal.length === 1 ? esc(LEVEL[nal[0].level][1]) : `${nal.length} alerts`}</span>` : "");
-        tipShow("line:" + rs.map((x) => x.id).join(","), rs.length === 1
-          ? `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}${more}</span>`
-          : `<span class="tip-badges">${rs.slice(0, 6).map((x) => badgeHTML(x)).join("")}</span><span class="tt">${rs.length} routes here · Tap to choose</span>`, "", ev(e));
-        return;
-      }
-      cur = null;
-      map.getCanvas().style.cursor = "";
-      tipHide();
-      setHover(null);
+        const st = pickStop(e.point);
+        if (st) {
+          const p = st.properties, lid = st.layer.id;
+          cur = { kind: "stop", id: p.id };
+          map.getCanvas().style.cursor = "pointer";
+          if (lid === "flex") {
+            highlightStop(null);
+            tipShow("flex:" + p.name, `<span class="tt">${esc("Metro Flex · " + p.name)}</span>`, "", ev(e));
+          } else {
+            highlightStop(st);
+            const end = lid === "sel-stops" || lid === "hov-stops" ? p.end : 0;
+            tipShow(`stop:${p.id}:${end}`, stopCard(p.id, end, p.ids), "tip-card", ev(e));
+          }
+          return;
+        }
+        highlightStop(null);
+        const ln = pickLine(e.point);
+        if (ln) {
+          cur = { kind: "line", id: ln.r, cat: ln.f.properties.cat };
+          map.getCanvas().style.cursor = "pointer";
+          if (!(selected && selected.type === "route")) {
+            if (ln.routes.length > 1) focusCorridor(ln.f);
+            else focusRoutes(ln.routes);
+          }
+          const rs = ln.routes, r = rs[0];
+          const nal = rs.length === 1 ? routeAlerts(rs[0].id) : [];
+          const more = (ln.n > 1 ? `<span class="tt-more">${ln.n} routes share this street</span>` : "")
+            + (nal.length ? `<span class="tt-alert al-${LEVEL[nal[0].level][0]}">${alertIcon(nal[0].level)}${nal.length === 1 ? esc(LEVEL[nal[0].level][1]) : `${nal.length} alerts`}</span>` : "");
+          tipShow("line:" + rs.map((x) => x.id).join(","), rs.length === 1
+            ? `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}${more}</span>`
+            : `<span class="tip-badges">${rs.slice(0, 6).map((x) => badgeHTML(x)).join("")}</span><span class="tt">${rs.length} routes here · Tap to choose</span>`, "", ev(e));
+          return;
+        }
+        cur = null;
+        map.getCanvas().style.cursor = "";
+        tipHide();
+        setHover(null);
+      });
     });
-    map.getCanvas().addEventListener("mouseleave", () => { cur = null; tipHide(true); setHover(null); highlightStop(null); showLens(null); });
-    map.on("movestart", () => { cur = null; queuedRoute = null; showLens(null); tipHide(true); focusOff(); highlightStop(null); });
+    map.getCanvas().addEventListener("mouseleave", () => {
+      if (moveRaf) { cancelAnimationFrame(moveRaf); moveRaf = 0; }
+      cur = null; tipHide(true); setHover(null); highlightStop(null); showLens(null);
+    });
+    map.on("movestart", () => {
+      if (moveRaf) { cancelAnimationFrame(moveRaf); moveRaf = 0; }
+      cur = null; queuedRoute = null; showLens(null); tipHide(true); focusOff(); highlightStop(null);
+    });
     map.on("click", (e) => {
       tipHide(true);
       closePopup(); showLens(null);
@@ -3394,11 +3407,52 @@
   }
 
   // ---------------------------------------------------------------- page chrome
+  let userMarker = null;
+  function setupLocate() {
+    const btn = $("#locateBtn");
+    if (!btn) return;
+    if (!navigator.geolocation) {
+      btn.style.display = "none";
+      return;
+    }
+    btn.addEventListener("click", () => {
+      if (btn.classList.contains("locating")) return;
+      btn.classList.add("locating");
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          btn.classList.remove("locating");
+          btn.classList.add("active");
+          const { longitude: lng, latitude: lat } = pos.coords;
+          if (!userMarker) {
+            const el = document.createElement("div");
+            el.className = "user-marker";
+            el.innerHTML = '<div class="user-marker-pulse"></div><div class="user-marker-dot"></div>';
+            userMarker = new maplibregl.Marker({ element: el }).setLngLat([lng, lat]).addTo(map);
+          } else {
+            userMarker.setLngLat([lng, lat]);
+          }
+          if (map) {
+            map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 15), duration: 1000, essential: true });
+          }
+        },
+        (err) => {
+          btn.classList.remove("locating");
+          btn.classList.remove("active");
+          const msg = err.code === 1 ? "Location access denied" : "Could not determine location";
+          tipShow("loc-err", `<span class="tt">${esc(msg)}</span>`, "", null);
+          setTimeout(tipHide, 3000);
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+      );
+    });
+  }
+
   function setupChrome() {
     setupGlass();
     setupSheet();
     $("#zoomIn").addEventListener("click", () => map && map.zoomIn({ duration: 350 }));
     $("#zoomOut").addEventListener("click", () => map && map.zoomOut({ duration: 350 }));
+    setupLocate();
     const tb = $("#themeBtn");
     const cycle = { "": "dark", dark: "light", light: "" };
     const label = () => {

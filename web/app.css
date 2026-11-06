@@ -404,6 +404,28 @@ table.sched td.good { color: var(--good); font-weight: 650; }
 .ctl-sep { height: .5px; background: var(--hairline); margin: 0 10px; }
 .ctl-round { border-radius: 50%; }
 .ctl-round:active svg { animation: wobble .5s var(--spring); }
+.ctl.active { color: #007aff; }
+.ctl.locating svg { animation: spin 1.2s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* User location map beacon */
+.user-marker { position: relative; width: 22px; height: 22px; pointer-events: none; display: grid; place-items: center; }
+.user-marker-pulse {
+  position: absolute; width: 100%; height: 100%; border-radius: 50%;
+  background: rgba(0, 122, 255, 0.28);
+  animation: user-pulse 2s ease-out infinite;
+}
+.user-marker-dot {
+  position: relative; width: 14px; height: 14px; border-radius: 50%;
+  background: #007aff; border: 2.5px solid #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  box-sizing: border-box;
+}
+@keyframes user-pulse {
+  0% { transform: scale(0.9); opacity: 0.9; }
+  70% { transform: scale(2.6); opacity: 0; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
 
 /* ---------- Map overlays ---------- */
 /* the pointer's card: positioned by transform (it glides after the pointer), fades and grows in,
