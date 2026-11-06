@@ -32,10 +32,35 @@
         <p>Every route and stop · Fall 2026 service</p>
       </div>
     </div>
-    <div class="search">
+    <div class="search" id="searchBar">
       <svg width="17" height="17" viewBox="0 0 17 17" aria-hidden="true"><circle cx="7.2" cy="7.2" r="5.6" fill="none" stroke="currentColor" stroke-width="2"/><path d="M11.4 11.4 15.5 15.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-      <input id="q" type="search" autocomplete="off" spellcheck="false" placeholder="Search routes and stops" aria-label="Search routes and stops">
+      <input id="q" type="search" autocomplete="off" spellcheck="false" placeholder="Search routes, stops, or places" aria-label="Search routes and stops">
+      <button class="plan-trip-btn press" id="planTripBtn" type="button" aria-label="Directions" title="Directions">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4"/></svg>
+      </button>
       <div class="results glass" id="results" hidden></div>
+    </div>
+    <div class="dir-panel" id="dirPanel" hidden>
+      <div class="dir-inputs">
+        <div class="dir-field">
+          <span class="dir-dot orig" aria-hidden="true"></span>
+          <input id="dirOrig" type="text" placeholder="Starting point (or 'Your location')" autocomplete="off" spellcheck="false" aria-label="Starting point">
+          <button class="dir-loc-btn press" id="dirOrigLoc" title="Use your location" type="button" aria-label="Use current location">
+            <svg width="15" height="15" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 1.5v2.2M9 14.3v2.2M1.5 9h2.2M14.3 9h2.2"/><circle cx="9" cy="9" r="4.8"/><circle cx="9" cy="9" r="2.2" fill="currentColor"/></svg>
+          </button>
+          <button class="dir-clear-btn" id="dirOrigClear" type="button" aria-label="Clear starting point" hidden>✕</button>
+        </div>
+        <button class="dir-swap-btn press" id="dirSwap" title="Reverse directions" type="button" aria-label="Reverse directions">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4"/></svg>
+        </button>
+        <div class="dir-field">
+          <span class="dir-dot dest" aria-hidden="true"></span>
+          <input id="dirDest" type="text" placeholder="Destination address, stop, or POI" autocomplete="off" spellcheck="false" aria-label="Destination">
+          <button class="dir-clear-btn" id="dirDestClear" type="button" aria-label="Clear destination" hidden>✕</button>
+        </div>
+      </div>
+      <button class="dir-close-btn press" id="dirClose" title="Exit directions" type="button" aria-label="Close directions">✕</button>
+      <div class="dir-suggestions glass" id="dirSuggestions" hidden></div>
     </div>
     <div class="filter-bar" id="filterBar" role="group" aria-label="Show on the map"></div>
   </header>

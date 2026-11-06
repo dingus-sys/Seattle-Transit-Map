@@ -709,6 +709,49 @@
     ];
   }
 
+  function tripLayers(P) {
+    const walkCase = theme === "dark" ? "#0f172a" : "#ffffff";
+    const walkColor = theme === "dark" ? "#38bdf8" : "#0284c7";
+    return [
+      { id: "trip-walk-case", type: "line", source: "tripwalk",
+        paint: { "line-color": walkCase, "line-width": 5.5, "line-opacity": 0.95 } },
+      { id: "trip-walk-line", type: "line", source: "tripwalk",
+        paint: {
+          "line-color": walkColor,
+          "line-width": 3.4,
+          "line-dasharray": [1.5, 1.8],
+          "line-opacity": 0.98,
+        } },
+      { id: "trip-pts-case", type: "circle", source: "trippts",
+        paint: {
+          "circle-radius": ["case", ["in", ["get", "role"], ["literal", ["orig", "dest"]]], 10.5, 8],
+          "circle-color": "#ffffff",
+          "circle-stroke-width": 1.5,
+          "circle-stroke-color": "rgba(0,0,0,0.3)",
+        } },
+      { id: "trip-pts-circle", type: "circle", source: "trippts",
+        paint: {
+          "circle-radius": ["case", ["in", ["get", "role"], ["literal", ["orig", "dest"]]], 9, 6.5],
+          "circle-color": ["get", "color"],
+        } },
+      { id: "trip-pts-label", type: "symbol", source: "trippts",
+        layout: {
+          "text-field": ["get", "label"],
+          "text-font": F_BOLD,
+          "text-size": 11.5,
+          "text-variable-anchor": ["top", "bottom", "left", "right"],
+          "text-radial-offset": 1.1,
+          "text-max-width": 10,
+          "text-padding": 3,
+        },
+        paint: {
+          "text-color": P.label,
+          "text-halo-color": P.halo,
+          "text-halo-width": 2,
+        } },
+    ];
+  }
+
   // ---------------------------------------------------------------- network
   // EDGES: street segments with their routes and service types, for hit tests and hover. The
   // drawing itself is done by the geometry engine (web/geom.js) in a background worker.
@@ -1040,7 +1083,7 @@
     if (!map || !map.isStyleLoaded()) return;
     const P = BASE[theme];
     netDim = 1; // the loop below resets every layer to its normal look
-    for (const set of [baseLayers(P), transitLayers(P), areaLayers(P), poiLayers(P), stopLayers(P), liveLayers(P)]) {
+    for (const set of [baseLayers(P), transitLayers(P), areaLayers(P), poiLayers(P), stopLayers(P), tripLayers(P), liveLayers(P)]) {
       for (const L of set) {
         if (!map.getLayer(L.id)) continue;
         for (const [k, v] of Object.entries(L.paint || {})) map.setPaintProperty(L.id, k, v);
@@ -2647,7 +2690,18 @@
     const googleUrl = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}&travelmode=transit`;
     const transitAppUrl = `https://transitapp.com/r?lat=${lat}&lon=${lon}`;
     return `<div class="dir-actions">
-      <span class="dir-label">Get Directions</span>
+      <span class="dir-label">Trip Directions</span>
+      <div class="dir-app-btns">
+        <button class="dir-inapp-btn dest press" type="button" data-dir-dest="${lat},${lon},${esc(name)}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
+          <span>Plan Trip Here</span>
+        </button>
+        <button class="dir-inapp-btn orig press" type="button" data-dir-orig="${lat},${lon},${esc(name)}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
+          <span>Trip from Here</span>
+        </button>
+      </div>
+      <span class="dir-label" style="font-size:11px;opacity:0.85">Open in Navigation App</span>
       <div class="dir-btns">
         <a class="dir-btn apple press" href="${appleUrl}" target="_blank" rel="noopener">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M11.182.008C11.148-.03 9.923.023 8.857 1.18c-1.066 1.156-.902 2.482-.878 2.516s1.52.087 2.475-1.258.762-2.391.728-2.43m3.314 11.733c-.048-.096-2.325-1.234-2.113-3.422s1.675-2.789 1.698-2.854-.597-.79-1.254-1.157a3.7 3.7 0 0 0-1.563-.434c-.108-.003-.483-.095-1.254.116-.508.139-1.653.589-1.968.607-.316.018-1.256-.522-2.267-.665-.647-.125-1.333.131-1.824.328-.49.196-1.422.754-2.074 2.237-.652 1.482-.311 3.83-.067 4.56s.625 1.924 1.273 2.796c.576.984 1.34 1.667 1.659 1.899s1.219.386 1.843.067c.502-.308 1.408-.485 1.766-.472.357.013 1.061.154 1.782.539.571.197 1.111.115 1.652-.105.541-.221 1.324-1.059 2.238-2.758q.52-1.185.473-1.282"/></svg>
@@ -2759,6 +2813,7 @@
     thumb.style.transform = `translateX(${i * 100}%)`;
   }
   function showHome(quiet) {
+    if (panelView === "directions") return renderTripPlanView();
     if (panelView === "layers") return showLayers(quiet);
     if (panelView === "alerts") return showAlerts(quiet);
     if (panelView === "corridor") return showCorridor(null, quiet);
@@ -3477,6 +3532,940 @@
     document.addEventListener("click", (e) => { if (!e.target.closest(".search")) box.hidden = true; });
   }
 
+  // ---------------------------------------------------------------- Dynamic A to B Trip Planner
+  let dirOrigin = null;      // { lat, lon, name, isLocation }
+  let dirDest = null;        // { lat, lon, name, isLocation }
+  let currentItineraries = [];
+  let selectedItinerary = null;
+  let dirActiveField = null; // "orig" or "dest" or null
+  let dirDebounceTimer = null;
+  let plannerStopsCache = null;
+
+  function distMeters(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  function getPlannerStops() {
+    if (plannerStopsCache) return plannerStopsCache;
+    plannerStopsCache = [];
+    const seen = new Set();
+    for (const s of (STOPS?.stations || [])) {
+      if (!seen.has(s.id)) { seen.add(s.id); plannerStopsCache.push({ ...s, isStation: true }); }
+    }
+    for (const s of (STOPS?.stops || [])) {
+      if (!seen.has(s.id)) { seen.add(s.id); plannerStopsCache.push(s); }
+    }
+    return plannerStopsCache;
+  }
+
+  function findNearbyStops(lat, lon, maxDist = 800) {
+    const stops = getPlannerStops();
+    const res = [];
+    for (const s of stops) {
+      const d = distMeters(lat, lon, s.lat, s.lon);
+      if (d <= maxDist) res.push({ stop: s, dist: d });
+    }
+    res.sort((a, b) => a.dist - b.dist);
+    return res;
+  }
+
+  function planTransitTrip(orig, dest) {
+    if (!orig || !dest) return null;
+    const directWalkDist = distMeters(orig.lat, orig.lon, dest.lat, dest.lon);
+    const directWalkTime = Math.round(directWalkDist / 80);
+
+    let origStops = findNearbyStops(orig.lat, orig.lon, 800);
+    if (!origStops.length) origStops = findNearbyStops(orig.lat, orig.lon, 1600);
+
+    let destStops = findNearbyStops(dest.lat, dest.lon, 800);
+    if (!destStops.length) destStops = findNearbyStops(dest.lat, dest.lon, 1600);
+
+    const origStopMap = new Map();
+    for (const o of origStops) {
+      if (!origStopMap.has(o.stop.id)) origStopMap.set(o.stop.id, o);
+      for (const sid of (o.stop.stops || [])) {
+        if (!origStopMap.has(sid)) origStopMap.set(sid, o);
+      }
+    }
+
+    const destStopMap = new Map();
+    for (const d of destStops) {
+      if (!destStopMap.has(d.stop.id)) destStopMap.set(d.stop.id, d);
+      for (const sid of (d.stop.stops || [])) {
+        if (!destStopMap.has(sid)) destStopMap.set(sid, d);
+      }
+    }
+
+    const directItineraries = [];
+
+    for (const r of ROUTES) {
+      if (LINEIDX[r.id] == null) continue;
+      for (const pat of (r.patterns || [])) {
+        const stops = pat.stops;
+        let firstOrig = -1, bestDest = -1;
+        let origMatch = null, destMatch = null;
+
+        for (let i = 0; i < stops.length; i++) {
+          const sid = stops[i];
+          if (firstOrig === -1 && origStopMap.has(sid)) {
+            firstOrig = i;
+            origMatch = origStopMap.get(sid);
+          } else if (firstOrig !== -1 && destStopMap.has(sid)) {
+            bestDest = i;
+            destMatch = destStopMap.get(sid);
+          }
+        }
+
+        if (firstOrig !== -1 && bestDest !== -1 && bestDest > firstOrig) {
+          const boardSid = stops[firstOrig];
+          const alightSid = stops[bestDest];
+          const numStops = bestDest - firstOrig;
+          const boardStop = stopIndex[boardSid] || origMatch.stop;
+          const alightStop = stopIndex[alightSid] || destMatch.stop;
+
+          const transitDist = distMeters(boardStop.lat, boardStop.lon, alightStop.lat, alightStop.lon);
+          const speedMpm = r.cat === "link" || r.cat === "sounder" ? 580 : r.cat === "ferry" ? 500 : 380;
+          const rideTime = Math.max(3, Math.round(transitDist / speedMpm) + Math.round(numStops * 0.4));
+          const walk1Time = Math.round(origMatch.dist / 80);
+          const walk2Time = Math.round(destMatch.dist / 80);
+          const headway = r.midHeadway || (r.sched?.weekday?.mid) || 15;
+          const waitTime = Math.round(Math.min(headway / 2, 10));
+          const totalDuration = walk1Time + waitTime + rideTime + walk2Time;
+
+          directItineraries.push({
+            type: "direct",
+            route: r,
+            pattern: pat,
+            boardStop,
+            alightStop,
+            numStops,
+            walk1Dist: origMatch.dist,
+            walk1Time,
+            rideTime,
+            walk2Dist: destMatch.dist,
+            walk2Time,
+            waitTime,
+            headway,
+            totalDuration,
+            transitDist,
+          });
+        }
+      }
+    }
+
+    directItineraries.sort((a, b) => a.totalDuration - b.totalDuration);
+    const seenDirect = new Set();
+    const topDirect = [];
+    for (const it of directItineraries) {
+      if (seenDirect.has(it.route.id)) continue;
+      seenDirect.add(it.route.id);
+      topDirect.push(it);
+      if (topDirect.length >= 3) break;
+    }
+
+    // 1-transfer routes
+    const origRoutes = new Set();
+    for (const o of origStops) {
+      for (const rid of (o.stop.routes || [])) origRoutes.add(rid);
+    }
+    const destRoutes = new Set();
+    for (const d of destStops) {
+      for (const rid of (d.stop.routes || [])) destRoutes.add(rid);
+    }
+
+    const transferItineraries = [];
+    for (const r1Id of origRoutes) {
+      const r1 = RBY[r1Id];
+      if (!r1 || LINEIDX[r1.id] == null) continue;
+      for (const p1 of (r1.patterns || [])) {
+        let firstOrig = -1;
+        for (let i = 0; i < p1.stops.length; i++) {
+          if (origStopMap.has(p1.stops[i])) { firstOrig = i; break; }
+        }
+        if (firstOrig === -1) continue;
+        const r1StopsAfter = p1.stops.slice(firstOrig + 1);
+        const r1StopsSet = new Set(r1StopsAfter);
+
+        for (const r2Id of destRoutes) {
+          if (r2Id === r1Id) continue;
+          const r2 = RBY[r2Id];
+          if (!r2 || LINEIDX[r2.id] == null) continue;
+          for (const p2 of (r2.patterns || [])) {
+            let lastDest = -1;
+            for (let j = p2.stops.length - 1; j >= 0; j--) {
+              if (destStopMap.has(p2.stops[j])) { lastDest = j; break; }
+            }
+            if (lastDest === -1) continue;
+
+            for (let k = 0; k < lastDest; k++) {
+              const transferSid = p2.stops[k];
+              if (r1StopsSet.has(transferSid)) {
+                const transferStop = stopIndex[transferSid];
+                if (!transferStop) continue;
+
+                const idxInP1 = p1.stops.indexOf(transferSid);
+                const origSid = p1.stops[firstOrig];
+                const destSid = p2.stops[lastDest];
+
+                const boardStop = stopIndex[origSid] || origStopMap.get(origSid)?.stop;
+                const alightStop = stopIndex[destSid] || destStopMap.get(destSid)?.stop;
+                const origMatch = origStopMap.get(origSid);
+                const destMatch = destStopMap.get(destSid);
+
+                const numStops1 = idxInP1 - firstOrig;
+                const numStops2 = lastDest - k;
+
+                const speed1 = r1.cat === "link" || r1.cat === "sounder" ? 580 : r1.cat === "ferry" ? 500 : 380;
+                const speed2 = r2.cat === "link" || r2.cat === "sounder" ? 580 : r2.cat === "ferry" ? 500 : 380;
+
+                const d1 = distMeters(boardStop.lat, boardStop.lon, transferStop.lat, transferStop.lon);
+                const d2 = distMeters(transferStop.lat, transferStop.lon, alightStop.lat, alightStop.lon);
+
+                const ride1 = Math.max(2, Math.round(d1 / speed1) + Math.round(numStops1 * 0.35));
+                const ride2 = Math.max(2, Math.round(d2 / speed2) + Math.round(numStops2 * 0.35));
+
+                const walk1Time = Math.round((origMatch ? origMatch.dist : 0) / 80);
+                const walk2Time = Math.round((destMatch ? destMatch.dist : 0) / 80);
+
+                const h1 = r1.midHeadway || (r1.sched?.weekday?.mid) || 15;
+                const h2 = r2.midHeadway || (r2.sched?.weekday?.mid) || 15;
+                const wait1 = Math.round(Math.min(h1 / 2, 8));
+                const wait2 = Math.round(Math.min(h2 / 2, 8)) + 3;
+
+                const totalDuration = walk1Time + wait1 + ride1 + wait2 + ride2 + walk2Time;
+
+                transferItineraries.push({
+                  type: "transfer",
+                  r1, r2,
+                  p1, p2,
+                  boardStop,
+                  transferStop,
+                  alightStop,
+                  numStops1, numStops2,
+                  ride1, ride2,
+                  walk1Time, walk2Time,
+                  wait1, wait2,
+                  totalDuration,
+                });
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    transferItineraries.sort((a, b) => a.totalDuration - b.totalDuration);
+    const seenTransfer = new Set();
+    const topTransfer = [];
+    for (const it of transferItineraries) {
+      const pair = it.r1.id + "->" + it.r2.id;
+      if (seenTransfer.has(pair)) continue;
+      seenTransfer.add(pair);
+      topTransfer.push(it);
+      if (topTransfer.length >= 3) break;
+    }
+
+    let directWalk = null;
+    if (directWalkDist <= 2500) {
+      directWalk = {
+        type: "walk",
+        dist: directWalkDist,
+        totalDuration: directWalkTime,
+      };
+    }
+
+    return { direct: topDirect, transfer: topTransfer, directWalk };
+  }
+
+  function clearTripMap() {
+    if (!map) return;
+    const empty = { type: "FeatureCollection", features: [] };
+    if (map.getSource("tripwalk")) map.getSource("tripwalk").setData(empty);
+    if (map.getSource("trippts")) map.getSource("trippts").setData(empty);
+  }
+
+  function renderTripOnMap(it) {
+    if (!map || !it || !dirOrigin || !dirDest) return;
+    const walkFeatures = [];
+    const ptFeatures = [];
+
+    const origPt = [dirOrigin.lon, dirOrigin.lat];
+    const destPt = [dirDest.lon, dirDest.lat];
+
+    ptFeatures.push({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: origPt },
+      properties: { role: "orig", color: "#10b981", label: "A" }
+    });
+
+    ptFeatures.push({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: destPt },
+      properties: { role: "dest", color: "#ef4444", label: "B" }
+    });
+
+    const allCoords = [origPt, destPt];
+
+    if (it.type === "walk") {
+      walkFeatures.push({
+        type: "Feature",
+        geometry: { type: "LineString", coordinates: [origPt, destPt] },
+        properties: { type: "walk" }
+      });
+      focusOff();
+    } else if (it.type === "direct") {
+      const boardPt = [it.boardStop.lon, it.boardStop.lat];
+      const alightPt = [it.alightStop.lon, it.alightStop.lat];
+      allCoords.push(boardPt, alightPt);
+
+      walkFeatures.push({
+        type: "Feature",
+        geometry: { type: "LineString", coordinates: [origPt, boardPt] },
+        properties: { type: "walk1" }
+      });
+      walkFeatures.push({
+        type: "Feature",
+        geometry: { type: "LineString", coordinates: [alightPt, destPt] },
+        properties: { type: "walk2" }
+      });
+
+      ptFeatures.push({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: boardPt },
+        properties: { role: "board", color: "#0284c7", label: it.route.short || it.route.label }
+      });
+      ptFeatures.push({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: alightPt },
+        properties: { role: "alight", color: "#0284c7", label: "Exit" }
+      });
+
+      focusRoutes([it.route]);
+    } else if (it.type === "transfer") {
+      const boardPt = [it.boardStop.lon, it.boardStop.lat];
+      const transPt = [it.transferStop.lon, it.transferStop.lat];
+      const alightPt = [it.alightStop.lon, it.alightStop.lat];
+      allCoords.push(boardPt, transPt, alightPt);
+
+      walkFeatures.push({
+        type: "Feature",
+        geometry: { type: "LineString", coordinates: [origPt, boardPt] },
+        properties: { type: "walk1" }
+      });
+      walkFeatures.push({
+        type: "Feature",
+        geometry: { type: "LineString", coordinates: [alightPt, destPt] },
+        properties: { type: "walk2" }
+      });
+
+      ptFeatures.push({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: boardPt },
+        properties: { role: "board", color: "#0284c7", label: it.r1.short || it.r1.label }
+      });
+      ptFeatures.push({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: transPt },
+        properties: { role: "transfer", color: "#8b5cf6", label: "Transfer" }
+      });
+      ptFeatures.push({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: alightPt },
+        properties: { role: "alight", color: "#0284c7", label: "Exit" }
+      });
+
+      focusRoutes([it.r1, it.r2]);
+    }
+
+    if (map.getSource("tripwalk")) {
+      map.getSource("tripwalk").setData({ type: "FeatureCollection", features: walkFeatures });
+    }
+    if (map.getSource("trippts")) {
+      map.getSource("trippts").setData({ type: "FeatureCollection", features: ptFeatures });
+    }
+
+    const lons = allCoords.map((c) => c[0]), lats = allCoords.map((c) => c[1]);
+    const bbox = [[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]];
+    map.fitBounds(bbox, { padding: fitPadding(), maxZoom: 15.2, duration: 900 });
+  }
+
+  function executeTripPlan() {
+    if (!dirOrigin || !dirDest) return;
+    const plan = planTransitTrip(dirOrigin, dirDest);
+    currentItineraries = [];
+    if (plan) {
+      if (plan.direct && plan.direct.length) currentItineraries.push(...plan.direct);
+      if (plan.transfer && plan.transfer.length) currentItineraries.push(...plan.transfer);
+      if (plan.directWalk) currentItineraries.push(plan.directWalk);
+    }
+    selectedItinerary = currentItineraries[0] || null;
+    panelView = "directions";
+    renderTripPlanView();
+    if (selectedItinerary) renderTripOnMap(selectedItinerary);
+    else clearTripMap();
+  }
+
+  function renderTripPlanView() {
+    if (!dirOrigin || !dirDest) {
+      const html = `<div class="home-view">
+        <div class="planner-summary-card">
+          <div class="planner-summary-title">
+            <span>🗺️ Dynamic Trip Planner</span>
+          </div>
+          <p class="planner-sub">Enter a starting point and destination above, or tap a stop on the map to calculate transit routes across Puget Sound.</p>
+        </div>
+      </div>`;
+      setView(html);
+      return;
+    }
+
+    if (!currentItineraries.length) {
+      const html = `<div class="home-view">
+        <div class="planner-summary-card">
+          <div class="planner-summary-title">
+            <span>No transit routes found</span>
+            <button class="planner-reverse-btn press" id="planRevBtn" type="button">Reverse ⇄</button>
+          </div>
+          <p class="planner-sub">No direct or 1-transfer transit connection was found between these points. Try selecting a nearby arterial stop or increasing walk distance.</p>
+        </div>
+      </div>`;
+      setView(html);
+      $("#planRevBtn")?.addEventListener("click", swapDirections);
+      return;
+    }
+
+    const cur = selectedItinerary || currentItineraries[0];
+    const origTitle = dirOrigin.isLocation ? "Your location" : dirOrigin.name;
+    const destTitle = dirDest.isLocation ? "Your location" : dirDest.name;
+
+    const cardsHtml = currentItineraries.map((it, idx) => {
+      const isAct = it === cur;
+      let badgeHtml = "";
+      let descHtml = "";
+      if (it.type === "walk") {
+        badgeHtml = `<span class="trip-walk-pill">🚶 Walk only</span>`;
+        descHtml = `Direct walk · ${(it.dist / 1609.34).toFixed(1)} miles`;
+      } else if (it.type === "direct") {
+        badgeHtml = badgeHTML(it.route);
+        descHtml = `Board <b>${esc(it.boardStop.name)}</b> → ${it.numStops} stop${it.numStops > 1 ? "s" : ""} → Alight <b>${esc(it.alightStop.name)}</b>`;
+      } else if (it.type === "transfer") {
+        badgeHtml = `${badgeHTML(it.r1)} <span class="trip-arrow">➔</span> ${badgeHTML(it.r2)}`;
+        descHtml = `Transfer at <b>${esc(it.transferStop.name)}</b> · ${it.numStops1 + it.numStops2} total stops`;
+      }
+      return `<button type="button" class="trip-card${isAct ? " active" : ""}" data-plan-idx="${idx}">
+        <div class="trip-card-head">
+          <span class="trip-time">${it.totalDuration} min</span>
+          ${idx === 0 ? '<span class="trip-tag">Fastest</span>' : ""}
+        </div>
+        <div class="trip-ribbon">${badgeHtml}</div>
+        <div class="trip-desc">${descHtml}</div>
+      </button>`;
+    }).join("");
+
+    let stepsHtml = "";
+    if (cur.type === "walk") {
+      stepsHtml = `<div class="trip-steps">
+        <div class="step-row">
+          <span class="step-line"></span>
+          <span class="step-icon">📍</span>
+          <div class="step-content">
+            <div class="step-main">Start at ${esc(origTitle)}</div>
+          </div>
+        </div>
+        <div class="step-row">
+          <span class="step-line"></span>
+          <span class="step-icon">🚶</span>
+          <div class="step-content">
+            <div class="step-main">Walk ${(cur.dist / 1609.34).toFixed(1)} mi to destination</div>
+            <div class="step-meta">About ${cur.totalDuration} minutes</div>
+          </div>
+        </div>
+        <div class="step-row">
+          <span class="step-icon">🏁</span>
+          <div class="step-content">
+            <div class="step-main">Arrive at ${esc(destTitle)}</div>
+          </div>
+        </div>
+      </div>`;
+    } else if (cur.type === "direct") {
+      stepsHtml = `<div class="trip-steps">
+        <div class="step-row">
+          <span class="step-line"></span>
+          <span class="step-icon">📍</span>
+          <div class="step-content">
+            <div class="step-main">Start at ${esc(origTitle)}</div>
+          </div>
+        </div>
+        <div class="step-row">
+          <span class="step-line"></span>
+          <span class="step-icon">🚶</span>
+          <div class="step-content">
+            <div class="step-main">Walk to ${esc(cur.boardStop.name)}</div>
+            <div class="step-meta">${cur.walk1Time} min walk · ${Math.round(cur.walk1Dist)} m</div>
+          </div>
+        </div>
+        <div class="step-row">
+          <span class="step-line"></span>
+          <span class="step-icon transit">${cur.route.cat === "link" || cur.route.cat === "sounder" ? "🚆" : cur.route.cat === "ferry" ? "⛴️" : "🚌"}</span>
+          <div class="step-content">
+            <div class="step-main">Board ${badgeHTML(cur.route)} towards ${esc(cur.pattern.headsign || "Destination")}</div>
+            <div class="step-meta">${cur.rideTime} min ride · ${cur.numStops} stop${cur.numStops > 1 ? "s" : ""} · Typical wait ~${cur.waitTime} min</div>
+          </div>
+        </div>
+        <div class="step-row">
+          <span class="step-line"></span>
+          <span class="step-icon">🚶</span>
+          <div class="step-content">
+            <div class="step-main">Alight at ${esc(cur.alightStop.name)}</div>
+            <div class="step-meta">Walk ${cur.walk2Time} min · ${Math.round(cur.walk2Dist)} m to destination</div>
+          </div>
+        </div>
+        <div class="step-row">
+          <span class="step-icon">🏁</span>
+          <div class="step-content">
+            <div class="step-main">Arrive at ${esc(destTitle)}</div>
+          </div>
+        </div>
+      </div>`;
+    } else if (cur.type === "transfer") {
+      stepsHtml = `<div class="trip-steps">
+        <div class="step-row">
+          <span class="step-line"></span>
+          <span class="step-icon">📍</span>
+          <div class="step-content">
+            <div class="step-main">Start at ${esc(origTitle)}</div>
+          </div>
+        </div>
+        <div class="step-row">
+          <span class="step-line"></span>
+          <span class="step-icon">🚶</span>
+          <div class="step-content">
+            <div class="step-main">Walk to ${esc(cur.boardStop.name)}</div>
+            <div class="step-meta">${cur.walk1Time} min walk</div>
+          </div>
+        </div>
+        <div class="step-row">
+          <span class="step-line"></span>
+          <span class="step-icon transit">${cur.r1.cat === "link" || cur.r1.cat === "sounder" ? "🚆" : "🚌"}</span>
+          <div class="step-content">
+            <div class="step-main">Board ${badgeHTML(cur.r1)} towards ${esc(cur.p1.headsign || "Transfer")}</div>
+            <div class="step-meta">${cur.ride1} min · ${cur.numStops1} stops</div>
+          </div>
+        </div>
+        <div class="step-row">
+          <span class="step-line"></span>
+          <span class="step-icon">🔄</span>
+          <div class="step-content">
+            <div class="step-main">Transfer at ${esc(cur.transferStop.name)}</div>
+            <div class="step-meta">Connection buffer ~${cur.wait2} min</div>
+          </div>
+        </div>
+        <div class="step-row">
+          <span class="step-line"></span>
+          <span class="step-icon transit">${cur.r2.cat === "link" || cur.r2.cat === "sounder" ? "🚆" : "🚌"}</span>
+          <div class="step-content">
+            <div class="step-main">Board ${badgeHTML(cur.r2)} towards ${esc(cur.p2.headsign || "Destination")}</div>
+            <div class="step-meta">${cur.ride2} min · ${cur.numStops2} stops</div>
+          </div>
+        </div>
+        <div class="step-row">
+          <span class="step-line"></span>
+          <span class="step-icon">🚶</span>
+          <div class="step-content">
+            <div class="step-main">Alight at ${esc(cur.alightStop.name)}</div>
+            <div class="step-meta">Walk ${cur.walk2Time} min to destination</div>
+          </div>
+        </div>
+        <div class="step-row">
+          <span class="step-icon">🏁</span>
+          <div class="step-content">
+            <div class="step-main">Arrive at ${esc(destTitle)}</div>
+          </div>
+        </div>
+      </div>`;
+    }
+
+    const appleUrl = `https://maps.apple.com/?saddr=${dirOrigin.lat},${dirOrigin.lon}&daddr=${dirDest.lat},${dirDest.lon}&dirflg=r`;
+    const googleUrl = `https://www.google.com/maps/dir/?api=1&origin=${dirOrigin.lat},${dirOrigin.lon}&destination=${dirDest.lat},${dirDest.lon}&travelmode=transit`;
+
+    const html = `<div class="home-view">
+      <div class="planner-summary-card">
+        <div class="planner-summary-title">
+          <span>${cur.totalDuration} min · ${currentItineraries.length} route option${currentItineraries.length > 1 ? "s" : ""}</span>
+          <button class="planner-reverse-btn press" id="planRevBtn" type="button">Reverse ⇄</button>
+        </div>
+        <p class="planner-sub">From ${esc(origTitle)} to ${esc(destTitle)}</p>
+      </div>
+      <h3 class="section">Trip Options</h3>
+      ${cardsHtml}
+      <h3 class="section" style="margin-top:16px">Itinerary Breakdown</h3>
+      <div class="planner-summary-card">
+        ${stepsHtml}
+      </div>
+      <div class="dir-actions" style="margin-top:14px">
+        <span class="dir-label" style="font-size:11px">Voice Turn-by-Turn Navigation</span>
+        <div class="dir-btns">
+          <a class="dir-btn apple press" href="${appleUrl}" target="_blank" rel="noopener">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M11.182.008C11.148-.03 9.923.023 8.857 1.18c-1.066 1.156-.902 2.482-.878 2.516s1.52.087 2.475-1.258.762-2.391.728-2.43m3.314 11.733c-.048-.096-2.325-1.234-2.113-3.422s1.675-2.789 1.698-2.854-.597-.79-1.254-1.157a3.7 3.7 0 0 0-1.563-.434c-.108-.003-.483-.095-1.254.116-.508.139-1.653.589-1.968.607-.316.018-1.256-.522-2.267-.665-.647-.125-1.333.131-1.824.328-.49.196-1.422.754-2.074 2.237-.652 1.482-.311 3.83-.067 4.56s.625 1.924 1.273 2.796c.576.984 1.34 1.667 1.659 1.899s1.219.386 1.843.067c.502-.308 1.408-.485 1.766-.472.357.013 1.061.154 1.782.539.571.197 1.111.115 1.652-.105.541-.221 1.324-1.059 2.238-2.758q.52-1.185.473-1.282"/></svg>
+            <span>Apple Maps</span>
+          </a>
+          <a class="dir-btn google press" href="${googleUrl}" target="_blank" rel="noopener">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
+            <span>Google Maps</span>
+          </a>
+        </div>
+      </div>
+    </div>`;
+
+    setView(html);
+    $("#planRevBtn")?.addEventListener("click", swapDirections);
+    for (const b of body().querySelectorAll("[data-plan-idx]")) {
+      b.addEventListener("click", () => {
+        const idx = +b.dataset.planIdx;
+        if (currentItineraries[idx]) {
+          selectedItinerary = currentItineraries[idx];
+          renderTripPlanView();
+          renderTripOnMap(selectedItinerary);
+        }
+      });
+    }
+  }
+
+  function updateDirInputs() {
+    const oInput = $("#dirOrig"), dInput = $("#dirDest");
+    const oClr = $("#dirOrigClear"), dClr = $("#dirDestClear");
+    if (oInput) {
+      oInput.value = dirOrigin ? (dirOrigin.isLocation ? "Your location" : dirOrigin.name) : "";
+      if (oClr) oClr.hidden = !dirOrigin;
+    }
+    if (dInput) {
+      dInput.value = dirDest ? (dirDest.isLocation ? "Your location" : dirDest.name) : "";
+      if (dClr) dClr.hidden = !dirDest;
+    }
+  }
+
+  function swapDirections() {
+    const temp = dirOrigin;
+    dirOrigin = dirDest;
+    dirDest = temp;
+    updateDirInputs();
+    showToast("Directions reversed ⇄");
+    if (dirOrigin && dirDest) {
+      executeTripPlan();
+    } else {
+      renderTripPlanView();
+    }
+  }
+
+  function openTripPlanner({ orig = null, dest = null }) {
+    $("#searchBar").hidden = true;
+    $("#filterBar").hidden = true;
+    $("#dirPanel").hidden = false;
+    if (orig) dirOrigin = orig;
+    if (dest) dirDest = dest;
+    updateDirInputs();
+    panelView = "directions";
+    openSheet("half");
+    if (dirOrigin && dirDest) {
+      executeTripPlan();
+    } else if (!dirOrigin) {
+      focusDirField("orig");
+      renderTripPlanView();
+    } else if (!dirDest) {
+      focusDirField("dest");
+      renderTripPlanView();
+    }
+  }
+
+  function closeTripPlanner() {
+    $("#searchBar").hidden = false;
+    $("#filterBar").hidden = false;
+    $("#dirPanel").hidden = true;
+    $("#dirSuggestions").hidden = true;
+    dirOrigin = null;
+    dirDest = null;
+    currentItineraries = [];
+    selectedItinerary = null;
+    dirActiveField = null;
+    clearTripMap();
+    focusOff();
+    panelView = "home";
+    showHome();
+  }
+
+  function setOriginToCurrentLocation() {
+    if (userCoords) {
+      dirOrigin = {
+        lat: userCoords.lat,
+        lon: userCoords.lng,
+        name: "Your location",
+        isLocation: true,
+      };
+      updateDirInputs();
+      if (dirDest) executeTripPlan();
+      else focusDirField("dest");
+      return;
+    }
+    if (!navigator.geolocation) {
+      showToast("Location services not available");
+      return;
+    }
+    showToast("Finding your location…");
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        dirOrigin = {
+          lat: pos.coords.latitude,
+          lon: pos.coords.longitude,
+          name: "Your location",
+          isLocation: true,
+        };
+        updateDirInputs();
+        if (dirDest) executeTripPlan();
+        else focusDirField("dest");
+      },
+      () => {
+        showToast("Could not determine location");
+      },
+      { enableHighAccuracy: true, timeout: 8000 }
+    );
+  }
+
+  function focusDirField(field) {
+    dirActiveField = field;
+    const input = field === "orig" ? $("#dirOrig") : $("#dirDest");
+    if (input) {
+      input.focus();
+      renderDirSuggestions(input.value);
+    }
+  }
+
+  function handleMapClickForDirections(lngLat) {
+    const pt = {
+      lat: lngLat.lat,
+      lon: lngLat.lng,
+      name: `Map location (${lngLat.lat.toFixed(4)}, ${lngLat.lng.toFixed(4)})`,
+    };
+    if (dirActiveField === "orig" || (!dirOrigin && dirDest)) {
+      dirOrigin = pt;
+      showToast("Start location set from map 📍");
+    } else {
+      dirDest = pt;
+      showToast("Destination set from map 🏁");
+    }
+    dirActiveField = null;
+    $("#dirSuggestions").hidden = true;
+    updateDirInputs();
+    if (dirOrigin && dirDest) {
+      executeTripPlan();
+    } else {
+      renderTripPlanView();
+    }
+  }
+
+  async function searchAddressesAndPois(query) {
+    if (!query || query.trim().length < 3) return [];
+    try {
+      const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&lat=47.6062&lon=-122.3321&limit=5`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(3500) });
+      if (!res.ok) return [];
+      const json = await res.json();
+      const results = [];
+      for (const f of (json.features || [])) {
+        const p = f.properties;
+        const coords = f.geometry?.coordinates;
+        if (!coords || coords.length < 2) continue;
+        const lon = coords[0], lat = coords[1];
+        if (lat < 47.0 || lat > 48.3 || lon < -122.7 || lon > -121.8) continue;
+        const parts = [p.name || `${p.housenumber || ""} ${p.street || ""}`.trim()];
+        if (p.street && p.name && !p.name.includes(p.street)) parts.push(p.street);
+        if (p.locality || p.district) parts.push(p.locality || p.district);
+        if (p.city) parts.push(p.city);
+        const title = parts.filter(Boolean).join(", ");
+        results.push({
+          kind: "poi",
+          name: title,
+          desc: [p.city, p.state || "WA", p.postcode].filter(Boolean).join(", "),
+          lat, lon
+        });
+      }
+      return results;
+    } catch {
+      return [];
+    }
+  }
+
+  function searchLocalStopsAndPois(q) {
+    q = q.trim().toLowerCase();
+    if (!q) return [];
+    const items = search(q);
+    const results = [];
+    for (const it of items) {
+      if (it.kind === "station") {
+        results.push({ kind: "station", name: it.s.name, desc: "Light rail / rail station", lat: it.s.lat, lon: it.s.lon });
+      } else if (it.kind === "stop") {
+        results.push({ kind: "stop", name: it.s.name, desc: `Bus stop ${it.s.code ? "#" + it.s.code : ""}`, lat: it.s.lat, lon: it.s.lon });
+      } else if (it.kind === "pr") {
+        results.push({ kind: "pr", name: it.pr.name, desc: `Park & Ride (${it.pr.stalls} stalls)`, lat: it.pr.lat, lon: it.pr.lon });
+      } else if (it.kind === "trail") {
+        const coords = [];
+        const getC = (c) => { if (typeof c[0] === "number") coords.push(c); else c.forEach(getC); };
+        getC(it.f.geometry.coordinates);
+        if (coords.length) {
+          const mid = coords[Math.floor(coords.length / 2)];
+          results.push({ kind: "trail", name: it.f.properties.name, desc: "Trail corridor", lat: mid[1], lon: mid[0] });
+        }
+      }
+    }
+    return results.slice(0, 5);
+  }
+
+  function renderDirSuggestions(query) {
+    const box = $("#dirSuggestions");
+    if (!box) return;
+    const q = (query || "").trim();
+
+    const items = [];
+    items.push({
+      kind: "currloc",
+      name: "Your current location",
+      desc: userCoords ? "GPS location available" : "Acquire GPS fix",
+      action: () => {
+        setOriginToCurrentLocation();
+        box.hidden = true;
+      }
+    });
+    items.push({
+      kind: "mapchoice",
+      name: "Choose on map",
+      desc: "Tap anywhere on the map to set point",
+      action: () => {
+        showToast(`Tap anywhere on the map to set ${dirActiveField === "orig" ? "starting point" : "destination"}`);
+        box.hidden = true;
+      }
+    });
+
+    if (q.length >= 2) {
+      const locals = searchLocalStopsAndPois(q);
+      for (const loc of locals) {
+        items.push({
+          kind: loc.kind,
+          name: loc.name,
+          desc: loc.desc,
+          action: () => {
+            const pt = { lat: loc.lat, lon: loc.lon, name: loc.name };
+            if (dirActiveField === "orig") dirOrigin = pt; else dirDest = pt;
+            dirActiveField = null;
+            box.hidden = true;
+            updateDirInputs();
+            if (dirOrigin && dirDest) executeTripPlan();
+            else renderTripPlanView();
+          }
+        });
+      }
+    }
+
+    box.innerHTML = items.map((it, idx) => {
+      const glyph = it.kind === "currloc" ? "📍" : it.kind === "mapchoice" ? "🗺️" : it.kind === "station" ? "🚆" : it.kind === "pr" ? "🅿️" : "🚌";
+      return `<button type="button" class="result" data-sug-idx="${idx}">
+        <span class="trail-glyph" aria-hidden="true">${glyph}</span>
+        <span class="txt"><span class="name">${esc(it.name)}</span><span class="desc">${esc(it.desc)}</span></span>
+      </button>`;
+    }).join("");
+
+    for (const b of box.querySelectorAll("[data-sug-idx]")) {
+      b.addEventListener("click", () => {
+        const idx = +b.dataset.sugIdx;
+        if (items[idx]) items[idx].action();
+      });
+    }
+
+    box.hidden = false;
+
+    if (q.length >= 3) {
+      clearTimeout(dirDebounceTimer);
+      dirDebounceTimer = setTimeout(async () => {
+        const pois = await searchAddressesAndPois(q);
+        if (pois.length && !box.hidden) {
+          const poiHtml = pois.map((p, i) => {
+            return `<button type="button" class="result" data-poi-idx="${i}">
+              <span class="trail-glyph" aria-hidden="true">📍</span>
+              <span class="txt"><span class="name">${esc(p.name)}</span><span class="desc">${esc(p.desc)}</span></span>
+            </button>`;
+          }).join("");
+          box.innerHTML += poiHtml;
+          for (const b of box.querySelectorAll("[data-poi-idx]")) {
+            b.addEventListener("click", () => {
+              const i = +b.dataset.poiIdx;
+              const p = pois[i];
+              if (p) {
+                const pt = { lat: p.lat, lon: p.lon, name: p.name };
+                if (dirActiveField === "orig") dirOrigin = pt; else dirDest = pt;
+                dirActiveField = null;
+                box.hidden = true;
+                updateDirInputs();
+                if (dirOrigin && dirDest) executeTripPlan();
+                else renderTripPlanView();
+              }
+            });
+          }
+        }
+      }, 220);
+    }
+  }
+
+  function setupTripPlanner() {
+    $("#planTripBtn")?.addEventListener("click", () => {
+      openTripPlanner({});
+    });
+    $("#dirClose")?.addEventListener("click", closeTripPlanner);
+    $("#dirSwap")?.addEventListener("click", swapDirections);
+    $("#dirOrigLoc")?.addEventListener("click", setOriginToCurrentLocation);
+    $("#dirOrigClear")?.addEventListener("click", () => {
+      dirOrigin = null;
+      updateDirInputs();
+      focusDirField("orig");
+      renderTripPlanView();
+    });
+    $("#dirDestClear")?.addEventListener("click", () => {
+      dirDest = null;
+      updateDirInputs();
+      focusDirField("dest");
+      renderTripPlanView();
+    });
+
+    const oInput = $("#dirOrig"), dInput = $("#dirDest");
+    if (oInput) {
+      oInput.addEventListener("focus", () => {
+        dirActiveField = "orig";
+        openSheet("full");
+        renderDirSuggestions(oInput.value);
+      });
+      oInput.addEventListener("input", () => renderDirSuggestions(oInput.value));
+    }
+    if (dInput) {
+      dInput.addEventListener("focus", () => {
+        dirActiveField = "dest";
+        openSheet("full");
+        renderDirSuggestions(dInput.value);
+      });
+      dInput.addEventListener("input", () => renderDirSuggestions(dInput.value));
+    }
+
+    document.addEventListener("click", (e) => {
+      if (!e.target.closest(".dir-panel") && !e.target.closest("#dirSuggestions") && !e.target.closest("#planTripBtn")) {
+        const box = $("#dirSuggestions");
+        if (box) box.hidden = true;
+      }
+    });
+  }
+
   // ---------------------------------------------------------------- layer toggles
   function applyLayerToggles() {
     if (!map) return;
@@ -3728,6 +4717,10 @@
     map.on("click", (e) => {
       tipHide(true);
       closePopup(); showLens(null);
+      if (dirActiveField) {
+        handleMapClickForDirections(e.lngLat);
+        return;
+      }
       // a tap right on a station's circle opens the station, even with a train or bus on top of it
       const onStation = map.getLayer("stations") && map.getLayoutProperty("stations", "visibility") !== "none"
         ? map.queryRenderedFeatures([[e.point.x - 4, e.point.y - 4], [e.point.x + 4, e.point.y + 4]], { layers: ["stations"] }) : [];
@@ -4108,9 +5101,11 @@
           flex: { type: "geojson", data: AREAS.flex },
           flexlabels: { type: "geojson", data: AREAS.flexLabels || empty },
           vehicles: { type: "geojson", data: empty },
+          tripwalk: { type: "geojson", data: empty },
+          trippts: { type: "geojson", data: empty },
           mask: { type: "geojson", data: maskGeoJSON() },
         },
-        layers: [...baseLayers(P), ...areaLayers(P), ...transitLayers(P), ...poiLayers(P), ...stopLayers(P), ...liveLayers(P)],
+        layers: [...baseLayers(P), ...areaLayers(P), ...transitLayers(P), ...poiLayers(P), ...stopLayers(P), ...tripLayers(P), ...liveLayers(P)],
       },
       bounds: narrow ? [[-122.42, 47.54], [-122.17, 47.72]] : [[-122.44, 47.50], [-122.10, 47.77]],
       fitBoundsOptions: { padding: narrow ? { top: 20, bottom: 150, left: 10, right: 10 } : { top: 30, bottom: 30, left: 420, right: 80 } },
@@ -4483,6 +5478,7 @@
     $("#zoomOut").addEventListener("click", () => map && map.zoomOut({ duration: 350 }));
     setupLocate();
     setupLiveHud();
+    setupTripPlanner();
     const tb = $("#themeBtn");
     const cycle = { "": "dark", dark: "light", light: "" };
     const label = () => {

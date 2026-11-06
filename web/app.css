@@ -174,7 +174,7 @@ button, input { font: inherit; color: inherit; letter-spacing: inherit; }
 .fchip:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 1px; }
 .search > svg { position: absolute; left: 13px; top: 11px; color: var(--muted); pointer-events: none; }
 .search input {
-  width: 100%; box-sizing: border-box; height: 38px; padding: 0 14px 0 38px;
+  width: 100%; box-sizing: border-box; height: 38px; padding: 0 42px 0 38px;
   border: 0; border-radius: 99px; background: var(--fill); outline-offset: 0;
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, .06), inset 0 0 0 .5px rgba(255, 255, 255, .35);
   font-size: 16px; transition: background-color .2s ease, box-shadow .3s var(--spring);
@@ -182,6 +182,66 @@ button, input { font: inherit; color: inherit; letter-spacing: inherit; }
 .search input::placeholder { color: var(--muted); }
 .search input:focus { background: var(--fill-2); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); outline: none; }
 .search input::-webkit-search-cancel-button { filter: grayscale(1); }
+.plan-trip-btn {
+  position: absolute; right: 5px; top: 5px; width: 28px; height: 28px; border-radius: 99px;
+  border: 0; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent);
+  display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;
+  transition: all .2s var(--spring);
+}
+.plan-trip-btn:hover { background: var(--accent); color: #fff; transform: scale(1.06); }
+.plan-trip-btn:active { transform: scale(0.94); }
+
+/* Dynamic A to B Trip Planner UI */
+.dir-panel {
+  position: relative; display: flex; align-items: center; gap: 8px; margin-bottom: 2px;
+  animation: jelly-pop .35s var(--spring) both;
+}
+.dir-inputs {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; position: relative;
+}
+.dir-field {
+  position: relative; display: flex; align-items: center;
+}
+.dir-dot {
+  position: absolute; left: 11px; width: 8px; height: 8px; border-radius: 99px; pointer-events: none; z-index: 1;
+}
+.dir-dot.orig { background: #10b981; box-shadow: 0 0 0 2px rgba(16, 185, 129, .28); }
+.dir-dot.dest { background: #ef4444; box-shadow: 0 0 0 2px rgba(239, 68, 68, .28); }
+.dir-field input {
+  width: 100%; box-sizing: border-box; height: 35px; padding: 0 30px 0 28px;
+  border: 0; border-radius: 11px; background: var(--fill); font-size: 14.5px;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, .05), inset 0 0 0 .5px rgba(255, 255, 255, .3);
+  transition: background-color .2s ease, box-shadow .2s ease;
+}
+.dir-field input::placeholder { color: var(--muted); font-size: 13.5px; }
+.dir-field input:focus {
+  background: var(--fill-2); outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.dir-loc-btn, .dir-clear-btn {
+  position: absolute; right: 5px; width: 24px; height: 24px; border: 0; background: transparent;
+  color: var(--muted); display: flex; align-items: center; justify-content: center; cursor: pointer;
+  border-radius: 6px; padding: 0; transition: all .15s ease;
+}
+.dir-loc-btn:hover, .dir-clear-btn:hover { color: var(--accent); background: var(--fill-2); }
+.dir-swap-btn {
+  position: absolute; right: -28px; top: calc(50% - 13px); width: 26px; height: 26px; border-radius: 99px;
+  border: 1px solid var(--rim); background: var(--glass-solid); color: var(--ink-2);
+  display: flex; align-items: center; justify-content: center; cursor: pointer; z-index: 2; padding: 0;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .1); transition: all .25s var(--spring);
+}
+.dir-swap-btn:hover { background: var(--accent); color: #fff; transform: rotate(180deg) scale(1.1); }
+.dir-swap-btn:active { transform: rotate(180deg) scale(0.94); }
+.dir-close-btn {
+  width: 32px; height: 32px; border-radius: 99px; border: 0; background: var(--fill);
+  color: var(--muted); display: flex; align-items: center; justify-content: center;
+  cursor: pointer; font-size: 14px; font-weight: 700; flex-shrink: 0; transition: all .15s ease;
+}
+.dir-close-btn:hover { color: var(--ink); background: var(--fill-2); }
+.dir-suggestions {
+  position: absolute; left: 0; right: 0; top: 80px; z-index: 5; max-height: 48vh; overflow-y: auto;
+  border-radius: 16px; padding: 6px; animation: jelly-pop .3s var(--spring) both;
+}
+
 .results {
   position: absolute; left: 0; right: 0; top: 46px; z-index: 3; max-height: 52vh; overflow: auto;
   border-radius: 18px; padding: 6px; animation: jelly-pop .45s var(--spring) both; transform-origin: top center;
@@ -856,3 +916,92 @@ table.sched td.good { color: var(--good); font-weight: 650; }
   color: #008f89; box-shadow: inset 0 0 0 1px #00c7be, 0 2px 8px rgba(0, 199, 190, .25);
 }
 [data-dark="1"] .fchip[data-f="snow"].on { color: #6ee7e2; }
+
+/* ---------- Dynamic A to B Trip Planner UI Styles ---------- */
+.dir-app-btns {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px;
+}
+.dir-inapp-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  padding: 8px 10px; border-radius: 10px; font-size: 12.5px; font-weight: 650;
+  border: 0; cursor: pointer; background: var(--fill); color: var(--ink);
+  transition: all .2s var(--spring);
+}
+.dir-inapp-btn.dest {
+  background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent);
+}
+.dir-inapp-btn:hover { background: var(--fill-2); transform: scale(1.02); }
+.dir-inapp-btn.dest:hover { background: var(--accent); color: #fff; }
+.dir-inapp-btn:active { transform: scale(0.97); }
+
+.planner-summary-card {
+  padding: 12px 14px; background: var(--group); border-radius: var(--r-group);
+  margin-bottom: 12px; box-shadow: inset 0 0 0 .5px var(--rim);
+}
+.planner-summary-title {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: 15px; font-weight: 700; color: var(--ink);
+}
+.planner-reverse-btn {
+  display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 99px;
+  border: 0; background: var(--fill); color: var(--accent); font-size: 12px; font-weight: 650;
+  cursor: pointer; transition: all .15s ease;
+}
+.planner-reverse-btn:hover { background: var(--fill-2); }
+.planner-sub {
+  margin-top: 4px; font-size: 12.5px; color: var(--muted); font-weight: 500;
+}
+
+.trip-card {
+  padding: 12px 14px; background: var(--group); border-radius: var(--r-group);
+  margin-bottom: 10px; box-shadow: inset 0 0 0 .5px var(--rim); cursor: pointer;
+  transition: all .2s var(--spring); border: 2px solid transparent; text-align: left;
+  width: 100%; box-sizing: border-box; display: block;
+}
+.trip-card:hover { background: var(--fill); transform: translateY(-1px); }
+.trip-card.active {
+  border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--group));
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .08);
+}
+.trip-card-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px;
+}
+.trip-time {
+  font-size: 19px; font-weight: 750; color: var(--ink); letter-spacing: -0.02em;
+}
+.trip-tag {
+  font-size: 11.5px; font-weight: 700; padding: 2px 7px; border-radius: 99px;
+  background: color-mix(in srgb, var(--good) 18%, transparent); color: var(--good);
+}
+.trip-ribbon {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 6px;
+}
+.trip-arrow { color: var(--muted); font-size: 12px; }
+.trip-walk-pill {
+  font-size: 12px; font-weight: 600; color: var(--muted); display: inline-flex; align-items: center; gap: 3px;
+}
+.trip-desc {
+  font-size: 12.5px; color: var(--ink-2); line-height: 1.35;
+}
+
+/* Step by Step Breakdown */
+.trip-steps {
+  margin-top: 10px; padding: 6px 0 0; display: grid; gap: 0; position: relative;
+}
+.step-row {
+  display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; position: relative;
+  padding-bottom: 14px;
+}
+.step-line {
+  position: absolute; left: 13px; top: 24px; bottom: 0; width: 2px;
+  background: color-mix(in srgb, var(--muted) 28%, transparent);
+}
+.step-row:last-child .step-line { display: none; }
+.step-icon {
+  width: 28px; height: 28px; border-radius: 99px; background: var(--fill);
+  display: flex; align-items: center; justify-content: center; font-size: 14px;
+  box-shadow: inset 0 0 0 .5px var(--rim); z-index: 1; flex-shrink: 0;
+}
+.step-icon.transit { background: color-mix(in srgb, var(--accent) 15%, transparent); }
+.step-main { font-size: 14px; font-weight: 650; color: var(--ink); line-height: 1.25; }
+.step-meta { font-size: 12px; color: var(--muted); margin-top: 2px; line-height: 1.3; }
