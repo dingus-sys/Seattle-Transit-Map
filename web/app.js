@@ -103,11 +103,11 @@
   //              where bus tags start
   //   thickness  line width multiplier
   const SETTINGS_DEFAULT = { busDetail: "normal", tags: "normal", thickness: "normal" };
-  const BUS_TIERS = { less: [0, 10.2, 12.0], normal: [0, 0, 10.0], more: [0, 0, 0] };
+  const BUS_TIERS = { less: [0, 10.0, 11.5], normal: [0, 0, 9.2], more: [0, 0, 0] };
   // gap: same tag repeating; every: spacing along long streets; any: between any two tags (px,
   // grows when zoomed out, see tagSpacing); busZ: zoom where bus tags start
-  const TAG_DENSITY = { fewer: { gap: 840, every: 1800, any: 140, busZ: 11.5 }, normal: { gap: 560, every: 1200, any: 88, busZ: 10.0 },
-    more: { gap: 360, every: 760, any: 52, busZ: 9.4 } };
+  const TAG_DENSITY = { fewer: { gap: 840, every: 1800, any: 140, busZ: 11.5 }, normal: { gap: 560, every: 1200, any: 88, busZ: 9.7 },
+    more: { gap: 360, every: 760, any: 52, busZ: 9.2 } };
   const tagSpacing = (td, z) => ({ ...td, any: td.any * (z < 11 ? 1.25 : 1) });
   const THICK = { thin: 0.8, normal: 1, bold: 1.25 };
   const settings = { ...SETTINGS_DEFAULT };
@@ -756,10 +756,11 @@
 
   const zStep = (z) => Math.max(9, Math.min(19, Math.round(z * 4) / 4));
   // Zoomed out, all-day and rush-hour buses are slimmer than frequent ones, so the busy
-  // coverage map underneath stays readable and the frequent network stands out.
+  // coverage map underneath stays readable and the frequent network stands out, while all-day
+  // buses remain clearly visible across the region.
   function minorScale(z) {
-    const f = z <= 10.5 ? 0.5 : z >= 12.5 ? 1 : 0.5 + 0.5 * (z - 10.5) / 2;
-    return { local: f, peak: Math.max(0.5, Math.min(1, f + 0.15) * 0.8), shuttle: f, dart: f };
+    const f = z <= 10.0 ? 0.72 : z >= 12.5 ? 1 : 0.72 + 0.28 * (z - 10.0) / 2.5;
+    return { local: f, peak: Math.max(0.45, f * 0.65), shuttle: f * 0.85, dart: f * 0.75 };
   }
   function tierFor(z) { const t = BUS_TIERS[settings.busDetail]; return z >= t[2] ? 2 : z >= t[1] ? 1 : 0; }
   let lastZ = -1, labelStep = null, needsRebuild = false, builtView = null, lastFeats = [], lastSelFeats = [];
