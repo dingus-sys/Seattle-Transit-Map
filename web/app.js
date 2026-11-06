@@ -3170,26 +3170,168 @@
   }
 
   const fmtH = (h) => { const hh = h % 24; return `${hh % 12 || 12}${hh < 12 ? "a" : "p"}`; };
+  function getPugetSoundNow() {
+    try {
+      const d = new Date();
+      const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/Los_Angeles",
+        weekday: "short",
+        hour: "numeric",
+        minute: "numeric",
+        hourCycle: "h23"
+      }).formatToParts(d);
+      const getP = (type) => parts.find((p) => p.type === type)?.value;
+      const weekdayStr = getP("weekday");
+      const hour = parseInt(getP("hour") || "0", 10);
+      const minute = parseInt(getP("minute") || "0", 10);
+      const dayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+      const dayOfWeek = dayMap[weekdayStr] ?? d.getDay();
+      const decHour = hour + minute / 60;
+      return { dayOfWeek, decHour, hour, minute };
+    } catch {
+      const d = new Date();
+      return { dayOfWeek: d.getDay(), decHour: d.getHours() + d.getMinutes() / 60, hour: d.getHours(), minute: d.getMinutes() };
+    }
+  }
+
+  function getCurrentSchedSlot() {
+    const { dayOfWeek, decHour } = getPugetSoundNow();
+    let d = dayOfWeek;
+    let period = "mid";
+    if (decHour < 3) {
+      d = (d + 6) % 7;
+      period = "late";
+    } else if (decHour >= 3 && decHour < 6) {
+      period = "early";
+    } else if (decHour >= 6 && decHour < 9) {
+      period = "am";
+    } else if (decHour >= 9 && decHour < 15) {
+      period = "mid";
+    } else if (decHour >= 15 && decHour < 18) {
+      period = "pm";
+    } else if (decHour >= 18 && decHour < 22) {
+      period = "eve";
+    } else {
+      period = "late";
+    }
+    const dayKey = d === 0 ? "sunday" : d === 6 ? "saturday" : "weekday";
+    return { dayKey, period, decHour };
+  }
+
   function scheduleTable(r) {
+    if (!r.sched) return `<p class="hint">No published schedule table available for this route.</p>`;
+    const curSlot = getCurrentSchedSlot();
     const days = [["weekday", "Weekday"], ["saturday", "Sat"], ["sunday", "Sun"]];
+
+    const curSchedDay = r.sched[curSlot.dayKey];
+    let statusTitle = "";
+    let statusDetail = "";
+    let isServiceActive = false;
+
+    const curPeriodMeta = (META.periods || []).find(([k]) => k === curSlot.period);
+    const curPeriodLabel = curPeriodMeta ? curPeriodMeta[1] : (curSlot.period === "early" ? "Early morning" : "Current schedule");
+    const curPeriodHours = curPeriodMeta ? `${fmtH(curPeriodMeta[2])}–${fmtH(curPeriodMeta[3])}` : "";
+
+    if (!curSchedDay) {
+      statusTitle = "No service today";
+      statusDetail = `This route does not operate on ${curSlot.dayKey === "sunday" ? "Sundays" : curSlot.dayKey === "saturday" ? "Saturdays" : "weekdays"}.`;
+    } else if (curSlot.period === "early") {
+      if (curSchedDay.first) {
+        statusTitle = `Service begins soon at ${curSchedDay.first}`;
+        statusDetail = `Early morning hours (3a–6a). First departure of the day is at ${curSchedDay.first}.`;
+        isServiceActive = true;
+      } else {
+        statusTitle = "No service during early morning hours";
+        statusDetail = "Service resumes later today.";
+      }
+    } else {
+      const waitMin = curSchedDay[curSlot.period];
+      const numTrips = curSchedDay[curSlot.period + "_n"];
+      if (waitMin && numTrips > 2) {
+        isServiceActive = true;
+        statusTitle = `Running every ${waitMin} min right now`;
+        statusDetail = `${curPeriodLabel} (${curPeriodHours}) · Typical wait in busier direction`;
+      } else if (numTrips && numTrips > 0) {
+        isServiceActive = true;
+        statusTitle = `${numTrips} scheduled trip${numTrips > 1 ? "s" : ""} in this period`;
+        statusDetail = `${curPeriodLabel} (${curPeriodHours}) · Limited scheduled departures`;
+      } else {
+        statusTitle = "No service right now";
+        if (curSchedDay.first && curSchedDay.last) {
+          statusDetail = `Operates today from ${curSchedDay.first} to ${curSchedDay.last}.`;
+        } else {
+          statusDetail = `No departures scheduled during ${curPeriodLabel.toLowerCase()} (${curPeriodHours}).`;
+        }
+      }
+    }
+
+    const statusBanner = `<div class="sched-now-status${isServiceActive ? " active" : " off"}">
+      <div class="sched-now-status-head">
+        <span class="sched-now-dot-live"></span>
+        <span class="sched-now-status-title">${esc(statusTitle)}</span>
+      </div>
+      <div class="sched-now-status-sub">${esc(statusDetail)}</div>
+    </div>`;
+
     const cell = (d, k) => {
       const s = r.sched[d];
-      if (!s) return `<td class="none">—</td>`;
+      const isNow = (d === curSlot.dayKey && k === curSlot.period);
+      if (!s) {
+        if (isNow) {
+          return `<td class="none sched-cell-now"><div class="sched-now-box"><span class="sched-now-tag"><span class="sched-now-pulse-dot"></span>NOW</span><span class="sched-now-val">—</span></div></td>`;
+        }
+        return `<td class="none">—</td>`;
+      }
       const n = s[k + "_n"];
-      if (!n) return `<td class="none">—</td>`;
-      if (n <= 2) return `<td>${n} trip${n > 1 ? "s" : ""}</td>`;
-      return `<td class="${s[k] <= 15 ? "good" : ""}">${s[k]} min</td>`;
+      if (!n) {
+        if (isNow) {
+          return `<td class="none sched-cell-now"><div class="sched-now-box"><span class="sched-now-tag"><span class="sched-now-pulse-dot"></span>NOW</span><span class="sched-now-val">—</span></div></td>`;
+        }
+        return `<td class="none">—</td>`;
+      }
+      const isGood = s[k] <= 15;
+      if (n <= 2) {
+        const text = `${n} trip${n > 1 ? "s" : ""}`;
+        if (isNow) {
+          return `<td class="sched-cell-now"><div class="sched-now-box"><span class="sched-now-tag"><span class="sched-now-pulse-dot"></span>NOW</span><span class="sched-now-val">${esc(text)}</span></div></td>`;
+        }
+        return `<td>${esc(text)}</td>`;
+      }
+      const text = `${s[k]} min`;
+      if (isNow) {
+        return `<td class="${isGood ? "good " : ""}sched-cell-now"><div class="sched-now-box${isGood ? " good" : ""}"><span class="sched-now-tag"><span class="sched-now-pulse-dot"></span>NOW</span><span class="sched-now-val">${esc(text)}</span></div></td>`;
+      }
+      return `<td class="${isGood ? "good" : ""}">${esc(text)}</td>`;
     };
-    const rows = META.periods.map(([k, label, h0, h1]) =>
-      `<tr><th scope="row">${esc(label)}<small>${fmtH(h0)}–${fmtH(h1)}</small></th>${days.map(([d]) => cell(d, k)).join("")}</tr>`).join("");
+
+    const rows = META.periods.map(([k, label, h0, h1]) => {
+      const isNowRow = (k === curSlot.period);
+      return `<tr><th scope="row" class="${isNowRow ? "sched-row-now" : ""}">${isNowRow ? '<span class="sched-row-live-dot" aria-hidden="true"></span>' : ""}${esc(label)}<small>${fmtH(h0)}–${fmtH(h1)}</small></th>${days.map(([d]) => cell(d, k)).join("")}</tr>`;
+    }).join("");
+
     const span = days.map(([d]) => {
       const s = r.sched[d];
+      const isNow = (d === curSlot.dayKey && curSlot.period === "first_last");
       if (!s) return `<td class="none">No service</td>`;
-      if (s.span_h >= 22) return `<td>24 hours</td>`;
+      if (s.span_h >= 22) {
+        if (isNow) {
+          return `<td class="sched-cell-now"><div class="sched-now-box good"><span class="sched-now-tag"><span class="sched-now-pulse-dot"></span>NOW</span><span class="sched-now-val">24 hours</span></div></td>`;
+        }
+        return `<td>24 hours</td>`;
+      }
+      if (isNow) {
+        return `<td class="sched-cell-now"><div class="sched-now-box"><span class="sched-now-tag"><span class="sched-now-pulse-dot"></span>NOW</span><span class="sched-now-val">${s.first.replace(" ", " ")}</span></div></td>`;
+      }
       return `<td>${s.first.replace(" ", " ")}<br>${s.last.replace(" ", " ")}</td>`;
     }).join("");
-    return `<div class="group table-group"><table class="sched"><thead><tr><th></th>${days.map(([, l]) => `<th scope="col">${l}</th>`).join("")}</tr></thead>
-      <tbody>${rows}<tr><th scope="row">First / last</th>${span}</tr></tbody></table></div>`;
+
+    const theadCols = days.map(([d, l]) => {
+      const isToday = (d === curSlot.dayKey);
+      return `<th scope="col" class="${isToday ? "sched-col-today" : ""}">${l}${isToday ? ' <span class="sched-today-pill">Today</span>' : ""}</th>`;
+    }).join("");
+
+    return `${statusBanner}<div class="group table-group"><table class="sched"><thead><tr><th></th>${theadCols}</tr></thead>
+      <tbody>${rows}<tr><th scope="row"${curSlot.period === "first_last" ? ' class="sched-row-now"' : ""}>${curSlot.period === "first_last" ? '<span class="sched-row-live-dot" aria-hidden="true"></span>' : ""}First / last</th>${span}</tr></tbody></table></div>`;
   }
   const dayLabel = () => {
     const d = META.days;
