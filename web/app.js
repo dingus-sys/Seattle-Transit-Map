@@ -481,6 +481,10 @@
       { id: "flex-fill", type: "fill", source: "flex", paint: { "fill-color": FLEX[theme], "fill-opacity": theme === "dark" ? 0.12 : 0.09 } },
       { id: "flex-line", type: "line", source: "flex", paint: { "line-color": FLEX[theme], "line-opacity": 0.85,
         "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1, 13, 2, 16, 2.6] } },
+      // Glowing highlight layers for hovered / selected DART service area
+      { id: "dart-hl-fill", type: "fill", source: "darthl", paint: { "fill-color": LINE[theme].dart, "fill-opacity": theme === "dark" ? 0.35 : 0.28 } },
+      { id: "dart-hl-casing", type: "line", source: "darthl", paint: { "line-color": "#ffffff", "line-width": 5.0, "line-opacity": 0.95 } },
+      { id: "dart-hl-line", type: "line", source: "darthl", paint: { "line-color": LINE[theme].dart, "line-width": 3.0, "line-dasharray": [3, 1.5], "line-opacity": 1.0 } },
       // 1. Casing for multi-use trails and protected bike lanes
       { id: "trail-case", type: "line", source: "trails",
         filter: ["in", ["get", "facility"], ["literal", ["trail", "pbl"]]],
@@ -2651,6 +2655,8 @@
     showRouteStops(r);
     showRoute(r);
     renderLive();
+    if (r.cat === "dart") highlightDartArea(id);
+    else highlightDartArea(null);
     if (fit && r.bbox && r.bbox[0] < 180) map.fitBounds([[r.bbox[0], r.bbox[1]], [r.bbox[2], r.bbox[3]]], { padding: fitPadding(), maxZoom: 15, duration: 800 });
   }
   function selectStop(id, { fly = true, push = true } = {}) {
@@ -2661,6 +2667,7 @@
     rebuild();
     applySelectionStyle();
     showRouteStops(null);
+    highlightDartArea(null);
     showStop(s);
     if (fly) map.flyTo({ center: [s.lon, s.lat], zoom: Math.max(map.getZoom(), s.kind === "stop" ? 16 : 14.5), padding: fitPadding(), duration: 800 });
   }
@@ -2674,6 +2681,7 @@
     rebuild();
     applySelectionStyle();
     showRouteStops(null);
+    highlightDartArea(null);
     showHome();
     renderLive();
     openSheet("peek");
@@ -2912,6 +2920,7 @@
         renderFilterBar();
         refreshStations();
         rebuild();
+        applyLayerToggles();
         renderLive();
         showHome(true);
         return;
@@ -2998,6 +3007,7 @@
       renderFilterBar();
       refreshStations();
       rebuild();
+      applyLayerToggles();
       renderLive();
       showHome(true);
     });
@@ -3006,6 +3016,7 @@
       renderFilterBar();
       refreshStations();
       rebuild();
+      applyLayerToggles();
       renderLive();
       showHome(true);
     });
@@ -4715,6 +4726,9 @@
     if (map.getSource("trippts")) map.getSource("trippts").setData(empty);
     setNetDim(1);
     focusOff();
+    if (!(selected && selected.type === "route" && RBY[selected.id]?.cat === "dart")) {
+      highlightDartArea(null);
+    }
   }
 
   function getSoonestBus(it) {
@@ -4967,6 +4981,10 @@
       }
       focusOff();
     }
+
+    const dartTripRoute = [it.r, it.r1, it.r2].find((r) => r && r.cat === "dart");
+    if (dartTripRoute) highlightDartArea(dartTripRoute.id);
+    else if (!(selected && selected.type === "route" && RBY[selected.id]?.cat === "dart")) highlightDartArea(null);
 
     if (map.getSource("tripline")) {
       map.getSource("tripline").setData({ type: "FeatureCollection", features: lineFeatures });
@@ -5897,12 +5915,44 @@
     });
   }
 
+  // ---------------------------------------------------------------- DART area highlighting
+  let activeDartHlKey = null;
+  function highlightDartArea(slugOrRoute) {
+    if (!map || !map.getSource("darthl")) return;
+    if (specialFilter === "snow" || !slugOrRoute || !enabled.has("dart")) {
+      if (activeDartHlKey !== null) {
+        activeDartHlKey = null;
+        map.getSource("darthl").setData(empty);
+      }
+      return;
+    }
+    const raw = String(slugOrRoute).trim();
+    const cleanNum = raw.replace(/^metro-/, "");
+    const slug = raw.startsWith("metro-") ? raw : ("metro-" + raw);
+    const key = slug;
+    if (activeDartHlKey === key) return;
+    activeDartHlKey = key;
+    const feats = (AREAS && AREAS.dart && AREAS.dart.features) || [];
+    const matched = feats.filter((f) => {
+      const p = f.properties || {};
+      return p.slug === slug || p.route === cleanNum || p.slug === raw || p.route === raw;
+    });
+    map.getSource("darthl").setData({
+      type: "FeatureCollection",
+      features: matched
+    });
+  }
+
   // ---------------------------------------------------------------- layer toggles
   let bikeFacilityFilter = null;
   function applyLayerToggles() {
     if (!map) return;
+    const dartOn = enabled.has("dart") && specialFilter !== "snow";
+    ["dart-fill", "dart-line", "dart-hl-fill", "dart-hl-casing", "dart-hl-line"].forEach((id) => {
+      if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", dartOn ? "visible" : "none");
+    });
+    if (!dartOn) highlightDartArea(null);
     const vis = (key, ids) => ids.forEach((id) => map.getLayer(id) && map.setLayoutProperty(id, "visibility", enabled.has(key) ? "visible" : "none"));
-    vis("dart", ["dart-fill", "dart-line"]);
     vis("access", ["access-fill", "access-line"]);
     vis("flex", ["flex", "flex-fill", "flex-line"]);
     const trailLayers = ["trail-case", "trail-pbl", "trail-greenway", "trail-lane", "trail-sharrow", "trail-dash", "trail-labels"];
@@ -6147,6 +6197,29 @@
           tipShow("trail:" + tp.name, `<span class="tt-trail">${icon} <b>${esc(tp.name)}</b>${tp.length_mi ? ` · ${tp.length_mi} mi` : ""}<br><span style="color:${badgeColor};font-weight:700">${esc(tp.cat_name || "Bike Facility")}</span>${tp.surface === "unpaved" ? " · Gravel" : " · Paved"} · Tap for details</span>`, "", ev(e));
           return;
         }
+        if (enabled.has("dart") && specialFilter !== "snow") {
+          const dartHits = map.queryRenderedFeatures(e.point, { layers: ["dart-fill"] });
+          if (dartHits.length) {
+            const df = dartHits[0];
+            const dp = df.properties || {};
+            const rSlug = dp.slug || (dp.route ? ("metro-" + dp.route) : null);
+            const r = rSlug ? RBY[rSlug] : null;
+            cur = { kind: "dart", id: rSlug || dp.route };
+            map.getCanvas().style.cursor = "pointer";
+            highlightDartArea(rSlug || dp.route);
+            if (r && !(selected && selected.type === "route")) {
+              focusRoute(r);
+            }
+            tipShow(
+              "dart:" + (rSlug || dp.route),
+              (r ? badgeHTML(r) : "") +
+              `<span class="tt"><b>Dial-a-Ride (DART) Area · Route ${esc(dp.route)}</b>${r ? `<br>${esc(r.name)}` : ""}<br><span style="color:var(--accent);font-weight:600">Flexible on-demand service area · Tap to explore</span></span>`,
+              "",
+              ev(e)
+            );
+            return;
+          }
+        }
         cur = null;
         map.getCanvas().style.cursor = "";
         tipHide();
@@ -6251,6 +6324,7 @@
       const area = map.queryRenderedFeatures(e.point, { layers: ["flex-fill", "dart-fill", "access-fill"].filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none") });
       if (area.length) {
         const f = area.find((a) => a.layer.id === "flex-fill") || area.find((a) => a.layer.id === "dart-fill") || area[0];
+        if (f.layer.id === "dart-fill") highlightDartArea(f.properties.slug || f.properties.route);
         const html = f.layer.id === "flex-fill" ? flexHTML(f.properties) : f.layer.id === "dart-fill"
           ? `<div class="pop"><h3>Dial-a-Ride area · route ${esc(f.properties.route)}</h3><p>Inside this area the DART bus can leave its regular path to pick you up or drop you off. Ask King County Metro to arrange an off-route trip.</p>${f.properties.slug && RBY[f.properties.slug] ? routeRows([RBY[f.properties.slug]]) : ""}</div>`
           : `<div class="pop"><h3>Access paratransit (approximate)</h3><p>Access serves riders with disabilities who can't use fixed-route buses, within ¾ mile of Metro's regular routes while they run. Riders apply for eligibility and book trips ahead. This shading uses the ¾-mile rule around all-day routes.</p></div>`;
@@ -6316,6 +6390,11 @@
     if (!map || !map.getSource("hover")) return;
     hoverFade(hSlot, 0, 190);
     popOut("hov", () => { if (!hoverKey) map.getSource("hoverstops").setData(fc([])); });
+    if (selected && selected.type === "route" && RBY[selected.id]?.cat === "dart") {
+      highlightDartArea(selected.id);
+    } else {
+      highlightDartArea(null);
+    }
   }
   // Hovering shows whole routes, never just a piece: the route whose strand is under the
   // pointer (or every boat on a crossing). It's drawn bold in its own lane, right over its line,
@@ -6325,6 +6404,9 @@
     clearTimeout(hoverTimer);
     if (hoverKey === key) return;
     hoverKey = key; hoverRoutes = []; queuedRoute = null; hovStopsKey = "";
+    if (!(selected && selected.type === "route" && RBY[selected.id]?.cat === "dart")) {
+      highlightDartArea(null);
+    }
     const line = { type: "Feature", properties: { ...f.properties, c: keyColor(f.properties.cat) }, geometry: f.geometry };
     const next = 1 - hSlot;
     map.getSource(HOVER_SLOTS[next]).setData(fc([line]));
@@ -6335,6 +6417,12 @@
   function focusRoutes(routes, again = false, { glow = true, widthScale = 1.85 } = {}) {
     routes = (routes || []).filter((r) => r && LINEIDX[r.id] != null);
     if (!routes.length) return;
+    const dartR = routes.find((r) => r.cat === "dart");
+    if (dartR) {
+      highlightDartArea(dartR.id);
+    } else if (!(selected && selected.type === "route" && RBY[selected.id]?.cat === "dart")) {
+      highlightDartArea(null);
+    }
     clearTimeout(hoverTimer);
     const key = "r:" + routes.map((r) => r.id).join(",") + (glow ? ":g" : "");
     if (key === hoverKey && !again) return;
@@ -6574,6 +6662,7 @@
           stops: { type: "geojson", data: empty },
           trails: { type: "geojson", data: (AREAS && AREAS.trails) || empty, tolerance: 0.5 },
           dart: { type: "geojson", data: AREAS.dart },
+          darthl: { type: "geojson", data: empty },
           access: { type: "geojson", data: AREAS.access },
           flex: { type: "geojson", data: AREAS.flex },
           flexlabels: { type: "geojson", data: AREAS.flexLabels || empty },
