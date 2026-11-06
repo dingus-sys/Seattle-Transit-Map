@@ -4846,8 +4846,15 @@
   // pointing at a route in a list shows it on the map
   function previewOnHover(b) {
     const preview = () => { if (!(selected && selected.type === "route")) focusRoute(RBY[b.dataset.route]); };
+    const revert = () => {
+      if (panelView === "corridor" && corridorRoutes.length) {
+        focusRoutes(corridorRoutes.map((id) => RBY[id]));
+      } else {
+        setHover(null);
+      }
+    };
     b.addEventListener("mouseenter", preview); b.addEventListener("focus", preview);
-    b.addEventListener("mouseleave", () => setHover(null)); b.addEventListener("blur", () => setHover(null));
+    b.addEventListener("mouseleave", revert); b.addEventListener("blur", revert);
   }
   function openPopup(lngLat, html, maxWidth = "300px") {
     closePopup();
@@ -4946,7 +4953,11 @@
             tipShow("tag:" + tg.item.r, `<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}</span>`, "", ev(e, 14));
           } else {
             cur = { kind: "tag", id: "more" };
-            setHover(null);
+            if (!(selected && selected.type === "route") && tg.item.more?.length) {
+              focusRoutes(tg.item.more.map((i) => LINES[i]));
+            } else {
+              setHover(null);
+            }
             tipShow("more:" + tg.item.more.join("."), `<span class="tip-badges">${tg.item.more.slice(0, 12).map((i) => badgeHTML(LINES[i])).join("")}</span>`, "", ev(e, 14));
           }
           return;
@@ -4972,8 +4983,8 @@
           cur = { kind: "line", id: ln.r, cat: ln.f.properties.cat };
           map.getCanvas().style.cursor = "pointer";
           if (!(selected && selected.type === "route")) {
-            if (ln.routes.length > 1) focusCorridor(ln.f);
-            else focusRoutes(ln.routes);
+            if (ln.routes && ln.routes.length) focusRoutes(ln.routes);
+            else if (ln.f) focusCorridor(ln.f);
           }
           const rs = ln.routes, r = rs[0];
           const nal = rs.length === 1 ? routeAlerts(rs[0].id) : [];
@@ -5069,7 +5080,8 @@
       const rs = routesAt(e.point, isNarrow() ? 10 : 6);
       if (rs.length === 1) { selectRoute(rs[0].id, { fit: false }); return; }
       if (rs.length > 1) {
-        focusOff(); showCorridor(rs);
+        showCorridor(rs);
+        focusRoutes(rs);
         return;
       }
       const trailsHit = map.queryRenderedFeatures([[e.point.x - 7, e.point.y - 7], [e.point.x + 7, e.point.y + 7]], {
@@ -5092,6 +5104,13 @@
           ? `<div class="pop"><h3>Dial-a-Ride area · route ${esc(f.properties.route)}</h3><p>Inside this area the DART bus can leave its regular path to pick you up or drop you off. Ask King County Metro to arrange an off-route trip.</p>${f.properties.slug && RBY[f.properties.slug] ? routeRows([RBY[f.properties.slug]]) : ""}</div>`
           : `<div class="pop"><h3>Access paratransit (approximate)</h3><p>Access serves riders with disabilities who can't use fixed-route buses, within ¾ mile of Metro's regular routes while they run. Riders apply for eligibility and book trips ahead. This shading uses the ¾-mile rule around all-day routes.</p></div>`;
         openPopup(e.lngLat, html, "290px");
+        return;
+      }
+      if (panelView === "corridor") {
+        panelView = "home";
+        corridorRoutes = [];
+        focusOff();
+        showHome();
         return;
       }
       if (selected) clearSelection();
