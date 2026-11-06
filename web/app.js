@@ -87,7 +87,7 @@
       { key: "water", cats: ["watertaxi", "ferry"], name: "Water Taxi & ferries", desc: "King County, WSF and Kitsap", on: true },
     ] },
     { title: "Trails", items: [
-      { key: "trails", cats: [], name: "Regional bike trails", desc: "Burke-Gilman, Eastrail, 520, I-90, river & valley trails", on: true, area: "trails" },
+      { key: "trails", cats: [], name: "Bike network & trails", desc: "Seattle bike network, protected bike lanes, greenways & regional trails", on: true, area: "trails" },
     ] },
     { title: "On demand", items: [
       { key: "dart", cats: ["dart"], name: "Dial-a-Ride (DART)", desc: "Can leave its route to pick you up", on: true, area: "dart" },
@@ -459,6 +459,9 @@
   function areaLayers(P) {
     const acc = theme === "dark" ? "#bf9cf5" : "#7b5cc4";
     const trailCol = theme === "dark" ? "#2dd4bf" : "#059669";
+    const trailGreenway = theme === "dark" ? "#34d399" : "#10b981";
+    const trailLane = theme === "dark" ? "#14b8a6" : "#0d9488";
+    const trailSharrow = theme === "dark" ? "#2dd4bf" : "#059669";
     const trailHalo = theme === "dark" ? "#090d16" : "#ffffff";
     const trailText = theme === "dark" ? "#5eead4" : "#065f46";
     const trailCase = theme === "dark" ? "#0f172a" : "#ffffff";
@@ -471,29 +474,62 @@
       { id: "flex-fill", type: "fill", source: "flex", paint: { "fill-color": FLEX[theme], "fill-opacity": theme === "dark" ? 0.12 : 0.09 } },
       { id: "flex-line", type: "line", source: "flex", paint: { "line-color": FLEX[theme], "line-opacity": 0.85,
         "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1, 13, 2, 16, 2.6] } },
+      // 1. Casing for multi-use trails and protected bike lanes
       { id: "trail-case", type: "line", source: "trails",
+        filter: ["in", ["get", "facility"], ["literal", ["trail", "pbl"]]],
         paint: {
           "line-color": trailCase, "line-opacity": 0.85,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 9, 2.8, 12, 4.2, 15, 6, 17, 7.5],
+          "line-width": ["interpolate", ["linear"], ["zoom"], 9, 2.6, 12, 3.8, 15, 5.5, 17, 7.0],
         } },
-      { id: "trail-line", type: "line", source: "trails", filter: ["!=", ["get", "surface"], "unpaved"],
+      // 2. Multi-use trails and Protected Bike Lanes (PBL) - solid emerald line
+      { id: "trail-pbl", type: "line", source: "trails",
+        filter: ["all", ["in", ["get", "facility"], ["literal", ["trail", "pbl"]]], ["!=", ["get", "surface"], "unpaved"]],
         paint: {
           "line-color": trailCol,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1.5, 12, 2.4, 15, 3.4, 17, 4.5],
+          "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1.5, 12, 2.5, 15, 3.6, 17, 4.8],
           "line-opacity": 0.95,
         } },
-      { id: "trail-dash", type: "line", source: "trails", filter: ["==", ["get", "surface"], "unpaved"],
+      // 3. Neighborhood Greenways & Healthy Streets - distinct green line with subtle dash
+      { id: "trail-greenway", type: "line", source: "trails", minzoom: 11,
+        filter: ["==", ["get", "facility"], "greenway"],
         paint: {
-          "line-color": trailCol,
+          "line-color": trailGreenway,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 11, 1.3, 13, 2.0, 15, 3.0, 17, 4.0],
+          "line-dasharray": [4, 1.8],
+          "line-opacity": 0.9,
+        } },
+      // 4. Bicycle Lanes (Buffered, Climbing & Striped Lanes) - clean lane stroke
+      { id: "trail-lane", type: "line", source: "trails", minzoom: 11.5,
+        filter: ["==", ["get", "facility"], "lane"],
+        paint: {
+          "line-color": trailLane,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 11.5, 1.1, 13, 1.8, 15, 2.5, 17, 3.4],
+          "line-opacity": 0.88,
+        } },
+      // 5. Sharrows & Shared Streets - dotted bike green stroke
+      { id: "trail-sharrow", type: "line", source: "trails", minzoom: 13,
+        filter: ["==", ["get", "facility"], "sharrow"],
+        paint: {
+          "line-color": trailSharrow,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 13, 1.1, 15, 1.6, 17, 2.2],
+          "line-dasharray": [2, 2.5],
+          "line-opacity": 0.8,
+        } },
+      // 6. Unpaved / gravel trails
+      { id: "trail-dash", type: "line", source: "trails",
+        filter: ["==", ["get", "surface"], "unpaved"],
+        paint: {
+          "line-color": theme === "dark" ? "#fbbf24" : "#b45309",
           "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1.4, 12, 2.2, 15, 3.0, 17, 4.0],
           "line-dasharray": [2.5, 2],
           "line-opacity": 0.9,
         } },
-      { id: "trail-labels", type: "symbol", source: "trails", minzoom: 11,
+      // 7. Labels along major trails and protected bike lanes
+      { id: "trail-labels", type: "symbol", source: "trails", minzoom: 11.5,
         layout: {
           "symbol-placement": "line", "symbol-spacing": 350,
           "text-field": ["get", "name"], "text-font": F_REG,
-          "text-size": ["interpolate", ["linear"], ["zoom"], 11, 10, 13, 11, 16, 12.5],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 11.5, 9.5, 13, 10.5, 16, 12],
           "text-padding": 8, "text-optional": true,
         },
         paint: {
@@ -2647,7 +2683,7 @@
     { key: "Trains", label: "Trains", color: () => LINE[theme].link },
     { key: "Buses", label: "Buses", color: () => LINE[theme].frequent },
     { key: "On the water", label: "Ferries", color: () => LINE[theme].ferry },
-    { key: "Trails", label: "Bike trails", color: () => theme === "dark" ? "#2dd4bf" : "#059669" },
+    { key: "Trails", label: "Bike network", color: () => theme === "dark" ? "#2dd4bf" : "#059669" },
     { key: "On demand", label: "On demand", color: () => FLEX[theme] },
   ];
   const SPECIAL_FILTERS = [
@@ -2702,7 +2738,7 @@
     link: "Link light rail", rail: "Sounder & Amtrak", streetcar: "Streetcar", monorail: "Monorail",
     rapid: "RapidRide & Swift", frequent: "Frequent bus", local: "All-day bus", peak: "Rush-hour bus",
     water: "Ferries & Water Taxi", dart: "Dial-a-Ride area", flex: "Metro Flex zone", access: "Access area",
-    trails: "Regional bike trail",
+    trails: "Bike lanes, greenways & trails",
   };
   const isDefaultLayers = () => LAYERS.every((l) => enabled.has(l.key) === l.on)
     && Object.keys(SETTINGS_DEFAULT).every((k) => settings[k] === SETTINGS_DEFAULT[k]);
@@ -2865,7 +2901,7 @@
         `<button type="button" role="radio" data-v="${v}" aria-checked="${v === cur}" aria-selected="${v === cur}">${esc(t)}</button>`).join("")}<span class="seg-thumb" aria-hidden="true"></span></div></li>`;
     }).join("")}</ul>`);
     parts.push(`<p class="hint">Streets are drawn as service lines: one green line for all the frequent buses on a street, one blue line for the all-day buses, and so on, with the route numbers on tags.</p>
-      <p class="credits">Routes and schedules from the agencies' open GTFS feeds (${esc(feedText())}). DART areas and regional trails from King County GIS and regional open data; Metro Flex zones from King County Metro. Base map © OpenStreetMap contributors via OpenFreeMap.</p>`);
+      <p class="credits">Routes and schedules from the agencies' open GTFS feeds (${esc(feedText())}). DART areas and regional trails from King County GIS and regional open data; Seattle bike network from SDOT GIS; Metro Flex zones from King County Metro. Base map © OpenStreetMap contributors via OpenFreeMap.</p>`);
     const existing = body().querySelector(".layers-view");
     if (quiet && existing) existing.innerHTML = parts.join("");
     else setView(`<div class="layers-view">${parts.join("")}</div>`);
@@ -3293,7 +3329,7 @@
       for (const f of AREAS.trails.features) {
         const p = f.properties;
         if (!p || !p.name) continue;
-        searchIndex.push({ kind: "trail", id: p.name, key: `${p.name} trail bike bicycle cycling ${p.region || ""}`.toLowerCase(), f });
+        searchIndex.push({ kind: "trail", id: p.name, key: `${p.name} ${p.street || ""} ${p.cat_name || ""} trail bike bicycle cycling pbl greenway lane sharrow ${p.region || ""}`.toLowerCase(), f });
       }
     }
     for (const pr of PARK_AND_RIDES) {
@@ -3322,6 +3358,7 @@
       let score = it.kind === "route" ? 0 : it.kind === "station" ? 10 : it.kind === "pr" ? 12 : it.kind === "trail" ? 14 : it.kind === "hill" ? 16 : 20;
       if (it.kind === "route" && (it.label === q || it.r.short.toLowerCase() === q)) score -= 100;
       if (it.key.startsWith(q)) score -= 5;
+      if (it.kind === "trail" && (q.includes("bike") || q.includes("trail") || q.includes("cycle") || q.includes("cycling") || q.includes("greenway") || q.includes("pbl") || q.includes("lane"))) score -= 25;
       if (it.kind === "pr" && (q.includes("park") || q.includes("ride") || q.includes("p&r") || q.includes("garage") || q.includes("locker"))) score -= 25;
       if (it.kind === "hill" && (q.includes("hill") || q.includes("steep") || q.includes("incline") || q.includes("grade") || q.includes("slope"))) score -= 25;
       scored.push([score, it]);
@@ -3355,8 +3392,11 @@
     const mid = coords[Math.floor(coords.length / 2)];
     const p = f.properties;
     const isUnpaved = p.surface === "unpaved";
-    const html = `<div class="pop"><h3>🚲 ${esc(p.name)}</h3><p class="trail-meta"><strong>${p.length_mi ? `${p.length_mi} miles · ` : ""}${isUnpaved ? "Gravel / soft-surface trail" : "Paved multi-use trail"}</strong>${p.region ? ` · ${esc(p.region)}` : ""}</p><p>${esc(p.desc || "Regional multi-use trail for bicycling, walking, and rolling. Connects to regional transit hubs and neighborhood routes.")}</p></div>`;
-    openPopup({ lng: mid[0], lat: mid[1] }, html, "290px");
+    const catName = p.cat_name || "Bicycle Facility";
+    const icon = p.facility === "trail" ? "🚲" : p.facility === "pbl" ? "🛡️" : p.facility === "greenway" ? "🌿" : "🚲";
+    const statusBadge = p.status === "UNDERCONS" ? ` · <span class="incline-badge" style="background:#fbbf24;color:#78350f">Under Construction</span>` : "";
+    const html = `<div class="pop"><h3>${icon} ${esc(p.name)}</h3><p class="trail-meta"><strong>${esc(catName)}</strong>${p.length_mi ? ` · ${p.length_mi} miles` : ""}${isUnpaved ? " · Gravel surface" : " · Paved"}${p.region ? ` · ${esc(p.region)}` : ""}${statusBadge}</p><p>${esc(p.desc || "Seattle & Puget Sound bicycle network facility connecting transit hubs, neighborhoods, and commercial centers.")}</p></div>`;
+    openPopup({ lng: mid[0], lat: mid[1] }, html, "300px");
   }
   function selectPR(pr) {
     if (!pr) return;
@@ -3393,7 +3433,9 @@
         if (it.kind === "route") return `<button type="button" class="result${i === active ? " active" : ""}" data-i="${i}">${badgeHTML(it.r)}<span class="txt"><span class="name">${esc(routeTitle(it.r))}</span><span class="desc">${esc(it.r.name)}</span></span></button>`;
         if (it.kind === "trail") {
           const p = it.f.properties;
-          return `<button type="button" class="result${i === active ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true">🚲</span><span class="txt"><span class="name">${esc(p.name)}</span><span class="desc">${p.length_mi ? `${p.length_mi} mi · ` : ""}${p.surface === "unpaved" ? "Gravel trail" : "Paved trail"}${p.region ? ` (${esc(p.region)})` : ""}</span></span></button>`;
+          const icon = p.facility === "trail" ? "🚲" : p.facility === "pbl" ? "🛡️" : p.facility === "greenway" ? "🌿" : "🚲";
+          const cat = p.cat_name || "Bicycle Facility";
+          return `<button type="button" class="result${i === active ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true">${icon}</span><span class="txt"><span class="name">${esc(p.name)}</span><span class="desc">${esc(cat)}${p.length_mi ? ` · ${p.length_mi} mi` : ""}${p.surface === "unpaved" ? " · Gravel" : ""}${p.region ? ` (${esc(p.region)})` : ""}</span></span></button>`;
         }
         if (it.kind === "pr") {
           const pr = it.pr;
@@ -3442,7 +3484,7 @@
     vis("dart", ["dart-fill", "dart-line"]);
     vis("access", ["access-fill", "access-line"]);
     vis("flex", ["flex", "flex-fill", "flex-line"]);
-    vis("trails", ["trail-case", "trail-line", "trail-dash", "trail-labels"]);
+    vis("trails", ["trail-case", "trail-pbl", "trail-greenway", "trail-lane", "trail-sharrow", "trail-dash", "trail-labels"]);
     vis("stops", ["stops", "stop-name"]);
     vis("live", ["veh-dir", "veh-icon", "veh-label"]);
     if (enabled.has("live")) startLive(); else stopLive();
@@ -3648,13 +3690,14 @@
           return;
         }
         const trailHover = map.queryRenderedFeatures([[e.point.x - 6, e.point.y - 6], [e.point.x + 6, e.point.y + 6]], {
-          layers: ["trail-line", "trail-dash"].filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none")
+          layers: ["trail-pbl", "trail-greenway", "trail-lane", "trail-sharrow", "trail-dash"].filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none")
         });
         if (trailHover.length) {
           const tp = trailHover[0].properties;
           cur = { kind: "trail", name: tp.name };
           map.getCanvas().style.cursor = "pointer";
-          tipShow("trail:" + tp.name, `<span class="tt-trail">🚲 <b>${esc(tp.name)}</b>${tp.length_mi ? ` · ${tp.length_mi} mi` : ""}<br>${tp.surface === "unpaved" ? "Gravel trail" : "Paved trail"} · Tap for details</span>`, "", ev(e));
+          const icon = tp.facility === "trail" ? "🚲" : tp.facility === "pbl" ? "🛡️" : tp.facility === "greenway" ? "🌿" : "🚲";
+          tipShow("trail:" + tp.name, `<span class="tt-trail">${icon} <b>${esc(tp.name)}</b>${tp.length_mi ? ` · ${tp.length_mi} mi` : ""}<br>${esc(tp.cat_name || "Bike Facility")}${tp.surface === "unpaved" ? " · Gravel" : ""} · Tap for details</span>`, "", ev(e));
           return;
         }
         cur = null;
@@ -3731,13 +3774,16 @@
         return;
       }
       const trailsHit = map.queryRenderedFeatures([[e.point.x - 7, e.point.y - 7], [e.point.x + 7, e.point.y + 7]], {
-        layers: ["trail-line", "trail-dash"].filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none")
+        layers: ["trail-pbl", "trail-greenway", "trail-lane", "trail-sharrow", "trail-dash"].filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none")
       });
       if (trailsHit.length) {
         const tp = trailsHit[0].properties;
         const isUnpaved = tp.surface === "unpaved";
-        const html = `<div class="pop"><h3>🚲 ${esc(tp.name)}</h3><p class="trail-meta"><strong>${tp.length_mi ? `${tp.length_mi} miles · ` : ""}${isUnpaved ? "Gravel / soft-surface trail" : "Paved multi-use trail"}</strong>${tp.region ? ` · ${esc(tp.region)}` : ""}</p><p>${esc(tp.desc || "Regional multi-use trail for bicycling, walking, and rolling. Connects to regional transit hubs and neighborhood routes.")}</p></div>`;
-        openPopup(e.lngLat, html, "290px");
+        const catName = tp.cat_name || "Bicycle Facility";
+        const icon = tp.facility === "trail" ? "🚲" : tp.facility === "pbl" ? "🛡️" : tp.facility === "greenway" ? "🌿" : "🚲";
+        const statusBadge = tp.status === "UNDERCONS" ? ` · <span class="incline-badge" style="background:#fbbf24;color:#78350f">Under Construction</span>` : "";
+        const html = `<div class="pop"><h3>${icon} ${esc(tp.name)}</h3><p class="trail-meta"><strong>${esc(catName)}</strong>${tp.length_mi ? ` · ${tp.length_mi} miles` : ""}${isUnpaved ? " · Gravel surface" : " · Paved"}${tp.region ? ` · ${esc(tp.region)}` : ""}${statusBadge}</p><p>${esc(tp.desc || "Seattle & Puget Sound bicycle network facility connecting transit hubs, neighborhoods, and commercial centers.")}</p></div>`;
+        openPopup(e.lngLat, html, "300px");
         return;
       }
       const area = map.queryRenderedFeatures(e.point, { layers: ["flex-fill", "dart-fill", "access-fill"].filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none") });
