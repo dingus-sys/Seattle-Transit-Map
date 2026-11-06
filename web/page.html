@@ -41,6 +41,9 @@
       <div class="results glass" id="results" hidden></div>
     </div>
     <div class="dir-panel" id="dirPanel" hidden>
+      <button class="dir-back-icon-btn press" id="dirBackIcon" title="Back to all routes" type="button" aria-label="Back to all routes">
+        <svg width="12" height="18" viewBox="0 0 12 20" aria-hidden="true"><path d="M10 2 2 10l8 8" stroke="currentColor" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
       <div class="dir-inputs">
         <div class="dir-field">
           <span class="dir-dot orig" aria-hidden="true"></span>
@@ -50,16 +53,18 @@
           </button>
           <button class="dir-clear-btn" id="dirOrigClear" type="button" aria-label="Clear starting point" hidden>✕</button>
         </div>
-        <button class="dir-swap-btn press" id="dirSwap" title="Reverse directions" type="button" aria-label="Reverse directions">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4"/></svg>
-        </button>
         <div class="dir-field">
           <span class="dir-dot dest" aria-hidden="true"></span>
           <input id="dirDest" type="text" placeholder="Destination address, stop, or POI" autocomplete="off" spellcheck="false" aria-label="Destination">
           <button class="dir-clear-btn" id="dirDestClear" type="button" aria-label="Clear destination" hidden>✕</button>
         </div>
       </div>
-      <button class="dir-close-btn press" id="dirClose" title="Exit directions" type="button" aria-label="Close directions">✕</button>
+      <div class="dir-side-btns">
+        <button class="dir-swap-btn press" id="dirSwap" title="Reverse directions" type="button" aria-label="Reverse directions">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4"/></svg>
+        </button>
+        <button class="dir-close-btn press" id="dirClose" title="Exit directions" type="button" aria-label="Close directions">✕</button>
+      </div>
       <div class="dir-suggestions glass" id="dirSuggestions" hidden></div>
     </div>
     <div class="filter-bar" id="filterBar" role="group" aria-label="Show on the map"></div>

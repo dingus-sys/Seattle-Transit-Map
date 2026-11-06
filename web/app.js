@@ -5014,29 +5014,41 @@
       if (sug) sug.hidden = true;
     }
     if (!dirOrigin || !dirDest) {
-      const html = `<div class="home-view">
+      const html = `${backBtn}
+      <div class="home-view">
         <div class="planner-summary-card">
           <div class="planner-summary-title">
             <span>🗺️ Dynamic Trip Planner</span>
+            <button class="planner-reverse-btn press" id="planExitBtn" type="button">All routes</button>
           </div>
-          <p class="planner-sub">Enter a starting point and destination above, or tap a stop on the map to calculate transit routes across Puget Sound.</p>
+          ${dirOrigin ? `<p class="planner-sub" style="margin-bottom:6px"><strong>Start:</strong> ${esc(dirOrigin.isLocation ? "Your location" : dirOrigin.name)}</p>` : ""}
+          ${dirDest ? `<p class="planner-sub" style="margin-bottom:6px"><strong>Destination:</strong> ${esc(dirDest.isLocation ? "Your location" : dirDest.name)}</p>` : ""}
+          <p class="planner-sub">${!dirOrigin ? "Enter a starting point above to view transit options." : "Enter a destination above to calculate transit routes across Puget Sound."}</p>
         </div>
       </div>`;
       setView(html);
+      $("#back")?.addEventListener("click", closeTripPlanner);
+      $("#planExitBtn")?.addEventListener("click", closeTripPlanner);
       return;
     }
 
     if (!currentItineraries.length) {
-      const html = `<div class="home-view">
+      const html = `${backBtn}
+      <div class="home-view">
         <div class="planner-summary-card">
           <div class="planner-summary-title">
             <span>No transit routes found</span>
-            <button class="planner-reverse-btn press" id="planRevBtn" type="button">Reverse ⇄</button>
+            <div style="display:flex;gap:6px">
+              <button class="planner-reverse-btn press" id="planExitBtn" type="button">All routes</button>
+              <button class="planner-reverse-btn press" id="planRevBtn" type="button">Reverse ⇄</button>
+            </div>
           </div>
           <p class="planner-sub">No direct or 1-transfer transit connection was found between these points. Try selecting a nearby arterial stop or increasing walk distance.</p>
         </div>
       </div>`;
       setView(html);
+      $("#back")?.addEventListener("click", closeTripPlanner);
+      $("#planExitBtn")?.addEventListener("click", closeTripPlanner);
       $("#planRevBtn")?.addEventListener("click", swapDirections);
       return;
     }
@@ -5222,7 +5234,8 @@
     const googleUrl = `https://www.google.com/maps/dir/?api=1&origin=${dirOrigin.lat},${dirOrigin.lon}&destination=${dirDest.lat},${dirDest.lon}&travelmode=transit`;
 
     const isSaved = isFavTrip(dirOrigin, dirDest);
-    const html = `<div class="home-view">
+    const html = `${backBtn}
+    <div class="home-view">
       <div class="planner-summary-card">
         <div class="planner-summary-title">
           <span>${cur.totalDuration} min · ${currentItineraries.length} route option${currentItineraries.length > 1 ? "s" : ""}</span>
@@ -5255,6 +5268,7 @@
     </div>`;
 
     setView(html);
+    $("#back")?.addEventListener("click", closeTripPlanner);
     $("#planRevBtn")?.addEventListener("click", swapDirections);
     $("#planFavBtn")?.addEventListener("click", () => {
       toggleFavTrip(dirOrigin, dirDest, cur);
@@ -5755,16 +5769,19 @@
       openTripPlanner({});
     });
     $("#dirClose")?.addEventListener("click", closeTripPlanner);
+    $("#dirBackIcon")?.addEventListener("click", closeTripPlanner);
     $("#dirSwap")?.addEventListener("click", swapDirections);
     $("#dirOrigLoc")?.addEventListener("click", setOriginToCurrentLocation);
     $("#dirOrigClear")?.addEventListener("click", () => {
       dirOrigin = null;
+      clearTripMap();
       updateDirInputs();
       focusDirField("orig");
       renderTripPlanView();
     });
     $("#dirDestClear")?.addEventListener("click", () => {
       dirDest = null;
+      clearTripMap();
       updateDirInputs();
       focusDirField("dest");
       renderTripPlanView();
@@ -5785,7 +5802,17 @@
           }
         }, 180);
       });
-      oInput.addEventListener("input", () => renderDirSuggestions(oInput.value));
+      oInput.addEventListener("input", () => {
+        if (!oInput.value.trim()) {
+          dirOrigin = null;
+          $("#dirOrigClear") && ($("#dirOrigClear").hidden = true);
+          clearTripMap();
+          renderTripPlanView();
+        } else {
+          $("#dirOrigClear") && ($("#dirOrigClear").hidden = false);
+        }
+        renderDirSuggestions(oInput.value);
+      });
       oInput.addEventListener("keydown", (e) => {
         if (e.key === "Enter") {
           e.preventDefault();
@@ -5808,7 +5835,17 @@
           }
         }, 180);
       });
-      dInput.addEventListener("input", () => renderDirSuggestions(dInput.value));
+      dInput.addEventListener("input", () => {
+        if (!dInput.value.trim()) {
+          dirDest = null;
+          $("#dirDestClear") && ($("#dirDestClear").hidden = true);
+          clearTripMap();
+          renderTripPlanView();
+        } else {
+          $("#dirDestClear") && ($("#dirDestClear").hidden = false);
+        }
+        renderDirSuggestions(dInput.value);
+      });
       dInput.addEventListener("keydown", (e) => {
         if (e.key === "Enter") {
           e.preventDefault();
