@@ -660,6 +660,7 @@ table.sched td.good { color: var(--good); font-weight: 650; }
 .stat-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .stat-dot.good { background: var(--good); }
 .stat-dot.delay { background: #ff9500; }
+.stat-dot.late { background: #ff3b30; }
 .live-hud-row {
   display: flex; align-items: center; justify-content: space-between;
   padding-top: 8px; border-top: .5px solid var(--hairline); font-size: 13px; font-weight: 500;

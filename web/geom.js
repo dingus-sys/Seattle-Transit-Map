@@ -542,12 +542,13 @@ const KCTMGeom = (() => {
     // A shared street is one readable band, growing gently with the number of routes.
     const GROW = (n) => Math.min(2.6, 1 + 0.4 * Math.log2(Math.max(1, n)));
 
-    // One view. p: { z (zoom step), zNow, u (px per line unit), capU, keyOn {key: bool}, selIdx,
+    // One view. p: { z (zoom step), zNow, u (px per line unit), capU, keyOn {key: bool}, selIdx, routeFilter,
     //   view [x0, y0, x1, y1] in meters, tags { gap, every, busZ }, theme ("l"/"d"), colors {key: css} }
     function build(p) {
       // z: the zoom the lanes are laid out for (follows the map closely while it zooms); zs: its
       // quarter step, for what should stay put while zooming (simplified shapes, tag spacing)
-      const { z, zNow, u, capU, keyOn, selIdx } = p, zs = p.zs != null ? p.zs : z;
+      const { z, zNow, u, capU, keyOn, selIdx, routeFilter } = p, zs = p.zs != null ? p.zs : z;
+      const filterSet = routeFilter && routeFilter.length ? new Set(routeFilter) : null;
       // every feature carries zu: pixels per line unit at zoom 0 for this layout, so the map can
       // size lines from the same zoom their lanes were laid out for (no gaps opening between them
       // while you zoom, before the next layout arrives)
@@ -564,10 +565,20 @@ const KCTMGeom = (() => {
       const mpp = MPP0 / 2 ** zs;
       for (const E of EDGES) {
         if (E.bb[2] < V[0] || E.bb[0] > V[2] || E.bb[3] < V[1] || E.bb[1] > V[3]) { lay[E.k] = null; continue; }
-        const keys = E.order.filter((v) => keyOn[v] || (v === selKey && E.l.includes(selIdx)));
+        const hasRoute = (v) => {
+          if (!filterSet) return true;
+          const list = E.byKey.get(v);
+          return list && list.some((i) => filterSet.has(i));
+        };
+        const keys = E.order.filter((v) => (keyOn[v] && hasRoute(v)) || (v === selKey && E.l.includes(selIdx)));
         if (!keys.length) { lay[E.k] = null; continue; }
         // routes of each corridor here, in lane order (only the selected one when its type is hidden)
-        const rl = new Map(keys.map((v) => [v, keyOn[v] ? E.byKey.get(v) : [selIdx]]));
+        const rl = new Map(keys.map((v) => {
+          let list = keyOn[v] ? (E.byKey.get(v) || []) : [selIdx];
+          if (filterSet) list = list.filter((i) => filterSet.has(i) || i === selIdx);
+          if (!list.length && v === selKey && E.l.includes(selIdx)) list = [selIdx];
+          return [v, list];
+        }));
         // how wide each corridor is: a street line grows with the number of routes on it (two
         // routes, twice as wide; then more slowly), each route a strand of it. Trains sharing
         // track are one line split lengthwise (1 Line green on one half, 2 Line blue on the other).
@@ -606,6 +617,7 @@ const KCTMGeom = (() => {
       //    side of the wider line
       const cons = [], byEdge = new Map();
       for (const [i, e1, s1, e2, s2] of ROUTE_PAIRS) {
+        if (filterSet && !filterSet.has(i) && i !== selIdx) continue;
         const A = lay[e1], B = lay[e2];
         if (!A || !B || !A.sp.has(i) || !B.sp.has(i)) continue;
         const v = VKEY(LINES[i].cat);
@@ -692,7 +704,13 @@ const KCTMGeom = (() => {
         const Lo = lay[E.k];
         if (!Lo || Lo.collapsed) continue;
         const rs = [];
-        for (const v of Lo.keys) if (labelKey(v) && keyOn[v]) for (const i of E.byKey.get(v)) rs.push(i);
+        for (const v of Lo.keys) {
+          if (labelKey(v) && keyOn[v]) {
+            for (const i of (Lo.rl.get(v) || [])) {
+              if (!filterSet || filterSet.has(i) || i === selIdx) rs.push(i);
+            }
+          }
+        }
         if (!rs.length) continue;
         rs.sort(tagOrder);
         tagKey.set(E.k, { k: `${p.theme}:${rs.join(".")}`, p: CAT[VKEY(LINES[rs[0]].cat)].prio, rs });

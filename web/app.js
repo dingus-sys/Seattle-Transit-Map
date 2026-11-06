@@ -176,6 +176,35 @@
   let selected = null;
 
   const enabledCat = (cat) => LAYERS.some((l) => l.cats.includes(cat) && enabled.has(l.key));
+
+  let specialFilter = null; // null | "nightowl" | "snow"
+  const NIGHT_OWL_IDS = new Set([
+    "sound-transit-1-line", "sound-transit-2-line",
+    "metro-a-line", "metro-c-line", "metro-d-line", "metro-e-line", "metro-g-line", "metro-h-line",
+    "metro-1", "metro-2", "metro-3", "metro-4", "metro-5", "metro-7", "metro-8", "metro-11",
+    "metro-14", "metro-21", "metro-36", "metro-40", "metro-44", "metro-48", "metro-49", "metro-62",
+    "metro-70", "metro-120", "metro-124", "metro-160",
+    "ct-swift-blue", "ct-swift-green", "ct-swift-orange"
+  ]);
+  const isNightOwl = (r) => !!(r && (
+    NIGHT_OWL_IDS.has(r.id) ||
+    (r.sched?.weekday?.late_n >= 3 && r.cat !== "peak") ||
+    (r.sched?.weekday?.span_h >= 21.5)
+  ));
+
+  const SNOW_IDS = new Set([
+    "sound-transit-1-line", "sound-transit-2-line", "sound-transit-t-line",
+    "metro-a-line", "metro-b-line", "metro-c-line", "metro-d-line", "metro-e-line", "metro-f-line", "metro-g-line", "metro-h-line",
+    "metro-1", "metro-2", "metro-3", "metro-4", "metro-7", "metro-8", "metro-10", "metro-11", "metro-12", "metro-14",
+    "metro-21", "metro-24", "metro-27", "metro-28", "metro-31", "metro-32", "metro-33", "metro-36", "metro-40",
+    "metro-44", "metro-48", "metro-49", "metro-60", "metro-62", "metro-65", "metro-67", "metro-70",
+    "metro-101", "metro-106", "metro-124", "metro-131", "metro-132", "metro-150", "metro-160", "metro-165",
+    "metro-181", "metro-182", "metro-187", "metro-255", "metro-271", "metro-345", "metro-348", "metro-372",
+    "st-512", "st-522", "st-545", "st-550", "st-554",
+    "ct-swift-blue", "ct-swift-green", "ct-swift-orange"
+  ]);
+  const isSnowRoute = (r) => !!(r && (SNOW_IDS.has(r.id) || r.cat === "link" || r.cat === "rapidride"));
+  const routeMatchesFilter = (r) => (!specialFilter ? true : specialFilter === "nightowl" ? isNightOwl(r) : specialFilter === "snow" ? isSnowRoute(r) : true);
   const keyColor = (key, th = theme) => LINE[th][key] || LINE[th].local;
   const tagColor = (r, th = theme) => LINE[th][dkey(r)] || LINE[th].local;
   const lum = (hex) => { const n = parseInt(hex.slice(1), 16), c = [n >> 16, (n >> 8) & 255, n & 255].map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
@@ -760,9 +789,25 @@
     const z = lastZ = Math.max(9, Math.min(19, Math.round(zNow * 50) / 50));
     const u = interp(UNIT, z) * THICK[settings.thickness];
     const tier = tierFor(zNow);
+    let routeFilter = null;
+    if (specialFilter === "nightowl") {
+      routeFilter = LINES.map((r, i) => (isNightOwl(r) ? i : -1)).filter((i) => i >= 0);
+    } else if (specialFilter === "snow") {
+      routeFilter = LINES.map((r, i) => (isSnowRoute(r) ? i : -1)).filter((i) => i >= 0);
+    }
+    const anyCatOn = LAYERS.some((l) => enabled.has(l.key) && KEY_NAME[l.key]);
     const keyOn = {};
-    for (const k of Object.keys(CAT)) keyOn[k] = (k === "sounder" ? enabledCat("sounder") || enabledCat("amtrak") : enabledCat(CAT[k].base || k)) && CAT[k].tier <= tier;
-    const p = { z, zs, zNow, u, capU: interp(CAP_PX, z) / u, keyOn,
+    for (const k of Object.keys(CAT)) {
+      const catBase = CAT[k].base || k;
+      const standardOn = (k === "sounder" ? enabledCat("sounder") || enabledCat("amtrak") : enabledCat(catBase)) && CAT[k].tier <= tier;
+      if (specialFilter && !anyCatOn) {
+        const catMatches = (routeFilter || []).some((i) => LINES[i] && (dkey(LINES[i]) === k || LINES[i].cat === k || LINES[i].cat === catBase));
+        keyOn[k] = catMatches;
+      } else {
+        keyOn[k] = standardOn;
+      }
+    }
+    const p = { z, zs, zNow, u, capU: interp(CAP_PX, z) / u, keyOn, routeFilter,
       selIdx: selected && selected.type === "route" ? LINEIDX[selected.id] : -1,
       view: (builtView = viewBox(0.45)), tags: tagSpacing(TAG_DENSITY[settings.tags], zNow), theme: theme[0], colors: netColors(theme),
       wscale: minorScale(zNow) };
@@ -864,8 +909,14 @@
   // ---------------------------------------------------------------- data → GeoJSON
   function stationsGeoJSON() {
     const majorCats = new Set(["link", "sounder", "amtrak", "monorail"]);
-    return { type: "FeatureCollection", features: STOPS.stations.filter((s) => s.routes.some((id) => RBY[id] && enabledCat(RBY[id].cat))).map((s) => {
-      const rs = s.routes.map((id) => RBY[id]).filter(Boolean);
+    const anyCatOn = LAYERS.some((l) => enabled.has(l.key) && KEY_NAME[l.key]);
+    return { type: "FeatureCollection", features: STOPS.stations.filter((s) => s.routes && s.routes.some((id) => {
+      const r = RBY[id];
+      if (!r) return false;
+      if (specialFilter && !routeMatchesFilter(r)) return false;
+      return !anyCatOn || enabledCat(r.cat);
+    })).map((s) => {
+      const rs = s.routes.map((id) => RBY[id]).filter((r) => r && (!specialFilter || routeMatchesFilter(r)));
       const cats = new Set(rs.map((r) => r.cat));
       // the T Line in Tacoma is short and its stations close together: zoomed out they'd be a
       // cluster of dots and names on a tiny line, so its stations only show once you're close
@@ -886,7 +937,18 @@
     }) };
   }
   function stopsGeoJSON() {
-    return { type: "FeatureCollection", features: STOPS.stops.map((s) => ({ type: "Feature", properties: { id: s.id, name: s.name },
+    const anyCatOn = LAYERS.some((l) => enabled.has(l.key) && KEY_NAME[l.key]);
+    const list = STOPS.stops.filter((s) => {
+      if (!s.routes) return true;
+      if (!specialFilter && !anyCatOn) return false;
+      return s.routes.some((id) => {
+        const r = RBY[id];
+        if (!r) return false;
+        if (specialFilter && !routeMatchesFilter(r)) return false;
+        return !anyCatOn || enabledCat(r.cat);
+      });
+    });
+    return { type: "FeatureCollection", features: list.map((s) => ({ type: "Feature", properties: { id: s.id, name: s.name },
       geometry: { type: "Point", coordinates: [s.lon, s.lat] } })) };
   }
   function maskGeoJSON() {
@@ -1585,10 +1647,12 @@
     const feats = [], markerGrid = new Map(), spacing = 38;
     const priority = (v) => v.r ? CAT[dkey(v.r)]?.prio ?? 99 : 99;
     const ordered = sel ? list : list.slice().sort((a, b) => Number(!!a.est) - Number(!!b.est) || priority(a) - priority(b) || a.id.localeCompare(b.id));
+    const anyCatOn = LAYERS.some((l) => enabled.has(l.key) && KEY_NAME[l.key]);
     for (const v of ordered) {
       const r = v.r;
       if (!r || LINEIDX[r.id] == null) continue;
-      if (sel ? sel !== r.id : (!enabledCat(r.cat) || CAT[dkey(r)].tier > tier)) continue;
+      if (specialFilter && !routeMatchesFilter(r)) continue;
+      if (sel ? sel !== r.id : ((anyCatOn && !enabledCat(r.cat)) || CAT[dkey(r)].tier > tier)) continue;
       if (CAT[dkey(r)].group !== "water" && !nearView(v.pos)) continue;
       const c = tagColor(r);
       const [pos, b] = onLine(r, v.pos, v.b == null ? -1 : v.b);
@@ -1633,13 +1697,23 @@
   }
   setInterval(() => { if (map && enabled.has("live") && !document.hidden && !map.isMoving()) renderVehicles(); }, 1000);
 
-  // "3 min late" / "On time" / "2 min early" for a live vehicle, when its agency predicts it
+  // Live vehicle status: early (< -60s), on schedule (< 3m), delayed (3–7m), late (> 7m)
   function vehicleStatus(v) {
     const st = v && live.status.get(v.agency + "_" + plainId(v.vid));
     if (!st || !st.predicted || Date.now() - st.got > 10 * 60000) return null;
-    const m = Math.round(Math.abs(st.dev) / 60);
-    if (m === 0) return { text: "On time", cls: "ok" };
-    return st.dev > 0 ? { text: `${m} min late`, cls: m >= 5 ? "late" : "slow" } : { text: `${m} min early`, cls: "early" };
+    const dev = st.dev;
+    if (dev <= -60) {
+      const m = Math.round(Math.abs(dev) / 60);
+      return { text: `${m} min early`, cls: "early" };
+    }
+    if (dev < 180) {
+      return { text: "On time (< 3m)", cls: "ok" };
+    }
+    const m = Math.round(dev / 60);
+    if (dev < 420) {
+      return { text: `${m} min delayed (3–7m)`, cls: "slow" };
+    }
+    return { text: `${m} min late (> 7m)`, cls: "late" };
   }
   // "Standing room only · 48 of 60" — how busy a vehicle is, from its own report if it carries
   // one, otherwise from its agency's status report. Riders' counts come only from the REST feed.
@@ -2434,27 +2508,6 @@
     </div>`;
   }
 
-  const NIGHT_OWL_IDS = new Set([
-    "sound-transit-1-line", "metro-a-line", "metro-c-line", "metro-d-line", "metro-e-line", "metro-h-line",
-    "metro-3", "metro-4", "metro-7", "metro-11", "metro-36", "metro-44", "metro-48", "metro-49",
-    "metro-70", "metro-120", "metro-124", "metro-160"
-  ]);
-  const isNightOwl = (r) => !!(r && (NIGHT_OWL_IDS.has(r.id) || (r.sched?.weekday?.late_n >= 2 && r.cat !== "peak") || (r.sched?.weekday?.span_h >= 21.5)));
-
-  const SNOW_IDS = new Set([
-    "sound-transit-1-line", "sound-transit-2-line", "metro-a-line", "metro-b-line", "metro-c-line",
-    "metro-d-line", "metro-e-line", "metro-f-line", "metro-h-line", "metro-3", "metro-4", "metro-7",
-    "metro-8", "metro-10", "metro-11", "metro-12", "metro-21", "metro-24", "metro-27", "metro-28",
-    "metro-31", "metro-32", "metro-33", "metro-36", "metro-40", "metro-44", "metro-48", "metro-49",
-    "metro-60", "metro-62", "metro-65", "metro-67", "metro-70", "metro-101", "metro-106", "metro-124",
-    "metro-131", "metro-132", "metro-150", "metro-160", "metro-165", "metro-181", "metro-182",
-    "metro-187", "metro-255", "metro-271", "metro-345", "metro-348", "metro-372", "st-512",
-    "st-522", "st-545", "st-550", "st-554"
-  ]);
-  const isSnowRoute = (r) => !!(r && (SNOW_IDS.has(r.id) || r.cat === "link" || r.cat === "rapidride"));
-
-  let specialFilter = null; // null | "nightowl" | "snow"
-
   // Filter bar: one chip per kind of service + special filters (Night Owl, Snow)
   const FILTERS = [
     { key: "Trains", label: "Trains", color: () => LINE[theme].link },
@@ -2485,6 +2538,9 @@
         const k = b.dataset.f;
         specialFilter = specialFilter === k ? null : k;
         renderFilterBar();
+        refreshStations();
+        rebuild();
+        renderLive();
         showHome(true);
         return;
       }
@@ -2499,6 +2555,7 @@
       }
       store.set("layers2", [...enabled]);
       applyLayerToggles();
+      renderLive();
       if (!selected) showHome(true);
     });
   }
@@ -3068,7 +3125,11 @@
     const p = f.properties, E = EDGES[p.e];
     if (p.r >= 0) return [p.r];
     if (!E) return [];
-    return (E.layer === "s" ? E.l : E.byKey.get(p.cat) || []).filter((i) => lastParams?.keyOn[dkey(LINES[i])]);
+    return (E.layer === "s" ? E.l : E.byKey.get(p.cat) || []).filter((i) => {
+      if (lastParams && !lastParams.keyOn[dkey(LINES[i])]) return false;
+      if (lastParams?.routeFilter && !lastParams.routeFilter.includes(i)) return false;
+      return true;
+    });
   }
   // Include all visible services sharing a street, so a narrow parallel band is easy to find too.
   function routesAt(point, r = 6) {
@@ -3803,17 +3864,20 @@
   }
 
   function updateLiveHudStats() {
-    let onTime = 0, late = 0;
+    let onTime = 0, delayed = 0, late = 0;
     if (live && live.status) {
       for (const st of live.status.values()) {
         if (st.dev != null) {
-          if (st.dev >= 180) late++; else onTime++;
+          if (st.dev < 180) onTime++;
+          else if (st.dev < 420) delayed++;
+          else late++;
         }
       }
     }
-    const statOn = $("#statOnTime"), statLt = $("#statLate");
-    if (statOn) statOn.textContent = onTime ? `${onTime} on schedule` : "Fleet active";
-    if (statLt) statLt.textContent = late ? `${late} delayed (>3m)` : "No major delays";
+    const statOn = $("#statOnTime"), statDl = $("#statDelayed"), statLt = $("#statLate");
+    if (statOn) statOn.textContent = onTime ? `${onTime} on schedule (< 3m)` : "Fleet active (< 3m)";
+    if (statDl) statDl.textContent = delayed ? `${delayed} delayed (3–7m)` : "0 delayed (3–7m)";
+    if (statLt) statLt.textContent = late ? `${late} late (> 7m)` : "0 major delay (> 7m)";
   }
 
   function updateLiveHud() {
