@@ -2123,6 +2123,29 @@
     popIn("hl", 1.8);
   }
 
+  function highlightStopById(id) {
+    if (!id) { highlightStop(null); return; }
+    const s = stopIndex[id] || (STOPS?.stops && STOPS.stops.find((x) => x.id === id)) || (STOPS?.stations && STOPS.stations.find((x) => x.id === id));
+    if (!s) { highlightStop(null); return; }
+    const rs = (s.routes || []).map((x) => RBY[x]).filter(Boolean).sort(tagOrder);
+    const c = rs[0] ? keyColor(dkey(rs[0])) : BASE[theme].stopStroke;
+    highlightStop({
+      properties: { id: s.id, c },
+      geometry: { type: "Point", coordinates: [s.lon, s.lat] }
+    });
+  }
+
+  function previewStopOnHover(el) {
+    const id = el.dataset.stop;
+    if (!id) return;
+    const on = () => highlightStopById(id);
+    const off = () => highlightStopById(null);
+    el.addEventListener("mouseenter", on);
+    el.addEventListener("focus", on);
+    el.addEventListener("mouseleave", off);
+    el.addEventListener("blur", off);
+  }
+
   // ---------------------------------------------------------------- next departures at a stop
   // From the timetable: each pattern lists its stops (s) and when along the trip each is reached
   // (f, a share of the trip's duration), so a stop's departures are start + f * duration.
@@ -2265,7 +2288,7 @@
       const dot = useLive && d.live ? `<span class="sc-live" aria-hidden="true"></span>` : "";
       const occ = useLive && d.occ != null
         ? `<span class="sc-occ vo-${OCC_CLS[d.occ]}" role="img" aria-label="${esc(OCC_TEXT[d.occ])}" title="${esc(OCC_TEXT[d.occ])}">${occMeter(d.occ)}</span>` : "<span></span>";
-      return `<div class="sc-row">${badgeHTML(d.r)}<span class="sc-to">${esc(to)}</span>${occ}<span class="sc-t">${dot}${depMinutes(d.t)}</span></div>`;
+      return `<div class="sc-row press" data-route="${esc(d.r.id)}" role="button" tabindex="0" title="Highlight route ${esc(shortLabel(d.r))}">${badgeHTML(d.r)}<span class="sc-to">${esc(to)}</span>${occ}<span class="sc-t">${dot}${depMinutes(d.t)}</span></div>`;
     }).join("");
     const foot = useLive ? (list.some((d) => d.live) ? "Next departures, live from the agency" : "Next departures, from the agency's schedule")
       : "Next departures, from the timetable";
@@ -2375,6 +2398,8 @@
   }
   function clearSelection() {
     selected = null;
+    panelView = "home";
+    corridorRoutes = [];
     setHash("");
     closePopup();
     rebuild();
@@ -2382,7 +2407,7 @@
     showRouteStops(null);
     showHome();
     renderLive();
-    if (panelView === "home") openSheet("peek");
+    openSheet("peek");
   }
   function fitPadding() {
     return isNarrow() ? { top: 70, bottom: Math.round(window.innerHeight * 0.52), left: 30, right: 70 }
@@ -2486,12 +2511,17 @@
       <span class="dir-label">Get Directions</span>
       <div class="dir-btns">
         <a class="dir-btn apple press" href="${appleUrl}" target="_blank" rel="noopener">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M11.182.008C11.148-.03 9.923.023 8.857 1.18c-1.002 1.092-.914 2.222-.887 2.302.04.015 1.05.097 2.054-.997.94-1.025 1.168-2.39 1.158-2.477zm1.328 3.513c-.13-.013-1.637.08-2.678.968-.992.845-1.55 2.023-1.55 3.398 0 2.247 1.547 4.298 2.766 5.485.677.662 1.41.677 1.942.427.533-.25 1.157-.25 1.69.002.533.25 1.266.234 1.942-.428.847-.824 1.487-1.898 1.87-2.73-1.53-.787-1.748-2.906-.388-4.148-.485-.807-1.378-1.464-2.463-1.874-.356-.135-.733-.207-1.13-.207z"/></svg>Apple Maps
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M11.182.008C11.148-.03 9.923.023 8.857 1.18c-1.066 1.156-.902 2.482-.878 2.516s1.52.087 2.475-1.258.762-2.391.728-2.43m3.314 11.733c-.048-.096-2.325-1.234-2.113-3.422s1.675-2.789 1.698-2.854-.597-.79-1.254-1.157a3.7 3.7 0 0 0-1.563-.434c-.108-.003-.483-.095-1.254.116-.508.139-1.653.589-1.968.607-.316.018-1.256-.522-2.267-.665-.647-.125-1.333.131-1.824.328-.49.196-1.422.754-2.074 2.237-.652 1.482-.311 3.83-.067 4.56s.625 1.924 1.273 2.796c.576.984 1.34 1.667 1.659 1.899s1.219.386 1.843.067c.502-.308 1.408-.485 1.766-.472.357.013 1.061.154 1.782.539.571.197 1.111.115 1.652-.105.541-.221 1.324-1.059 2.238-2.758q.52-1.185.473-1.282"/></svg>
+          <span>Apple Maps</span>
         </a>
         <a class="dir-btn google press" href="${googleUrl}" target="_blank" rel="noopener">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>Google Maps
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
+          <span>Google Maps</span>
         </a>
-        <a class="dir-btn transit press" href="${transitAppUrl}" target="_blank" rel="noopener">Transit App</a>
+        <a class="dir-btn transit press" href="${transitAppUrl}" target="_blank" rel="noopener">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M4 16c0 .88.39 1.67 1 2.22V20c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h8v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1.78c.61-.55 1-1.34 1-2.22V6c0-3.5-3.58-4-8-4s-8 .5-8 4v10zm3.5 1c-.83 0-1.5-.67-1.5-1.5S6.67 14 7.5 14s1.5.67 1.5 1.5S8.33 17 7.5 17zm9 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm1.5-6H6V6h12v5z"/></svg>
+          <span>Transit App</span>
+        </a>
       </div>
     </div>`;
   }
@@ -2959,7 +2989,7 @@
     const fav = isFav("stop", s.id);
     const keys = [...new Set([s.key, ...((s.stops || []).map((sid) => stopIndex[sid] && stopIndex[sid].key).filter(Boolean))])];
     const stopIds = stopIdsOf(s);
-    let html = `${backBtn}<div class="hero"><span class="stop-glyph${s.kind === "stop" ? "" : " big"}" aria-hidden="true"></span><div><h2>${esc(s.name)}</h2><p>${esc(kind)}</p></div></div>
+    let html = `${backBtn}<div class="hero stop-hero press" data-stop="${esc(s.id)}" role="button" tabindex="0" title="Highlight stop on map"><span class="stop-glyph${s.kind === "stop" ? "" : " big"}" aria-hidden="true"></span><div><h2>${esc(s.name)}</h2><p>${esc(kind)}</p></div></div>
       ${logoChips(rs) ? `<div class="chips">${logoChips(rs)}</div>` : ""}
       <div class="card-actions">
         <button type="button" class="action-btn fav-btn press${fav ? " is-fav" : ""}" id="stopFavBtn" data-fav-stop="${esc(s.id)}" aria-label="${fav ? "Remove from favorites" : "Save to favorites"}">
@@ -2981,7 +3011,10 @@
       if (bus.length) html += `<h3 class="section">Buses within a short walk</h3>${routeRows(bus)}`;
     }
     setView(html);
-    $("#back").addEventListener("click", clearSelection);
+    $("#back").addEventListener("click", () => {
+      panelView = "home";
+      clearSelection();
+    });
     $("#stopFavBtn")?.addEventListener("click", () => {
       const isNow = toggleFav("stop", s.id);
       const b = $("#stopFavBtn");
@@ -2997,11 +3030,30 @@
         url: `${location.origin}${location.pathname}#stop-${s.id}`
       });
     });
+    const bindStopsAndRoutes = (root = body()) => {
+      for (const b of root.querySelectorAll("[data-route]")) {
+        b.addEventListener("click", () => selectRoute(b.dataset.route));
+        previewOnHover(b);
+      }
+      for (const b of root.querySelectorAll("[data-stop]")) {
+        b.addEventListener("click", () => {
+          if (b.dataset.stop === s.id) {
+            map.flyTo({ center: [s.lon, s.lat], zoom: Math.max(map.getZoom(), s.kind === "stop" ? 16 : 14.5), duration: 800 });
+          } else {
+            selectStop(b.dataset.stop);
+          }
+        });
+        previewStopOnHover(b);
+      }
+    };
+    bindStopsAndRoutes();
     ensureDepartures(stopIds, () => {
       const box = $("#stopPanelDeps");
-      if (box) box.innerHTML = depRowsHTML(keys, stopIds);
+      if (box) {
+        box.innerHTML = depRowsHTML(keys, stopIds);
+        bindStopsAndRoutes(box);
+      }
     });
-    for (const b of body().querySelectorAll("[data-route]")) { b.addEventListener("click", () => selectRoute(b.dataset.route)); previewOnHover(b); }
     fillStopAlerts(s);
     if ($("#ferryInfo")) { fillFerryInfo(); loadFerryTerminals(); }
     openSheet("half");
@@ -3772,7 +3824,7 @@
     if (!topStops.length) {
       setView(`${backBtn}<div class="hero"><span class="stop-glyph big" aria-hidden="true"></span><div><h2>Nearby Departures</h2><p>No stops within 1.2 km</p></div></div>
         <p class="hint">You may be outside the Seattle regional transit network. Pan to Seattle, Bellevue, Tacoma, or Everett to view routes.</p>`);
-      $("#back").addEventListener("click", () => { panelView = "home"; showHome(); });
+      $("#back").addEventListener("click", () => { panelView = "home"; showHome(); openSheet("peek"); });
       openSheet("half");
       return;
     }
@@ -3801,19 +3853,19 @@
           const to = d.live ? d.toName : placeName(d.to);
           const dot = d.live ? `<span class="sc-live" aria-hidden="true"></span>` : "";
           const tText = d.t < 60 ? "now" : `${Math.round(d.t / 60)} min`;
-          return `<div class="nearby-dep-row press" data-route="${esc(d.r.id)}">
+          return `<div class="nearby-dep-row press" data-route="${esc(d.r.id)}" role="button" tabindex="0" title="Highlight route ${esc(shortLabel(d.r))}">
             ${badgeHTML(d.r)}
             <span class="nearby-headsign">${esc(to)}</span>
             <span class="nearby-time${d.live ? " live" : ""}">${dot}${esc(tText)}</span>
           </div>`;
         }).join("")}</div>`;
       } else {
-        depsHTML = `<div class="sc-badges">${rs.slice(0, 6).map((r) => badgeHTML(r)).join("")}</div>`;
+        depsHTML = `<div class="sc-badges">${rs.slice(0, 6).map((r) => `<span class="press" data-route="${esc(r.id)}" style="cursor:pointer" title="Highlight ${esc(shortLabel(r))}">${badgeHTML(r)}</span>`).join("")}</div>`;
       }
 
       return `<div class="nearby-card">
         <div class="nearby-card-head">
-          <span class="nearby-stop-name press" data-stop="${esc(s.id)}">${esc(s.name)}</span>
+          <span class="nearby-stop-name press" data-stop="${esc(s.id)}" role="button" tabindex="0" title="Highlight stop on map">${esc(s.name)}</span>
           <span class="nearby-dist">🚶 ${walkMin} min · ${m} m</span>
         </div>
         ${depsHTML}
@@ -3829,12 +3881,14 @@
       <p class="foot">Live countdowns update automatically from agency tracking.</p>`;
 
     setView(html);
-    $("#back").addEventListener("click", () => { panelView = "home"; showHome(); });
+    $("#back").addEventListener("click", () => { panelView = "home"; showHome(); openSheet("peek"); });
     for (const el of body().querySelectorAll("[data-stop]")) {
       el.addEventListener("click", () => selectStop(el.dataset.stop));
+      previewStopOnHover(el);
     }
     for (const el of body().querySelectorAll("[data-route]")) {
       el.addEventListener("click", () => selectRoute(el.dataset.route));
+      previewOnHover(el);
     }
   }
 

@@ -488,7 +488,12 @@ table.sched td.good { color: var(--good); font-weight: 650; }
 .sc-badges .badge.round, .sc-row .badge.round { width: 22px; min-width: 22px; height: 22px; padding: 0; }
 .sc-more { color: var(--muted); font-size: 12px; font-weight: 600; }
 .sc-next { margin-top: 9px; padding-top: 8px; border-top: .5px solid var(--hairline); display: grid; gap: 5px; }
-.sc-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 8px; font-size: 12.5px; }
+.sc-row {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 8px; font-size: 12.5px;
+  padding: 5px 6px; margin: 0 -6px; border-radius: 8px; cursor: pointer;
+  transition: background-color .15s ease;
+}
+.sc-row:hover { background: var(--fill); }
 .sc-to { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sc-t { color: var(--ink); font-weight: 650; font-variant-numeric: tabular-nums; }
 .sc-foot { margin-top: 7px; color: var(--muted); font-size: 11px; }
@@ -710,20 +715,36 @@ table.sched td.good { color: var(--good); font-weight: 650; }
   display: grid; gap: 8px;
 }
 .dir-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
-.dir-btns { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 6px; }
+.dir-btns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
 .dir-btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  padding: 8px 10px; border-radius: 10px; font-size: 12.5px; font-weight: 600;
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  padding: 8px 6px; border-radius: 10px; font-size: 11.5px; font-weight: 600;
   text-decoration: none; border: 0; cursor: pointer;
   background: var(--fill); color: var(--ink);
+  white-space: nowrap;
   transition: transform .2s var(--spring), background-color .2s ease;
 }
 .dir-btn:hover { background: var(--fill-2); }
 .dir-btn:active { transform: scale(.96); }
-.dir-btn svg { flex: none; }
+.dir-btn svg { flex: none; width: 14px; height: 14px; }
 .dir-btn.apple { color: var(--accent); }
 .dir-btn.google { color: #34a853; }
 .dir-btn.transit { color: #00aa6c; }
+
+.hero.stop-hero {
+  cursor: pointer;
+  border-radius: var(--r-hero);
+  padding: 4px 6px;
+  margin: -4px -6px;
+  transition: background-color .15s ease;
+}
+.hero.stop-hero:hover {
+  background: var(--fill);
+}
 
 /* ---------- Frequency & Span Badges (Item F) ---------- */
 .freq-badge-row {
