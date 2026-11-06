@@ -59,14 +59,16 @@
   };
   const LINE = {
     light: {
-      link: "#1d3f86", link1: "#5ead56", link2: "#479ed8", linkT: "#e57a00", sounder: "#4b5563", streetcar: "#e8772e", monorail: "#8a8f98", rapidride: "#c8102e",
-      swift: "#1f6fe0", frequent: "#1d4ed8", local: "#455db2", peak: "#7c3aed", shuttle: "#e3a118",
-      dart: "#0a2095", watertaxi: "#1690ad", ferry: "#3d6fa8",
+      link: "#173d7a", link1: "#5ead56", link2: "#479ed8", linkT: "#e57a00", sounder: "#4b5563", streetcar: "#e8772e", monorail: "#8a8f98", rapidride: "#c8102e",
+      swift: "#1f6fe0", frequent: "#1d4ed8", local: "#3668c2", peak: "#7c3aed", shuttle: "#e3a118",
+      dart: "#b83280", watertaxi: "#1690ad", ferry: "#0d768a",
+      soundtransit: "#173d7a",
     },
     dark: {
       link: "#86a8f2", link1: "#6ec565", link2: "#56b4f2", linkT: "#ffa94d", sounder: "#a3acb9", streetcar: "#ff9450", monorail: "#b5bac2", rapidride: "#ff5468",
       swift: "#5b9bff", frequent: "#3b82f6", local: "#93c5fd", peak: "#c4b5fd", shuttle: "#ffc44d",
-      dart: "#60a5fa", watertaxi: "#45c1e3", ferry: "#7aa6dc",
+      dart: "#f472b6", watertaxi: "#45c1e3", ferry: "#38bdf8",
+      soundtransit: "#86a8f2",
     },
   };
   const FLEX = { light: "#8a3cc0", dark: "#c47ef0" }; // Metro Flex zones
@@ -216,8 +218,15 @@
     : specialFilter === "nightowl" ? isNightOwl(r)
     : specialFilter === "snow" ? isSnowRoute(r)
     : true);
+  const isSoundTransit = (r) => !!(r && (r.agency === "Sound Transit" || r.agencyShort === "Sound Transit" || r.agencyShort === "ST" || (r.id && r.id.startsWith("sound-transit-"))));
   const keyColor = (key, th = theme) => LINE[th][key] || LINE[th].local;
-  const tagColor = (r, th = theme) => LINE[th][dkey(r)] || LINE[th].local;
+  const tagColor = (r, th = theme) => {
+    if (!r) return LINE[th].local;
+    if (r.cat === "link") return r.label === "1" ? LINE[th].link1 : r.label === "T" ? LINE[th].linkT : r.label === "2" ? LINE[th].link2 : LINE[th].link;
+    if (r.cat === "sounder") return LINE[th].sounder;
+    if (isSoundTransit(r)) return LINE[th].soundtransit || LINE[th].link;
+    return LINE[th][dkey(r)] || LINE[th].local;
+  };
   const lum = (hex) => { const n = parseInt(hex.slice(1), 16), c = [n >> 16, (n >> 8) & 255, n & 255].map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
     return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; };
   const tagText = (r, th = theme) => (lum(tagColor(r, th)) > 0.36 ? "#1d1d1f" : "#ffffff");
