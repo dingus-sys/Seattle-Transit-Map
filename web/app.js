@@ -1272,9 +1272,16 @@
       const ts = wsfDate(w.TimeStamp) / 1000;
       if (!r || w.InService === false || !Number.isFinite(w.Latitude) || !Number.isFinite(w.Longitude) || !ts || Date.now() / 1000 - ts > 300) continue;
       const id = `95_${w.VesselID}`, to = [w.Longitude, w.Latitude], prev = live.vehicles.get(id);
+      let from = to;
+      if (prev) {
+        const rawFrom = vehPos(prev, now);
+        const d = geoDist(rawFrom, to);
+        const isStale = (prev.t0 && (now - prev.t0 > 45000)) || prev.snap;
+        from = (d > 1100 || isStale) ? to : rawFrom;
+      }
       live.vehicles.set(id, { ...prev, id, agency: "95", vid: String(w.VesselID), r, ts,
-        from: prev ? vehPos(prev, now) : to, to, t0: now, b: Number.isFinite(w.Heading) ? w.Heading : -1,
-        name: w.VesselName || WSF_VESSELS[w.VesselID] || "Ferry", head: w.ArrivingTerminalName || "" });
+        from, to, t0: now, b: Number.isFinite(w.Heading) ? w.Heading : -1,
+        name: w.VesselName || WSF_VESSELS[w.VesselID] || "Ferry", head: w.ArrivingTerminalName || "", snap: false });
       count++;
     }
     if (count) { live.fresh = live.fresh || {}; live.fresh["95"] = wsf.got; }
@@ -1648,10 +1655,11 @@
   const lerpAngle = (a, b, t) => (a < 0 ? b : b < 0 ? a : ((a + angleDiff(a, b) * t) + 360) % 360);
   function vehPos(v, now) {
     // glide from the last shown spot to the newest report across the polling interval,
-    // with smooth dead-reckoning coasting between updates so live vehicles never jump
+    // stopping smoothly at the destination so live vehicles never skate or overshoot
     if (!v.from || !v.to) return v.to || [0, 0];
+    if (v.from[0] === v.to[0] && v.from[1] === v.to[1]) return v.to;
     const dur = v.dur || POLL_MS;
-    const t = Math.min(1.25, Math.max(0, (now - v.t0) / dur));
+    const t = Math.min(1.02, Math.max(0, (now - v.t0) / dur));
     return [v.from[0] + (v.to[0] - v.from[0]) * t, v.from[1] + (v.to[1] - v.from[1]) * t];
   }
   async function pollLive() {
@@ -1731,16 +1739,22 @@
           // Washington State Ferries' boats go by name (OneBusAway's vehicle number is WSF's vessel id)
           const name = a === "95" && WSF_VESSELS[v.id] ? WSF_VESSELS[v.id] : "";
           if (prev) {
-            const from = vehPos(prev, now), d = geoDist(from, to);
+            const rawFrom = vehPos(prev, now);
+            const d = geoDist(rawFrom, to);
+            const routeChanged = prev.r && r && prev.r.id !== r.id;
+            const isStale = (prev.t0 && (now - prev.t0 > 35000)) || (prev.ts && v.ts && (v.ts - prev.ts > 60));
+            const maxGlide = a === "95" ? 1100 : 550;
+            const snap = routeChanged || isStale || d > maxGlide || prev.snap;
+            const from = snap ? to : rawFrom;
             const b = v.bearing != null && v.bearing > 0 ? v.bearing : d > 12 ? geoBearing(from, to) : prev.b;
-            const b0 = prev.curB != null ? prev.curB : (prev.b != null && prev.b >= 0 ? prev.b : b);
+            const b0 = snap ? b : (prev.curB != null ? prev.curB : (prev.b != null && prev.b >= 0 ? prev.b : b));
             const occ = occCode(v.occ);
-            const dur = prev.t0 ? Math.max(5000, now - prev.t0) : POLL_MS;
+            const dur = prev.t0 && !snap ? Math.min(30000, Math.max(5000, now - prev.t0)) : POLL_MS;
             Object.assign(prev, { from, to, t0: now, dur, r, b0, b, ts: v.ts, label: v.label || prev.label, vid: v.id, name, head: v.head || prev.head,
-              occ: occ != null ? occ : prev.occ, occPct: v.occPct != null ? v.occPct : prev.occPct });
+              occ: occ != null ? occ : prev.occ, occPct: v.occPct != null ? v.occPct : prev.occPct, snap: false });
           } else {
             live.vehicles.set(id, { id, agency: a, from: to, to, t0: now, dur: POLL_MS, r, b0: v.bearing > 0 ? v.bearing : -1, b: v.bearing > 0 ? v.bearing : -1, ts: v.ts, label: v.label, vid: v.id, name, head: v.head,
-              occ: occCode(v.occ), occPct: v.occPct });
+              occ: occCode(v.occ), occPct: v.occPct, snap: false });
           }
         } catch (e) { /* one odd report doesn't stop the rest */ }
       }
@@ -1822,7 +1836,7 @@
     else if (mode === "live") {
       for (const v of live.vehicles.values()) if (Date.now() / 1000 - v.ts <= 300 && Date.now() - (live.fresh?.[v.agency] || 0) < 90000) {
         const dur = v.dur || POLL_MS;
-        const t = Math.min(1.25, Math.max(0, (now - v.t0) / dur));
+        const t = Math.min(1.02, Math.max(0, (now - v.t0) / dur));
         const pos = vehPos(v, now);
         const b = (v.b0 != null && v.b != null && v.b >= 0 && v.b0 >= 0) ? lerpAngle(v.b0, v.b, Math.min(1, t)) : v.b;
         v.curB = b;
@@ -1995,10 +2009,11 @@
       chip.querySelector("span.n").textContent = (n === 0 ? "None running right now" : `${n} running now`) + (live.mode === "est" || n > 0 && running.every((v) => v.est) ? " (timetable)" : "");
     }
   }
-  let liveAnimRaf = 0, lastAnimMs = 0;
+  let liveAnimRaf = 0, lastAnimMs = 0, lastActiveTime = Date.now();
   function animVehicles(now) {
     liveAnimRaf = 0;
     if (!enabled.has("live") || document.hidden || !map || !map.getSource("vehicles")) return;
+    lastActiveTime = Date.now();
     if (now - lastAnimMs >= 35) {
       lastAnimMs = now;
       renderVehicles(now);
@@ -2105,13 +2120,36 @@
     const d = ctx.getImageData(0, 0, S, S);
     if (!map.hasImage(id)) map.addImage(id, { width: S, height: S, data: d.data }, { pixelRatio: dpr });
   }
+  function onTabResumed() {
+    const elapsed = Date.now() - lastActiveTime;
+    lastActiveTime = Date.now();
+    if (elapsed > 20000) {
+      // The tab was inactive or in background for longer than a polling interval:
+      // Snap all existing vehicles to their latest known spot immediately so they
+      // never skate across water or parks from old positions.
+      for (const v of live.vehicles.values()) {
+        v.from = v.to;
+        v.snap = true;
+      }
+      for (const [id, v] of live.vehicles) {
+        if (v.ts && (Date.now() / 1000 - v.ts > 150)) {
+          live.vehicles.delete(id);
+        }
+      }
+    }
+    if (live.timer) pollLive();
+    startAnim();
+  }
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
-      if (live.timer) pollLive();
-      startAnim();
+      onTabResumed();
     } else {
+      lastActiveTime = Date.now();
       stopAnim();
     }
+  });
+  window.addEventListener("focus", () => {
+    if (!document.hidden) onTabResumed();
   });
   setInterval(updateLiveUI, 3000);
 
