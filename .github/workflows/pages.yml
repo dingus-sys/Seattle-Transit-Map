@@ -7,7 +7,7 @@ name: Publish map to GitHub Pages
 on:
   push:
     branches: [main]
-    paths: ["site/**", "web/**", "pipeline/build_site.py", "pipeline/config.py", ".github/workflows/pages.yml"]
+    paths: ["site/**", "web/**", "pipeline/**", "tools/**", "requirements.txt", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
@@ -27,9 +27,15 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Install pipeline test dependencies
+        run: pip install -r requirements.txt
       - name: Check source syntax and route geometry before publishing
         run: |
           node --check web/app.js
@@ -38,6 +44,10 @@ jobs:
           python3 -m unittest discover -s tools -p 'test_*.py'
           node tools/geometry_check.js
           node tools/ribbon_check.js
+          node tools/test_routing_engine.js
+          node tools/stress_test_routing.js
+          python3 tools/validate_data.py
+          python3 tools/check_repair.py
       - uses: actions/configure-pages@v5
       # The page (index.html, app.js, app.css, geom.js, ribbons.js, logos/) is built here from web/ and is
       # not kept in the repository; the data in site/data and site/tiles is.

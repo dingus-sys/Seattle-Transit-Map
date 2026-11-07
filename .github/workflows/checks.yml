@@ -3,7 +3,7 @@ name: Check map
 on:
   pull_request:
   push:
-    paths: ["web/**", "pipeline/**", "tools/**", "site/data/**", ".github/workflows/**"]
+    paths: ["web/**", "pipeline/**", "tools/**", "site/data/**", "requirements.txt", ".github/workflows/**"]
   workflow_dispatch:
 
 permissions:
@@ -17,9 +17,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Install pipeline test dependencies
+        run: pip install -r requirements.txt
       - name: Check source and credential handling
         run: |
           python3 -m py_compile pipeline/*.py
@@ -31,5 +34,9 @@ jobs:
         run: |
           node tools/geometry_check.js
           node tools/ribbon_check.js
+          node tools/test_routing_engine.js
+          node tools/stress_test_routing.js
+          python3 tools/validate_data.py
+          python3 tools/check_repair.py
       - name: Build the keyless website
         run: python3 pipeline/build_site.py

@@ -890,13 +890,18 @@
   function stopLayers(P) {
     const k = THICK[settings.thickness]; // stops grow and shrink with the lines
     const zr = (stops) => ["interpolate", ["linear"], ["zoom"], ...stops.flatMap(([z, v]) => [z, typeof v === "number" ? v * k : ["*", v, k]])];
+    // MapLibre allows exactly one camera (zoom) expression per paint value. Keep
+    // the suspension check inside that interpolation rather than putting two
+    // zoom expressions in a case branch.
+    const suspendedZr = (suspended, regular) => ["interpolate", ["linear"], ["zoom"], ...regular.flatMap(([z, v], i) => [z,
+      ["case", ["==", ["get", "suspended"], 1], suspended[i][1] * k, v * k]])];
     return [
       { id: "stops", type: "circle", source: "stops", minzoom: 14.6,
         paint: {
-          "circle-radius": ["case", ["==", ["get", "suspended"], 1], zr([[14.6, 2.8], [16, 4.4], [18, 6.8]]), zr([[14.6, 2], [16, 3.4], [18, 5.5]])],
+          "circle-radius": suspendedZr([[14.6, 2.8], [16, 4.4], [18, 6.8]], [[14.6, 2], [16, 3.4], [18, 5.5]]),
           "circle-color": ["case", ["==", ["get", "suspended"], 1], "#d0213b", P.stopFill],
           "circle-stroke-color": ["case", ["==", ["get", "suspended"], 1], "#ffffff", P.stopStroke],
-          "circle-stroke-width": ["case", ["==", ["get", "suspended"], 1], zr([[14.6, 1.4], [17, 2.2]]), zr([[14.6, 1], [17, 1.6]])],
+          "circle-stroke-width": suspendedZr([[14.6, 1.4], [17, 2.2]], [[14.6, 1], [17, 1.6]]),
         } },
       { id: "stop-name", type: "symbol", source: "stops", minzoom: 17.2,
         layout: { "text-field": ["get", "name"], "text-font": F_REG, "text-size": 11, "text-variable-anchor": ["left", "right"],
@@ -5510,6 +5515,24 @@
     }
   }
 
+  function currentVehWord(catOrRoute) {
+    const cat = typeof catOrRoute === "string" ? catOrRoute : (catOrRoute && catOrRoute.cat) || "";
+    if (cat === "walk") return "walk";
+    if (cat === "link" || cat === "sounder" || cat === "amtrak" || cat === "monorail") return "train";
+    if (cat === "ferry" || cat === "watertaxi") return "ferry";
+    if (cat === "streetcar") return "streetcar";
+    return "bus";
+  }
+
+  function modeIcon(catOrRoute) {
+    const cat = typeof catOrRoute === "string" ? catOrRoute : (catOrRoute && catOrRoute.cat) || "";
+    if (cat === "walk") return "🚶";
+    if (cat === "link" || cat === "sounder" || cat === "amtrak" || cat === "monorail") return "🚆";
+    if (cat === "ferry" || cat === "watertaxi") return "⛴️";
+    if (cat === "streetcar") return "🚊";
+    return "🚌";
+  }
+
   function getSoonestBus(it) {
     if (!it || it.type === "walk") {
       return {
@@ -5527,7 +5550,7 @@
     if (!route || !stop) return null;
 
     const sIds = stopIdsOf(stop);
-    const vehWord = route.cat === "link" || route.cat === "sounder" ? "train" : route.cat === "ferry" ? "ferry" : route.cat === "streetcar" ? "streetcar" : "bus";
+    const vehWord = currentVehWord(route);
     const walk1Min = it.walk1Time || 0;
     const minEarliestSec = pacificNow().secs + walk1Min * 60;
 
@@ -5540,6 +5563,7 @@
         const clockTime = new Date(Date.now() + Math.max(0, match.t) * 1000);
         const clockStr = CLOCK.format(clockTime);
         const text = match.t < 60 ? "Due now" : `in ${waitMin} min`;
+        const tag = match.live ? "Live GPS" : "Scheduled";
         return {
           type: "live",
           vehWord,
@@ -5548,7 +5572,7 @@
           text,
           clock: clockStr,
           routeLabel: route.short || route.label,
-          desc: match.t < 60 ? `${vehWord.charAt(0).toUpperCase() + vehWord.slice(1)} due now (Live GPS · ${clockStr})` : `Soonest ${vehWord} in ${waitMin} min (Live GPS · ${clockStr})`
+          desc: match.t < 60 ? `${vehWord.charAt(0).toUpperCase() + vehWord.slice(1)} due now (${tag} · ${clockStr})` : `Soonest ${vehWord} in ${waitMin} min (${tag} · ${clockStr})`
         };
       }
     }
@@ -5946,7 +5970,7 @@
         </div>
         <div class="step-row">
           <span class="step-line"></span>
-          <span class="step-icon transit">${cur.route.cat === "link" || cur.route.cat === "sounder" ? "🚆" : cur.route.cat === "ferry" ? "⛴️" : "🚌"}</span>
+          <span class="step-icon transit">${modeIcon(cur.route)}</span>
           <div class="step-content">
             <div class="step-main">Board ${badgeHTML(cur.route)} towards ${esc(cur.pattern.headsign || "Destination")}</div>
             <div class="step-meta">${curSoonest ? `<span class="step-soonest${curSoonest.isLive ? " is-live" : ""}">${curSoonest.isLive ? "🟢 Live departure:" : "🕒 Soonest departure:"} <b>${curSoonest.text}</b>${curSoonest.clock ? ` (${curSoonest.clock})` : ""}</span> · ` : ""}${cur.rideTime} min ride · ${cur.numStops} stop${cur.numStops > 1 ? "s" : ""}</div>
@@ -5986,7 +6010,7 @@
         </div>
         <div class="step-row">
           <span class="step-line"></span>
-          <span class="step-icon transit">${cur.r1.cat === "link" || cur.r1.cat === "sounder" ? "🚆" : cur.r1.cat === "streetcar" ? "🚊" : cur.r1.cat === "ferry" ? "⛴️" : "🚌"}</span>
+          <span class="step-icon transit">${modeIcon(cur.r1)}</span>
           <div class="step-content">
             <div class="step-main">Board ${badgeHTML(cur.r1)} towards ${esc(cur.p1.headsign || "Transfer")}</div>
             <div class="step-meta">${curSoonest ? `<span class="step-soonest${curSoonest.isLive ? " is-live" : ""}">${curSoonest.isLive ? "🟢 Live departure:" : "🕒 Soonest departure:"} <b>${curSoonest.text}</b>${curSoonest.clock ? ` (${curSoonest.clock})` : ""}</span> · ` : ""}${cur.ride1} min · ${cur.numStops1} stops</div>
@@ -6002,7 +6026,7 @@
         </div>
         <div class="step-row">
           <span class="step-line"></span>
-          <span class="step-icon transit">${cur.r2.cat === "link" || cur.r2.cat === "sounder" ? "🚆" : cur.r2.cat === "streetcar" ? "🚊" : cur.r2.cat === "ferry" ? "⛴️" : "🚌"}</span>
+          <span class="step-icon transit">${modeIcon(cur.r2)}</span>
           <div class="step-content">
             <div class="step-main">Board ${badgeHTML(cur.r2)} towards ${esc(cur.p2.headsign || "Destination")}</div>
             <div class="step-meta">${cur.ride2} min · ${cur.numStops2} stops</div>
@@ -7584,6 +7608,8 @@
       vehicleLines, vehicleOccupancy, occCode,
       obaStop, readDeparture, liveDepartures, depRowsHTML, depCache: () => depCache, stopCard, ensureDepartures,
       onLine, routeById: (id) => RBY[id],
+      planner: { timetableTripTimes, planTransitTrip, currentVehWord, modeIcon, getSoonestBus },
+      timetableTripTimes, planTransitTrip, currentVehWord,
       idle: () => new Promise((res) => { if (!inFlight && !queued && !needsRebuild) res(); else idleWaiters.push(res); }),
     };
     map.touchZoomRotate.disableRotation();
