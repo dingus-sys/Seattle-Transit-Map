@@ -42,7 +42,7 @@
     swift:     { group: "rapid", w: 2.5,  tier: 0, prio: 5,  inner: "dots" },
     frequent:  { group: "bus",   w: 2.35, tier: 1, prio: 6,  inner: "glass" },
     local:     { group: "bus",   w: 1.9,  tier: 2, prio: 7,  inner: "glass" },
-    peak:      { group: "bus",   w: 1.4,  tier: 2, prio: 8 },
+    peak:      { group: "bus",   w: 1.4,  tier: 2, prio: 8,  dash: true },
     shuttle:   { group: "bus",   w: 1.7,  tier: 2, prio: 9,  inner: "glass" },
     dart:      { group: "bus",   w: 1.35, tier: 2, prio: 10, dash: true },
     watertaxi: { group: "water", w: 1.9,  tier: 0, prio: 11, dash: true },
@@ -60,13 +60,13 @@
   const LINE = {
     light: {
       link: "#173d7a", link1: "#5ead56", link2: "#479ed8", linkT: "#e57a00", sounder: "#4b5563", streetcar: "#e8772e", monorail: "#8a8f98", rapidride: "#c8102e",
-      swift: "#1f6fe0", frequent: "#1d4ed8", local: "#3668c2", peak: "#7c3aed", shuttle: "#e3a118",
+      swift: "#1f6fe0", frequent: "#1d4ed8", local: "#3668c2", peak: "#2b6cb0", shuttle: "#3668c2",
       dart: "#b83280", watertaxi: "#1690ad", ferry: "#0d768a",
       soundtransit: "#173d7a",
     },
     dark: {
       link: "#86a8f2", link1: "#6ec565", link2: "#56b4f2", linkT: "#ffa94d", sounder: "#a3acb9", streetcar: "#ff9450", monorail: "#b5bac2", rapidride: "#ff5468",
-      swift: "#5b9bff", frequent: "#3b82f6", local: "#93c5fd", peak: "#c4b5fd", shuttle: "#ffc44d",
+      swift: "#5b9bff", frequent: "#3b82f6", local: "#93c5fd", peak: "#70a6f2", shuttle: "#93c5fd",
       dart: "#f472b6", watertaxi: "#45c1e3", ferry: "#38bdf8",
       soundtransit: "#86a8f2",
     },
@@ -100,6 +100,7 @@
     { title: "Map", items: [
       { key: "live", cats: [], name: "Vehicles", desc: "Buses, trains and ferries on the move", on: true, area: "live" },
       { key: "stops", cats: [], name: "Bus stops", desc: "Appear as you zoom in", on: true, area: "stops" },
+      { key: "pois", cats: [], name: "Points of interest", desc: "Colleges, hospitals, stadiums & sights", on: true, area: "pois" },
     ] },
   ];
   const LAYERS = LAYER_GROUPS.flatMap((g) => g.items);
@@ -177,9 +178,9 @@
   let stopIndex = {};
   let map, theme = themeName();
   const enabled = new Set();
-  const savedLayers = store.get("layers3", null) || store.get("layers2", null);
+  const savedLayers = store.get("layers4", null) || store.get("layers3", null) || store.get("layers2", null);
   LAYERS.forEach((l) => {
-    if (savedLayers ? (savedLayers.includes(l.key) || (l.key === "trails" && !store.get("layers3", null))) : l.on) enabled.add(l.key);
+    if (savedLayers ? (savedLayers.includes(l.key) || (l.key === "trails" && !store.get("layers3", null)) || (l.key === "pois" && !store.get("layers4", null))) : l.on) enabled.add(l.key);
   });
   let selected = null;
   let placeMarker = null;
@@ -219,6 +220,28 @@
     : specialFilter === "snow" ? isSnowRoute(r)
     : true);
   const isSoundTransit = (r) => !!(r && (r.agency === "Sound Transit" || r.agencyShort === "Sound Transit" || r.agencyShort === "ST" || (r.id && r.id.startsWith("sound-transit-"))));
+  const isEveryday = (r) => {
+    if (!r || !r.sched) return false;
+    if (r.cat === "peak") return false;
+    const w = r.sched.weekday, sa = r.sched.saturday, su = r.sched.sunday;
+    return !!(w && sa && su && (sa.mid_n > 0 || sa.trips > 5) && (su.mid_n > 0 || su.trips > 5));
+  };
+  const isRouteSuspended = (r) => {
+    if (!r || !alerts || !alerts.byRoute) return false;
+    const list = routeAlerts(r.id);
+    if (!list.length) return false;
+    return list.some((a) => a.level === 2 && /\b(suspended|cancelled|canceled|not operating|no service)\b/i.test(a.title));
+  };
+  const stopIsSuspended = (stopId) => {
+    if (!stopId || !alerts || !alerts.byStop) return false;
+    const list = alerts.byStop.get(stopId) || [];
+    if (!list.length) return false;
+    return list.some((a) => {
+      if (a.level === 2) return true;
+      const t = ((a.title || "") + " " + (a.desc || "")).toLowerCase();
+      return /\b(closed|closure|suspend|suspended|not served|bypassed|missed|no service|out of service|out of order|relocated)\b/.test(t);
+    });
+  };
   const keyColor = (key, th = theme) => LINE[th][key] || LINE[th].local;
   const tagColor = (r, th = theme) => {
     if (!r) return LINE[th].local;
@@ -245,7 +268,19 @@
     if (r.label === "Easy Loop") return "Loop";
     return r.label;
   };
-  const badgeHTML = (r, size = "") => `<span class="badge${isRound(r) ? " round" : ""}${size ? " " + size : ""}" style="background:${tagColor(r)};color:${tagText(r)}" aria-hidden="true">${esc(shortLabel(r))}</span>`;
+  const badgeHTML = (r, size = "") => {
+    const everyday = isEveryday(r);
+    const color = tagColor(r);
+    const textColor = everyday ? tagText(r) : color;
+    const partTimeCls = !everyday ? " part-time" : "";
+    const roundCls = isRound(r) ? " round" : "";
+    const sizeCls = size ? " " + size : "";
+    const suspCls = isRouteSuspended(r) ? " suspended" : "";
+    const style = everyday
+      ? `background:${color};color:${textColor}`
+      : `--badge-c:${color};border-color:${color};color:${color}`;
+    return `<span class="badge${roundCls}${sizeCls}${partTimeCls}${suspCls}" style="${style}" aria-hidden="true">${esc(shortLabel(r))}</span>`;
+  };
   const freqText = (r) => {
     const w = r.sched.weekday;
     if (!w) return "Weekends";
@@ -659,6 +694,153 @@
     x.fillText(ref, w / 2, h / 2 + (net === "us-state" ? 0.5 : 1.5));
     if (!map.hasImage(id)) map.addImage(id, { width: W, height: H, data: x.getImageData(0, 0, W, H).data }, { pixelRatio: dpr });
   }
+
+  const poiEmoji = (kind) => ({
+    school: "🎓", hospital: "🏥", stadium: "🏟️", sight: "⭐", park: "🌳", zoo: "🐾", museum: "🏛️", library: "📚", ferry: "⛴️", civic: "🏛️"
+  })[kind] || "📍";
+
+  const poiKindTitle = (kind) => ({
+    school: "College / University", hospital: "Hospital / Medical Center", stadium: "Stadium / Arena", sight: "Major Point of Interest",
+    park: "Park / Recreation", zoo: "Zoo / Aquarium", museum: "Museum / Culture", library: "Public Library", ferry: "Ferry Terminal", civic: "Civic Landmark"
+  })[kind] || "Point of Interest";
+
+  const poiColor = (kind) => (theme === "dark" ? POI_COLOR_D : POI_COLOR)[kind] || "#3b82f6";
+
+  const KEY_DESTINATIONS = [
+    { id: "dest-space-needle", name: "Space Needle & Seattle Center", short: "Space Needle", kind: "sight", desc: "Seattle icon, Seattle Center Monorail terminal, Chihuly Garden and Glass, and Pacific Science Center.", coords: [-122.3493, 47.6205], transit: "Seattle Center Monorail, RapidRide D Line, Routes 1, 2, 3, 4, 13, 24, 33" },
+    { id: "dest-pike-place", name: "Pike Place Market", short: "Pike Place Market", kind: "sight", desc: "Historic public market overlooking Elliott Bay, opened in 1907.", coords: [-122.3421, 47.6097], transit: "Westlake Link Station (1 Line, 2 Line), Routes 1, 2, 3, 4, 7, 14, 24, 33, 40, 70, RapidRide C, D, E, H" },
+    { id: "dest-aquarium", name: "Seattle Aquarium & Waterfront", short: "Seattle Aquarium", kind: "zoo", desc: "Puget Sound marine exhibits on Pier 59 and the Ocean Pavilion.", coords: [-122.3425, 47.6074], transit: "Colman Dock Ferries, Pier 50 Water Taxi, Routes 1, 2, 3, 4, 24, 33, RapidRide C" },
+    { id: "dest-climate-pledge", name: "Climate Pledge Arena", short: "Climate Pledge Arena", kind: "stadium", desc: "Home of Seattle Kraken (NHL) and Seattle Storm (WNBA).", coords: [-122.3539, 47.6221], transit: "Seattle Center Monorail, Routes 1, 2, 3, 4, 13, 24, 33, RapidRide D Line" },
+    { id: "dest-tmobile-park", name: "T-Mobile Park", short: "T-Mobile Park", kind: "stadium", desc: "Home of Seattle Mariners (MLB), retractable roof ballpark in SoDo.", coords: [-122.3325, 47.5914], transit: "Stadium & SODO Link Stations (1 Line, 2 Line), Sounder Trains, Routes 21, 101, 131, 132, 150" },
+    { id: "dest-lumen-field", name: "Lumen Field & Event Center", short: "Lumen Field", kind: "stadium", desc: "Home of Seattle Seahawks (NFL) and Seattle Sounders FC (MLS).", coords: [-122.3316, 47.5952], transit: "Stadium & Pioneer Square Link Stations, King Street Station (Sounder/Amtrak), Routes 21, 101, 124, 150" },
+    { id: "dest-uw", name: "University of Washington", short: "Univ of Washington", kind: "school", desc: "Flagship public university in the U District, campus for 50,000 students.", coords: [-122.3035, 47.6553], transit: "Univ of Washington & U District Link Stations (1 Line), Routes 44, 45, 65, 75, 255, 372" },
+    { id: "dest-seattle-u", name: "Seattle University", short: "Seattle University", kind: "school", desc: "Jesuit Catholic university campus on First Hill.", coords: [-122.3175, 47.6104], transit: "First Hill Streetcar, RapidRide G Line, Routes 2, 3, 4, 12, 193" },
+    { id: "dest-spu", name: "Seattle Pacific University", short: "Seattle Pacific Univ", kind: "school", desc: "Private Christian university campus in northern Queen Anne.", coords: [-122.3618, 47.6495], transit: "Routes 13, 31, 32" },
+    { id: "dest-scc", name: "Seattle Central College", short: "Seattle Central College", kind: "school", desc: "Community college campus on Capitol Hill directly next to light rail.", coords: [-122.3195, 47.6163], transit: "Capitol Hill Link Station (1 Line), First Hill Streetcar, Routes 8, 10, 49" },
+    { id: "dest-bellevue-college", name: "Bellevue College", short: "Bellevue College", kind: "school", desc: "Largest open-access higher education institution in Washington State.", coords: [-122.1485, 47.5855], transit: "Routes 226, 245, 271, Sound Transit 554" },
+    { id: "dest-harborview", name: "Harborview Medical Center", short: "Harborview Hospital", kind: "hospital", desc: "Only Level 1 adult and pediatric trauma center in WA, AK, MT, and ID.", coords: [-122.3245, 47.6042], transit: "First Hill Streetcar, Routes 3, 4, 193" },
+    { id: "dest-swedish-first-hill", name: "Swedish Medical Center - First Hill", short: "Swedish First Hill", kind: "hospital", desc: "Largest hospital campus in Seattle with cardiac and cancer centers.", coords: [-122.3235, 47.6085], transit: "First Hill Streetcar, RapidRide G Line, Routes 2, 3, 4, 12" },
+    { id: "dest-virginia-mason", name: "Virginia Mason Medical Center", short: "Virginia Mason", kind: "hospital", desc: "Major multi-specialty medical center on First Hill.", coords: [-122.3298, 47.6095], transit: "RapidRide G Line, Routes 2, 3, 4, 12" },
+    { id: "dest-childrens", name: "Seattle Children's Hospital", short: "Children's Hospital", kind: "hospital", desc: "Premier pediatric referral hospital for the Pacific Northwest.", coords: [-122.2825, 47.6625], transit: "Routes 65, 75" },
+    { id: "dest-uw-medical", name: "UW Medical Center - Montlake", short: "UW Medical Center", kind: "hospital", desc: "World-renowned academic medical center adjacent to Husky Stadium.", coords: [-122.3090, 47.6495], transit: "Univ of Washington Link Station (1 Line), Routes 44, 45, 65, 75, 255" },
+    { id: "dest-colman-dock", name: "Colman Dock (Pier 52 WSF)", short: "Colman Dock (WSF)", kind: "ferry", desc: "Washington State Ferries terminal for Bainbridge Island and Bremerton.", coords: [-122.3385, 47.6015], transit: "WSF Bainbridge & Bremerton Ferries, Pioneer Square Link Station, Routes 1, 2, 3, 4, 24, 33" },
+    { id: "dest-pier-50", name: "Pier 50 Passenger Ferry Terminal", short: "Pier 50 Ferry Terminal", kind: "ferry", desc: "Passenger-only fast ferries to West Seattle, Vashon, Bremerton, and Kingston.", coords: [-122.3375, 47.6005], transit: "King County Water Taxi, Kitsap Fast Ferries, Pioneer Square Link Station" },
+    { id: "dest-woodland-zoo", name: "Woodland Park Zoo", short: "Woodland Park Zoo", kind: "zoo", desc: "Award-winning 92-acre zoological garden in Phinney Ridge.", coords: [-122.3540, 47.6685], transit: "RapidRide E Line, Route 5" },
+    { id: "dest-museum-flight", name: "Museum of Flight", short: "Museum of Flight", kind: "museum", desc: "Largest independent non-profit air and space museum in the world at Boeing Field.", coords: [-122.2980, 47.5185], transit: "Route 124" },
+    { id: "dest-mopop", name: "Museum of Pop Culture (MoPOP)", short: "MoPOP", kind: "museum", desc: "Iconic Frank Gehry building dedicated to music, sci-fi, and pop culture.", coords: [-122.3482, 47.6215], transit: "Seattle Center Monorail, Routes 1, 2, 3, 4, 13, 24, 33, RapidRide D" },
+    { id: "dest-spl-central", name: "Seattle Central Library", short: "Central Library", kind: "library", desc: "Architecturally celebrated Rem Koolhaas 11-story glass downtown library.", coords: [-122.3330, 47.6067], transit: "Symphony Link Station, Routes 2, 3, 4, 7, 12, 14, 24, 33, 40, RapidRide C, D, E, G, H" },
+    { id: "dest-convention-center", name: "Seattle Convention Center", short: "Convention Center", kind: "civic", desc: "Arch and Summit convention buildings in Downtown Seattle.", coords: [-122.3320, 47.6115], transit: "Westlake Link Station, First Hill Streetcar, Routes 7, 10, 11, 49, RapidRide G Line" },
+    { id: "dest-discovery-park", name: "Discovery Park", short: "Discovery Park", kind: "park", desc: "Seattle's largest city park (534 acres) on Magnolia overlooking Puget Sound.", coords: [-122.4180, 47.6580], transit: "Route 24, Route 33" },
+    { id: "dest-green-lake", name: "Green Lake Park", short: "Green Lake Park", kind: "park", desc: "Beloved freshwater lake with 2.8-mile recreation loop trail.", coords: [-122.3290, 47.6795], transit: "Roosevelt Link Station, Routes 20, 45, 62, RapidRide E Line" },
+    { id: "dest-gas-works", name: "Gas Works Park", short: "Gas Works Park", kind: "park", desc: "Iconic former gasification plant park on the north shore of Lake Union.", coords: [-122.3345, 47.6455], transit: "Route 31, Route 32, Route 62" },
+    { id: "dest-volunteer-park", name: "Volunteer Park", short: "Volunteer Park", kind: "park", desc: "Capitol Hill Olmsted-designed park with Seattle Asian Art Museum and Conservatory.", coords: [-122.3150, 47.6300], transit: "Route 10, Route 49" },
+    { id: "dest-seward-park", name: "Seward Park", short: "Seward Park", kind: "park", desc: "300-acre peninsula on Lake Washington with old-growth forest and beach.", coords: [-122.2530, 47.5500], transit: "Route 50" },
+    { id: "dest-alki-beach", name: "Alki Beach Park", short: "Alki Beach", kind: "park", desc: "Famous 2.5-mile beach strip along Puget Sound with skyline views.", coords: [-122.4080, 47.5815], transit: "Route 50, King County Water Taxi (West Seattle Route)" },
+    { id: "dest-arboretum", name: "Washington Park Arboretum", short: "Arboretum", kind: "park", desc: "230-acre botanical collection on Lake Washington with Japanese Garden.", coords: [-122.2950, 47.6360], transit: "Route 11, Route 43, Route 48" },
+    { id: "dest-tacoma-dome", name: "Tacoma Dome & Station", short: "Tacoma Dome", kind: "stadium", desc: "Major indoor arena and southern Sound Transit / Amtrak rail hub.", coords: [-122.4270, 47.2420], transit: "Sounder S Line, T Line Light Rail, Amtrak Cascades, Pierce Transit" }
+  ];
+
+  function destinationsGeoJSON() {
+    const dark = theme === "dark";
+    const colors = dark ? POI_COLOR_D : POI_COLOR;
+    return {
+      type: "FeatureCollection",
+      features: KEY_DESTINATIONS.map((d) => ({
+        type: "Feature",
+        properties: {
+          id: d.id,
+          name: d.name,
+          short: d.short,
+          kind: d.kind,
+          color: colors[d.kind] || (dark ? "#fff" : "#1d1d1f"),
+          transit: d.transit,
+        },
+        geometry: { type: "Point", coordinates: d.coords },
+      })),
+    };
+  }
+
+  function destLayers(P) {
+    const dark = theme === "dark";
+    return [
+      {
+        id: "destinations-icon",
+        type: "symbol",
+        source: "destinations",
+        minzoom: 11.2,
+        layout: {
+          "icon-image": ["concat", "poi:", ["get", "kind"], ":", dark ? "d" : "l"],
+          "icon-size": ["interpolate", ["linear"], ["zoom"], 11.2, 0.82, 14, 1.05],
+          "icon-allow-overlap": false,
+          "icon-ignore-placement": false,
+          "icon-padding": 8,
+        },
+      },
+      {
+        id: "destinations-label",
+        type: "symbol",
+        source: "destinations",
+        minzoom: 11.8,
+        layout: {
+          "text-field": ["get", "short"],
+          "text-font": F_BOLD,
+          "text-size": ["interpolate", ["linear"], ["zoom"], 11.8, 10, 15, 12],
+          "text-anchor": "left",
+          "text-offset": [0.95, 0],
+          "text-max-width": 8,
+          "text-optional": true,
+          "text-padding": 4,
+        },
+        paint: {
+          "text-color": ["get", "color"],
+          "text-halo-color": P.halo,
+          "text-halo-width": 1.6,
+        },
+      },
+    ];
+  }
+
+  function showDestination(d) {
+    selected = { type: "dest", id: d.id };
+    panelView = "dest";
+    openSheet("half");
+    map.easeTo({ center: d.coords, zoom: Math.max(map.getZoom(), 14.5), duration: 700 });
+    const html = `${backBtn}
+      <div class="destination-view">
+        <div class="hero">
+          <span class="poi-icon-badge ${esc(d.kind)}">${poiEmoji(d.kind)}</span>
+          <div>
+            <h2>${esc(d.name)}</h2>
+            <p>${esc(poiKindTitle(d.kind))}</p>
+          </div>
+        </div>
+        <p class="desc">${esc(d.desc)}</p>
+        <div class="card-actions">
+          <button type="button" class="action-btn dir-inapp-btn dest press" data-dir-dest-lat="${d.coords[1]}" data-dir-dest-lon="${d.coords[0]}" data-dir-dest-name="${esc(d.name)}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>
+            <span>Plan trip here</span>
+          </button>
+          <button type="button" class="action-btn dir-inapp-btn orig press" data-dir-orig-lat="${d.coords[1]}" data-dir-orig-lon="${d.coords[0]}" data-dir-orig-name="${esc(d.name)}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            <span>Trip from here</span>
+          </button>
+        </div>
+        <h3 class="section">Transit Connections</h3>
+        <div class="dest-transit-card">
+          <span class="dest-tr-icon">🚌</span>
+          <div class="dest-tr-text">
+            <strong>Serving routes & stations</strong>
+            <p>${esc(d.transit)}</p>
+          </div>
+        </div>
+      </div>`;
+    setView(html);
+    $("#back").addEventListener("click", () => {
+      selected = null;
+      panelView = null;
+      showHome();
+    });
+  }
   function liveLayers(P) {
     return [
       // an upright badge that says what it is: a bus, a train, a streetcar or a boat...
@@ -683,14 +865,15 @@
     return [
       { id: "stops", type: "circle", source: "stops", minzoom: 14.6,
         paint: {
-          "circle-radius": zr([[14.6, 2], [16, 3.4], [18, 5.5]]),
-          "circle-color": P.stopFill, "circle-stroke-color": P.stopStroke,
-          "circle-stroke-width": zr([[14.6, 1], [17, 1.6]]),
+          "circle-radius": ["case", ["==", ["get", "suspended"], 1], zr([[14.6, 2.8], [16, 4.4], [18, 6.8]]), zr([[14.6, 2], [16, 3.4], [18, 5.5]])],
+          "circle-color": ["case", ["==", ["get", "suspended"], 1], "#d0213b", P.stopFill],
+          "circle-stroke-color": ["case", ["==", ["get", "suspended"], 1], "#ffffff", P.stopStroke],
+          "circle-stroke-width": ["case", ["==", ["get", "suspended"], 1], zr([[14.6, 1.4], [17, 2.2]]), zr([[14.6, 1], [17, 1.6]])],
         } },
       { id: "stop-name", type: "symbol", source: "stops", minzoom: 17.2,
         layout: { "text-field": ["get", "name"], "text-font": F_REG, "text-size": 11, "text-variable-anchor": ["left", "right"],
           "text-radial-offset": 0.8, "text-max-width": 9, "text-optional": true, "text-padding": 6 },
-        paint: { "text-color": P.label, "text-halo-color": P.halo, "text-halo-width": 1.4 } },
+        paint: { "text-color": ["case", ["==", ["get", "suspended"], 1], "#d0213b", P.label], "text-halo-color": P.halo, "text-halo-width": 1.4 } },
       { id: "stations", type: "circle", source: "stations",
         filter: ["any", ["==", ["get", "major"], 1], [">=", ["zoom"], 14], ["all", ["==", ["get", "late"], 0], [">=", ["zoom"], 12.5]]],
         paint: {
@@ -698,7 +881,8 @@
           // reads as a station without turning into a blob
           "circle-radius": zr([[9, ["*", ["get", "size"], 1.8]], [12, ["*", ["get", "size"], 2.9]], [14, ["*", ["get", "size"], 3.7]],
             [16, ["*", ["get", "size"], 4.9]], [18, ["*", ["get", "size"], 6.4]]]),
-          "circle-color": P.stationFill, "circle-stroke-color": ["get", "stroke"],
+          "circle-color": ["case", ["==", ["get", "suspended"], 1], "#d0213b", P.stationFill],
+          "circle-stroke-color": ["case", ["==", ["get", "suspended"], 1], "#ffffff", ["get", "stroke"]],
           "circle-stroke-width": zr([[9, 1.1], [12, 1.5], [14, 1.9], [17, 2.4]]),
         } },
       { id: "station-name", type: "symbol", source: "stations",
@@ -707,7 +891,7 @@
           "text-size": ["interpolate", ["linear"], ["zoom"], 11, 10.5, 15, 13],
           "text-variable-anchor": ["right", "left", "top", "bottom"], "text-radial-offset": 0.9, "text-justify": "auto",
           "text-max-width": 8, "text-padding": 2 },
-        paint: { "text-color": P.place, "text-halo-color": P.halo, "text-halo-width": 2 } },
+        paint: { "text-color": ["case", ["==", ["get", "suspended"], 1], "#d0213b", P.place], "text-halo-color": P.halo, "text-halo-width": 2 } },
       { id: "flex", type: "symbol", source: "flexlabels", minzoom: 10,
         layout: { "text-field": ["concat", "Metro Flex\n", ["get", "name"]], "text-font": F_BOLD,
           "text-size": ["interpolate", ["linear"], ["zoom"], 10, 10.5, 14, 12.5], "text-max-width": 10, "text-padding": 4 },
@@ -1012,8 +1196,9 @@
     const groups = [], all = list.split(".").map(Number);
     for (const r of rs) {
       const c = tagColor(r, dark ? "dark" : "light");
-      let g = groups.find((x) => x.c === c);
-      if (!g) groups.push((g = { c, fg: tagText(r, dark ? "dark" : "light"), items: [], refs: [] }));
+      const everyday = isEveryday(r);
+      let g = groups.find((x) => x.c === c && x.everyday === everyday);
+      if (!g) groups.push((g = { c, fg: everyday ? tagText(r, dark ? "dark" : "light") : c, everyday, items: [], refs: [] }));
       g.items.push(shortLabel(r));
       g.refs.push({ r: LINEIDX[r.id] });
     }
@@ -1046,15 +1231,23 @@
       });
       ctx.fillStyle = dark ? "#1c1c1e" : "#ffffff";
       roundRect(ctx, x - halo, 0, g.w + halo * 2, H, rad + halo); ctx.fill();
-      ctx.fillStyle = g.c;
-      roundRect(ctx, x, halo, g.w, h, rad); ctx.fill();
+      if (g.everyday) {
+        ctx.fillStyle = g.c;
+        roundRect(ctx, x, halo, g.w, h, rad); ctx.fill();
+      } else {
+        ctx.fillStyle = dark ? "rgba(255,255,255,0.08)" : "#ffffff";
+        roundRect(ctx, x, halo, g.w, h, rad); ctx.fill();
+        ctx.strokeStyle = g.c;
+        ctx.lineWidth = 1.25 * dpr;
+        roundRect(ctx, x + 0.6 * dpr, halo + 0.6 * dpr, g.w - 1.2 * dpr, h - 1.2 * dpr, rad - 0.5 * dpr); ctx.stroke();
+      }
       let tx = x + (g.w - (g.ws.reduce((a, b) => a + b, 0) + sep * (g.items.length - 1))) / 2;
       g.items.forEach((t, k) => {
         ctx.fillStyle = g.fg;
         ctx.fillText(t, tx, halo + h / 2 + 0.5 * dpr);
         tx += g.ws[k];
         if (k < g.items.length - 1) {
-          ctx.fillStyle = g.fg === "#ffffff" ? "rgba(255,255,255,0.42)" : "rgba(0,0,0,0.28)";
+          ctx.fillStyle = g.everyday ? (g.fg === "#ffffff" ? "rgba(255,255,255,0.42)" : "rgba(0,0,0,0.28)") : (dark ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.2)");
           ctx.fillRect(tx + sep / 2 - 0.5 * dpr, halo + h * 0.24, 1 * dpr, h * 0.52);
           tx += sep;
         }
@@ -1104,7 +1297,7 @@
       if (linkLines.size === 1) stroke = LINE[theme][[...linkLines][0]];
       const size = tOnly ? 0.8 : cats.has("link") ? (rs.filter((r) => r.cat === "link").length > 1 ? 1.15 : 1) : major ? 0.95 : 0.7;
       const snap = rs.length && rs.every((r) => r.cat === "streetcar") ? "streetcar" : "";
-      return { type: "Feature", properties: { id: s.id, name: s.name, major: major ? 1 : 0, late: tOnly ? 1 : 0, size, stroke, snap },
+      return { type: "Feature", properties: { id: s.id, name: s.name, major: major ? 1 : 0, late: tOnly ? 1 : 0, size, stroke, snap, suspended: stopIsSuspended(s.id) ? 1 : 0 },
         geometry: { type: "Point", coordinates: [s.lon, s.lat] } };
     }) };
   }
@@ -1120,7 +1313,7 @@
         return !anyCatOn || enabledCat(r.cat);
       });
     });
-    return { type: "FeatureCollection", features: list.map((s) => ({ type: "Feature", properties: { id: s.id, name: s.name },
+    return { type: "FeatureCollection", features: list.map((s) => ({ type: "Feature", properties: { id: s.id, name: s.name, suspended: stopIsSuspended(s.id) ? 1 : 0 },
       geometry: { type: "Point", coordinates: [s.lon, s.lat] } })) };
   }
   function maskGeoJSON() {
@@ -1138,13 +1331,15 @@
     if (!map || !map.isStyleLoaded()) return;
     const P = BASE[theme];
     netDim = 1; // the loop below resets every layer to its normal look
-    for (const set of [baseLayers(P), transitLayers(P), areaLayers(P), poiLayers(P), stopLayers(P), tripLayers(P), liveLayers(P)]) {
+    for (const set of [baseLayers(P), transitLayers(P), areaLayers(P), poiLayers(P), destLayers(P), stopLayers(P), tripLayers(P), liveLayers(P)]) {
       for (const L of set) {
         if (!map.getLayer(L.id)) continue;
         for (const [k, v] of Object.entries(L.paint || {})) map.setPaintProperty(L.id, k, v);
       }
     }
     for (const L of poiLayers(P)) if (map.getLayer(L.id) && L.layout && L.layout["icon-image"]) map.setLayoutProperty(L.id, "icon-image", L.layout["icon-image"]);
+    for (const L of destLayers(P)) if (map.getLayer(L.id) && L.layout && L.layout["icon-image"]) map.setLayoutProperty(L.id, "icon-image", L.layout["icon-image"]);
+    if (map.getSource("destinations")) map.getSource("destinations").setData(destinationsGeoJSON());
     refreshStations();
     rebuild();
     applySelectionStyle();
@@ -1622,6 +1817,8 @@
   }
   // new alerts: refresh what's on screen
   function onAlerts() {
+    if (map && map.getSource("stops")) map.getSource("stops").setData(stopsGeoJSON());
+    if (map && map.getSource("stations")) refreshStations();
     if (panelView === "alerts") showAlerts(true);
     else if (!selected) showHome(true);
     else if (selected.type === "route" && RBY[selected.id]) fillRouteAlerts(RBY[selected.id]);
@@ -2897,9 +3094,14 @@
     const headwayText = w.mid_n >= 3 ? `Every ${w.mid} min` : (w.am_n || w.pm_n) ? "Rush hour only" : `${w.trips} trips/day`;
     const spanText = w.span_h >= 22 ? "24 Hours · Night Owl" : `Until ${w.last.replace(" ", " ")}`;
     const peakText = (w.am_n && w.am < w.mid) ? `Peak: every ${w.am} min` : "";
+    const everyday = isEveryday(r);
+    const runsPill = everyday
+      ? `<span class="freq-pill everyday" title="Runs 7 days a week">📅 7 Days · Every day</span>`
+      : `<span class="freq-pill parttime" title="Part-time service (no weekend service)">🕒 Mon–Fri only · Part-time</span>`;
     return `<div class="freq-badge-row">
       <span class="freq-pill headway" title="Typical midday wait time"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 1 0 8 8A8 8 0 0 0 8 0zm.5 4.5v3.25l2.5 1.5-.75 1.25-3.25-2V4.5z"/></svg>${esc(headwayText)}</span>
       <span class="freq-pill span" title="Daily hours of service"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M6 .278a.768.768 0 0 1 .08.858 7.208 7.208 0 0 0-.878 3.46c0 4.021 3.278 7.277 7.318 7.277.527 0 1.04-.055 1.533-.16a.787.787 0 0 1 .81.316.733.733 0 0 1-.031.893A8.349 8.349 0 0 1 8.344 16C3.734 16 0 12.286 0 7.71 0 4.266 2.114 1.312 5.124.06A.752.752 0 0 1 6 .278z"/></svg>${esc(spanText)}</span>
+      ${runsPill}
       ${peakText ? `<span class="freq-pill peak" title="Morning peak frequency"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M11.251.068a.5.5 0 0 1 .227.58L9.677 6.5H13a.5.5 0 0 1 .364.843l-8 8.5a.5.5 0 0 1-.842-.49L6.323 9.5H3a.5.5 0 0 1-.364-.843l8-8.5a.5.5 0 0 1 .615-.089z"/></svg>${esc(peakText)}</span>` : ""}
     </div>`;
   }
@@ -3043,6 +3245,8 @@
     if (panelView === "directions") return renderTripPlanView();
     if (panelView === "layers") return showLayers(quiet);
     if (panelView === "alerts") return showAlerts(quiet);
+    if (panelView === "through-routes") return showThroughRoutesGuide(quiet);
+    if (panelView === "legend") return showLegendGuide(quiet);
     if (panelView === "corridor") return showCorridor(null, quiet);
     if (panelView === "nearby") return;
 
@@ -3190,11 +3394,24 @@
       <p class="live-line${live ? "" : " off"}"><span class="pulse" aria-hidden="true"></span><span${live ? ' id="liveDesc"' : ""}>${live ? esc(liveStatusText()) : "Vehicles are hidden"}</span></p>
       ${favSectionHTML}
       <h3 class="section">Explore</h3>
-      <ul class="group" role="list"><li><button class="row nav-row" id="openLayers" type="button">
-        <span class="icon"><svg viewBox="0 0 30 30" aria-hidden="true"><path d="M15 7 25 12 15 17 5 12Z" fill="var(--accent)" opacity=".9"/><path d="M6.5 16.3 15 20.5l8.5-4.2" stroke="var(--accent)" stroke-width="1.8" fill="none" stroke-linejoin="round" stroke-linecap="round" opacity=".55"/></svg></span>
-        <span class="txt"><span class="name">Layers</span><span class="desc">${shown} of ${LAYERS.length} shown${isDefaultLayers() ? "" : " · customized"}</span></span>
-        <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="m1.5 1.5 5 5.5-5 5.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </button></li>${alertRow}</ul>
+      <ul class="group" role="list">
+        <li><button class="row nav-row" id="openLayers" type="button">
+          <span class="icon"><svg viewBox="0 0 30 30" aria-hidden="true"><path d="M15 7 25 12 15 17 5 12Z" fill="var(--accent)" opacity=".9"/><path d="M6.5 16.3 15 20.5l8.5-4.2" stroke="var(--accent)" stroke-width="1.8" fill="none" stroke-linejoin="round" stroke-linecap="round" opacity=".55"/></svg></span>
+          <span class="txt"><span class="name">Layers</span><span class="desc">${shown} of ${LAYERS.length} shown${isDefaultLayers() ? "" : " · customized"}</span></span>
+          <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="m1.5 1.5 5 5.5-5 5.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button></li>
+        <li><button class="row nav-row" id="openThroughRoutes" type="button">
+          <span class="icon" style="background:#059669;color:#fff;font-size:15px;display:flex;align-items:center;justify-content:center;border-radius:8px">🔄</span>
+          <span class="txt"><span class="name">Stay on the bus</span><span class="desc">Direct transfers through Downtown Seattle</span></span>
+          <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="m1.5 1.5 5 5.5-5 5.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button></li>
+        <li><button class="row nav-row" id="openLegendGuide" type="button">
+          <span class="icon" style="background:#2563eb;color:#fff;font-size:15px;display:flex;align-items:center;justify-content:center;border-radius:8px">📖</span>
+          <span class="txt"><span class="name">Transit Map Guide & Legend</span><span class="desc">Service levels, bus runs & symbols</span></span>
+          <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="m1.5 1.5 5 5.5-5 5.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button></li>
+        ${alertRow}
+      </ul>
       ${nonTrailKeys.length ? `<h2 class="section">On the map</h2><ul class="key-grid" role="list">${nonTrailKeys.map((l) =>
         `<li><span class="sw">${swatch(l)}</span><span>${esc(KEY_NAME[l.key])}</span></li>`).join("")}</ul>` : ""}
       ${bikeLegendHTML}
@@ -3204,6 +3421,8 @@
     if (quiet && existing) existing.outerHTML = html;
     else setView(html);
     $("#openLayers")?.addEventListener("click", () => { panelView = "layers"; showLayers(); openSheet("half"); });
+    $("#openThroughRoutes")?.addEventListener("click", () => { panelView = "through-routes"; showThroughRoutesGuide(); openSheet("half"); });
+    $("#openLegendGuide")?.addEventListener("click", () => { panelView = "legend"; showLegendGuide(); openSheet("half"); });
     const oa = $("#openAlerts");
     if (oa) oa.addEventListener("click", () => { panelView = "alerts"; showAlerts(); openSheet("half"); });
     bindFavListEvents();
@@ -3214,6 +3433,175 @@
         applyLayerToggles();
         showHome(true);
       });
+    });
+  }
+
+  function showThroughRoutesGuide(quiet) {
+    panelView = "through-routes";
+    const pairsHTML = THROUGH_ROUTES.map((tr) => {
+      const routes = tr.ids.map((id) => RBY[id]).filter(Boolean);
+      return `
+        <div class="tr-guide-card">
+          <div class="tr-guide-header">
+            <span class="tr-time-tag">${esc(tr.time === "all-day" ? "All Day Service" : tr.time)}</span>
+          </div>
+          <div class="tr-guide-pair">
+            <div class="tr-col">
+              ${routes[0] ? badgeHTML(routes[0]) : ""}
+              <span class="tr-route-title">${esc(routes[0] ? routeTitle(routes[0]) : "")}</span>
+            </div>
+            <span class="tr-guide-arrow">➔</span>
+            <div class="tr-col">
+              ${routes.slice(1).map((r) => `<div class="tr-pair-sub">${badgeHTML(r)} <span class="tr-route-title">${esc(routeTitle(r))}</span></div>`).join("")}
+            </div>
+          </div>
+          <p class="tr-guide-desc">${esc(tr.desc)}</p>
+          <div class="tr-guide-actions">
+            ${routes.map((r) => `<button type="button" class="tr-partner-btn press" data-tr-select="${esc(r.id)}">${badgeHTML(r)} <span>View Line</span></button>`).join("")}
+          </div>
+        </div>`;
+    }).join("");
+
+    const html = `${backBtn}
+      <div class="through-routes-view">
+        <div class="hero">
+          <span class="icon" style="background:#059669;color:#fff;font-size:20px;display:flex;align-items:center;justify-content:center;border-radius:12px">🔄</span>
+          <div>
+            <h2>Stay on the Bus</h2>
+            <p>Direct downtown transfer pairs</p>
+          </div>
+        </div>
+        <p class="hint">Metro pairs these routes through Downtown Seattle. Stay on board to continue your trip across town without paying another fare or transferring at the curb.</p>
+        <div class="tr-list">
+          ${pairsHTML}
+        </div>
+      </div>`;
+    setView(html);
+    $("#back")?.addEventListener("click", () => {
+      panelView = "home";
+      showHome();
+    });
+    body().querySelectorAll("[data-tr-select]").forEach((b) => {
+      b.addEventListener("click", () => {
+        const id = b.dataset.trSelect;
+        if (id && RBY[id]) selectRoute(id, { fit: true });
+      });
+    });
+  }
+
+  function showLegendGuide(quiet) {
+    panelView = "legend";
+    const busBlue = LINE[theme].local;
+    const peakColor = LINE[theme].peak;
+    const rapidRed = LINE[theme].rapidride;
+    const freqColor = LINE[theme].frequent;
+
+    const html = `${backBtn}
+      <div class="legend-guide-view">
+        <div class="hero">
+          <span class="icon" style="background:#2563eb;color:#fff;font-size:20px;display:flex;align-items:center;justify-content:center;border-radius:12px">📖</span>
+          <div>
+            <h2>Transit Map Guide & Legend</h2>
+            <p>Official service levels, bus runs & symbols</p>
+          </div>
+        </div>
+
+        <div class="legend-card">
+          <div class="legend-section">
+            <h3 class="legend-sec-title">Frequent Bus Service</h3>
+            <div class="legend-row">
+              <span class="legend-swatch" style="background:${freqColor};height:5px"></span>
+              <div><strong>Frequent bus route</strong><br><span class="muted">Runs every 10–15 minutes or better, all day every day</span></div>
+            </div>
+            <div class="legend-row">
+              <span class="legend-swatch" style="background:${rapidRed};height:5px"></span>
+              <div><strong>RapidRide BRT (Lines A–H)</strong><br><span class="muted">High-frequency arterial bus rapid transit</span></div>
+            </div>
+          </div>
+
+          <div class="legend-section">
+            <h3 class="legend-sec-title">All Day Service (Every 20–60 min)</h3>
+            <div class="legend-row">
+              <span class="legend-swatch" style="background:${busBlue};height:4px"></span>
+              <div><strong>Main route</strong><br><span class="muted">Standard all-day service most of the day</span></div>
+            </div>
+            <div class="legend-row">
+              <span class="legend-swatch dashed" style="color:${peakColor};height:3px"></span>
+              <div><strong>Certain trips or peak only</strong><br><span class="muted">Runs during commute rush hours or select scheduled trips</span></div>
+            </div>
+            <div class="legend-row">
+              <span class="legend-swatch" style="background:${freqColor};height:3px"></span>
+              <div><strong>Infrequent section of Frequent route</strong><br><span class="muted">Outlying branch with reduced off-peak frequency</span></div>
+            </div>
+          </div>
+
+          <div class="legend-section">
+            <h3 class="legend-sec-title">Special & On-Demand Service</h3>
+            <div class="legend-row">
+              <span class="legend-swatch dashed" style="color:${peakColor};height:3px"></span>
+              <div><strong>Peak-only bus</strong><br><span class="muted">Weekday commute hours only</span></div>
+            </div>
+            <div class="legend-row">
+              <span class="legend-swatch" style="background:repeating-linear-gradient(45deg, #b83280, #b83280 4px, transparent 4px, transparent 8px);height:14px;border-radius:4px"></span>
+              <div><strong>DART / Metro Flex service</strong><br><span class="muted">Request pick-up/drop-off anywhere within the service zone</span></div>
+            </div>
+            <div class="legend-row">
+              <span class="legend-swatch dashed" style="color:#0d768a;height:4px"></span>
+              <div><strong>Ferries & Water Taxi</strong><br><span class="muted">WSF Bainbridge/Bremerton, King County Water Taxi, Kitsap Fast Ferries</span></div>
+            </div>
+            <div class="legend-row">
+              <span class="legend-swatch" style="background:#e8772e;height:4px"></span>
+              <div><strong>Seattle Streetcar</strong><br><span class="muted">First Hill (FH) & South Lake Union (SL) lines</span></div>
+            </div>
+            <div class="legend-row">
+              <span class="legend-swatch" style="background:#8a8f98;height:4px"></span>
+              <div><strong>Seattle Center Monorail</strong><br><span class="muted">Westlake Center ↔ Seattle Center</span></div>
+            </div>
+          </div>
+
+          <div class="legend-section">
+            <h3 class="legend-sec-title">Bus Runs & Badge Types</h3>
+            <div class="legend-row">
+              <div class="legend-badge-sample">
+                <span class="badge" style="background:${busBlue};color:#fff">128</span>
+                <span class="badge" style="background:${freqColor};color:#fff">372</span>
+              </div>
+              <div><strong>Every day</strong><br><span class="muted">Solid filled badge indicates 7-day regular service</span></div>
+            </div>
+            <div class="legend-row">
+              <div class="legend-badge-sample">
+                <span class="badge part-time" style="--badge-c:${busBlue};border-color:${busBlue};color:${busBlue}">31</span>
+                <span class="badge part-time" style="--badge-c:${freqColor};border-color:${freqColor};color:${freqColor}">372</span>
+              </div>
+              <div><strong>Not every day (Part-time)</strong><br><span class="muted">Lowlighted badge indicates part-time service (e.g. Mon–Fri only)</span></div>
+            </div>
+            <div class="legend-row">
+              <div class="legend-badge-sample">
+                <span class="badge suspended" style="background:${busBlue};color:#fff">111</span>
+              </div>
+              <div><strong>Suspended service</strong><br><span class="muted">Line through badge or red stop circle indicates closed/suspended service</span></div>
+            </div>
+          </div>
+
+          <div class="legend-section">
+            <h3 class="legend-sec-title">Connections & Points of Interest</h3>
+            <div class="legend-row"><span style="font-size:18px">★</span> <div><strong>Point of Interest</strong> · Sights, waterfront, Space Needle</div></div>
+            <div class="legend-row"><span style="font-size:18px">🎓</span> <div><strong>College / University</strong> · UW, Seattle U, SPU, SCC, Bellevue College</div></div>
+            <div class="legend-row"><span style="font-size:18px">🏥</span> <div><strong>Hospital / Medical Center</strong> · Harborview, Swedish, Children's, UWMC</div></div>
+            <div class="legend-row"><span style="font-size:18px">🏟️</span> <div><strong>Stadium / Arena</strong> · Lumen Field, T-Mobile Park, Climate Pledge</div></div>
+            <div class="legend-row"><span style="font-size:18px">📖</span> <div><strong>Public Library</strong> · Seattle Central Library & regional branches</div></div>
+            <div class="legend-row"><span style="font-size:18px">🌳</span> <div><strong>Park / Green Space</strong> · Discovery Park, Green Lake, Seward Park</div></div>
+            <div class="legend-row"><span style="font-size:18px">⛴️</span> <div><strong>Ferry Terminal</strong> · Colman Dock Pier 52, Pier 50 Fast Ferry</div></div>
+            <div class="legend-row"><span style="font-size:18px">🚆</span> <div><strong>Amtrak & Sounder Train Hub</strong> · King Street Station, Tacoma Dome</div></div>
+            <div class="legend-row"><span style="font-size:18px">🅿️</span> <div><strong>Park & Ride</strong> · Major regional transit lots & garages</div></div>
+            <div class="legend-row"><span style="font-size:18px">🚲</span> <div><strong>Bicycle Facilities</strong> · Protected bike lanes, greenways & multi-use trails</div></div>
+          </div>
+        </div>
+      </div>`;
+    setView(html);
+    $("#back")?.addEventListener("click", () => {
+      panelView = "home";
+      showHome();
     });
   }
   const layersHead = () => `<h2 class="view-title">Layers</h2>${isDefaultLayers() ? "" : `<button class="text-btn" id="resetLayers" type="button">Reset</button>`}`;
@@ -3630,6 +4018,54 @@
     }
   ];
 
+  const THROUGH_ROUTES = [
+    {
+      ids: ["metro-1", "metro-14"],
+      shorts: ["1", "14"],
+      time: "all-day",
+      desc: "Stay on the bus through Downtown Seattle to travel between Kinnear (Queen Anne) and Mount Baker. No transfer or extra fare required.",
+    },
+    {
+      ids: ["metro-2", "metro-13"],
+      shorts: ["2", "13"],
+      time: "all-day",
+      desc: "Buses from West Queen Anne (Route 2) and Seattle Pacific (Route 13) continue through Downtown Seattle to Madrona Park as Route 2.",
+    },
+    {
+      ids: ["metro-5", "metro-21"],
+      shorts: ["5", "21"],
+      time: "all-day",
+      desc: "Stay on the bus through Downtown Seattle to travel between Shoreline CC / Greenwood and Westwood Village / Arbor Heights without transferring.",
+    },
+    {
+      ids: ["metro-24", "metro-33", "metro-124"],
+      shorts: ["24", "33", "124"],
+      time: "all-day",
+      desc: "Buses from West Magnolia (Route 24) and Discovery Park (Route 33) continue through Downtown Seattle to Tukwila International Blvd Station as Route 124.",
+    },
+    {
+      ids: ["metro-28", "metro-131", "metro-132"],
+      shorts: ["28", "131", "132"],
+      time: "all-day",
+      desc: "Buses from Whittier Heights and Fremont (Route 28) continue through Downtown Seattle to Georgetown, South Park, and Burien as Routes 131 and 132.",
+    },
+    {
+      ids: ["metro-33", "metro-27"],
+      shorts: ["33", "27"],
+      time: "early AM & weekends",
+      desc: "During early morning hours and weekends, Route 33 (Discovery Park) continues through Downtown Seattle as Route 27 to Colman Park / Leschi.",
+    },
+  ];
+
+  function getThroughRouteInfo(r) {
+    if (!r) return null;
+    const tr = THROUGH_ROUTES.find((t) => t.ids.includes(r.id) || t.shorts.includes(r.short));
+    if (!tr) return null;
+    const partnerIds = tr.ids.filter((id) => id !== r.id);
+    const partners = partnerIds.map((id) => RBY[id]).filter(Boolean);
+    return { ...tr, partners };
+  }
+
   function showRoute(r) {
     const w = r.sched.weekday;
     const freq = w && w.mid_n >= 3 ? `${w.mid}<small> min</small>` : w && (w.am_n || w.pm_n) ? "Rush hour" : w ? `${w.trips}<small> trips</small>` : "Weekends";
@@ -3642,6 +4078,25 @@
     const isSnow = specialFilter === "snow";
     const hillNotice = showHillNotice ? `<div class="hill-note"><span class="hill-icon">${isSnow ? "❄️" : "🚲"}</span><span><strong>${isSnow ? "Winter Snow Bypass" : "Steep Incline Corridor"} (${steepHill.grade}):</strong> ${esc(isSnow ? steepHill.snowBypass : `Traverses ${steepHill.location}. ${steepHill.snowBypass}`)}</span></div>` : "";
     const snowBanner = specialFilter === "snow" ? `<div class="snow-banner"><span class="snow-icon">${isSnowRoute(r) ? "❄️" : "⚠️"}</span><span>${isSnowRoute(r) ? "<strong>Active Winter Snow Route:</strong> Operates on plowed arterials during winter storms. Avoids steep hills and non-essential branches." : "<strong>Suspended during Snow Emergencies:</strong> This route is not part of the Emergency Snow Network and pauses during severe winter conditions."}</span></div>` : "";
+    const trInfo = getThroughRouteInfo(r);
+    const throughRouteHTML = trInfo && trInfo.partners.length ? `
+      <div class="through-route-card">
+        <div class="tr-badge-row">
+          <div class="tr-header-left">
+            <span class="tr-icon">🔄</span>
+            <span class="tr-title">Stay on the bus to transfer</span>
+          </div>
+          <span class="tr-time-tag">${esc(trInfo.time === "all-day" ? "All Day" : trInfo.time)}</span>
+        </div>
+        <div class="tr-continuation">
+          <span class="tr-from">${badgeHTML(r)}</span>
+          <span class="tr-arrow">➔</span>
+          <div class="tr-targets">
+            ${trInfo.partners.map((p) => `<button type="button" class="tr-partner-btn press" data-tr-route="${esc(p.id)}">${badgeHTML(p)} <span>${esc(routeTitle(p))}</span></button>`).join("")}
+          </div>
+        </div>
+        <p class="tr-desc">${esc(trInfo.desc)}</p>
+      </div>` : "";
     let html = `${backBtn}
       <div class="hero">${badgeHTML(r, "xl")}<div><h2>${esc(routeTitle(r))}</h2><p>${esc(r.name || "")}</p></div></div>
       <div class="chips"><span class="chip"><span class="dot" style="background:${color}"></span>${esc(CAT_NAME[r.cat])}</span><span class="chip">${esc(r.agency)}</span>${logoChips([r])}<span class="chip live-chip" id="liveChip" hidden><span class="pulse" aria-hidden="true"></span><span class="n"></span></span></div>
@@ -3657,6 +4112,7 @@
       </div>
       ${snowBanner}
       ${routeBadgesHTML(r)}
+      ${throughRouteHTML}
       <div id="routeAlerts"></div>${r.id.startsWith("wsf-") ? showFerryInfo([...new Set(pats.flatMap((p) => p.stops).filter((id) => /^wsf-\d+$/.test(id)).map((id) => +id.slice(4)))]) : ""}
       <div class="tiles">
         <div class="tile"><span class="k">Midday on weekdays</span><span class="v">${w && w.mid_n >= 3 ? "Every " : ""}${freq}</span></div>
@@ -3694,11 +4150,22 @@
         url: `${location.origin}${location.pathname}#route-${r.id}`
       });
     });
+    body().querySelectorAll("[data-tr-route]").forEach((b) => {
+      b.addEventListener("click", () => {
+        const p = RBY[b.dataset.trRoute];
+        if (p) selectRoute(p.id, { fit: true });
+      });
+    });
     const renderStops = (i) => {
       const p = pats[i];
       $("#stoplist").innerHTML = p.stops.map((sid) => {
         const s = stopIndex[sid];
-        return `<li><button type="button" data-stop="${esc(s ? s.key : "")}">${esc(s ? s.name : STOPNAMES[sid] || sid)}</button></li>`;
+        const susp = s && stopIsSuspended(s.id);
+        const name = s ? s.name : STOPNAMES[sid] || sid;
+        return `<li><button type="button" data-stop="${esc(s ? s.key : "")}" class="stop-row-btn${susp ? " is-suspended" : ""}">
+          <span class="stop-name${susp ? " suspended-text" : ""}">${esc(name)}</span>
+          ${susp ? `<span class="stop-susp-pill">🚫 Closed</span>` : ""}
+        </button></li>`;
       }).join("");
       for (const b of $("#stoplist").querySelectorAll("button")) b.addEventListener("click", () => { if (b.dataset.stop) selectStop(b.dataset.stop); });
       const tabs = [...body().querySelectorAll(".segmented button")];
@@ -3760,6 +4227,15 @@
     const cleanName = s.name.replace(/\s*-\s*Bay\s+[A-Z0-9]+/i, "").trim();
     const isRail = s.kind === "station" || rs.some((r) => ["link", "sounder"].includes(r.cat));
     const elevatorHTML = isRail ? `<a class="elevator-link press" href="https://www.soundtransit.org/ride-with-us/service-alerts" target="_blank" rel="noopener">♿ Live Station Elevators & Escalators Status ↗</a>` : "";
+    const isSusp = stopIsSuspended(s.id);
+    const suspBanner = isSusp ? `
+      <div class="stop-susp-banner">
+        <span class="susp-icon">🚫</span>
+        <div>
+          <strong>Service Suspended · Stop Temporarily Closed</strong>
+          <p>Buses are currently bypassing or not serving this stop due to an active service disruption or detour.</p>
+        </div>
+      </div>` : "";
     let html = `${backBtn}<div class="hero stop-hero press" data-stop="${esc(s.id)}" role="button" tabindex="0" title="Highlight stop on map"><span class="stop-glyph${s.kind === "stop" ? "" : " big"}" aria-hidden="true"></span><div><h2>${esc(cleanName)}${bayBadge}</h2><p>${esc(kind)}</p>${elevatorHTML}</div></div>
       ${logoChips(rs) ? `<div class="chips">${logoChips(rs)}</div>` : ""}
       <div class="card-actions">
@@ -3772,6 +4248,7 @@
           <span>Share</span>
         </button>
       </div>
+      ${suspBanner}
       <div id="stopAlerts"></div>${showFerryInfo(ferryTerminalIds(s))}
       <h3 class="section">Upcoming departures</h3><div id="stopPanelDeps">${depRowsHTML(keys, stopIds)}</div>
       ${directionsHTML(s.lat, s.lon, s.name)}
@@ -3870,6 +4347,14 @@
         hill
       });
     }
+    for (const d of KEY_DESTINATIONS) {
+      searchIndex.push({
+        kind: "dest",
+        id: d.id,
+        key: `${d.name} ${d.short} ${d.desc} ${d.transit} destination sight attraction college university hospital stadium library park poi`.toLowerCase(),
+        d
+      });
+    }
   }
   function search(q) {
     q = q.trim().toLowerCase();
@@ -3877,8 +4362,9 @@
     const words = q.split(/\s+/), scored = [];
     for (const it of searchIndex) {
       if (!words.every((w) => it.key.includes(w))) continue;
-      let score = it.kind === "route" ? 0 : it.kind === "station" ? 10 : it.kind === "pr" ? 12 : it.kind === "trail" ? 14 : it.kind === "hill" ? 16 : 20;
+      let score = it.kind === "route" ? 0 : it.kind === "dest" ? 6 : it.kind === "station" ? 10 : it.kind === "pr" ? 12 : it.kind === "trail" ? 14 : it.kind === "hill" ? 16 : 20;
       if (it.kind === "route" && (it.label === q || it.r.short.toLowerCase() === q)) score -= 100;
+      if (it.kind === "dest" && (it.d.name.toLowerCase().startsWith(q) || it.d.short.toLowerCase().startsWith(q))) score -= 30;
       if (it.key.startsWith(q)) score -= 5;
       if (it.kind === "trail" && (q.includes("bike") || q.includes("trail") || q.includes("cycle") || q.includes("cycling") || q.includes("greenway") || q.includes("pbl") || q.includes("lane"))) score -= 25;
       if (it.kind === "pr" && (q.includes("park") || q.includes("ride") || q.includes("p&r") || q.includes("garage") || q.includes("locker"))) score -= 25;
@@ -3888,7 +4374,7 @@
     scored.sort((a, b) => a[0] - b[0]);
     const seen = new Set();
     return scored.map((x) => x[1]).filter((it) => {
-      const k = it.kind === "stop" ? it.s.name : it.kind === "trail" ? it.f.properties.name : it.kind === "pr" ? it.pr.name : it.kind === "hill" ? it.hill.name : it.kind + it.id;
+      const k = it.kind === "stop" ? it.s.name : it.kind === "dest" ? it.d.name : it.kind === "trail" ? it.f.properties.name : it.kind === "pr" ? it.pr.name : it.kind === "hill" ? it.hill.name : it.kind + it.id;
       if (seen.has(k)) return false;
       seen.add(k);
       return true;
@@ -4225,6 +4711,10 @@
           const cat = p.cat_name || "Bicycle Facility";
           return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true">${icon}</span><span class="txt"><span class="name">${esc(p.name)}</span><span class="desc">${esc(cat)}${p.length_mi ? ` · ${p.length_mi} mi` : ""}${p.surface === "unpaved" ? " · Gravel" : ""}${p.region ? ` (${esc(p.region)})` : ""}</span></span></button>`;
         }
+        if (it.kind === "dest") {
+          const d = it.d;
+          return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true" style="background:${poiColor(d.kind)};color:#fff">${poiEmoji(d.kind)}</span><span class="txt"><span class="name">${esc(d.name)}</span><span class="desc">${esc(poiKindTitle(d.kind))} · ${esc(d.short)}</span></span></button>`;
+        }
         if (it.kind === "pr") {
           const pr = it.pr;
           return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true" style="background:#007aff;color:#fff">🅿️</span><span class="txt"><span class="name">${esc(pr.name)}</span><span class="desc">${pr.stalls} stalls · ${esc(pr.bikes)}</span></span></button>`;
@@ -4251,6 +4741,7 @@
       input.value = "";
       input.blur();
       if (it.kind === "route") selectRoute(it.id);
+      else if (it.kind === "dest") showDestination(it.d);
       else if (it.kind === "trail") selectTrail(it.f);
       else if (it.kind === "pr") selectPR(it.pr);
       else if (it.kind === "hill") selectHill(it.hill);
@@ -5683,6 +6174,8 @@
         results.push({ kind: "stop", name: it.s.name, desc: `Bus stop ${it.s.code ? "#" + it.s.code : ""}`, lat: it.s.lat, lon: it.s.lon });
       } else if (it.kind === "pr") {
         results.push({ kind: "pr", name: it.pr.name, desc: `Park & Ride (${it.pr.stalls} stalls)`, lat: it.pr.lat, lon: it.pr.lon });
+      } else if (it.kind === "dest") {
+        results.push({ kind: "poi", name: it.d.name, desc: poiKindTitle(it.d.kind), lat: it.d.coords[1], lon: it.d.coords[0], badge: { emoji: poiEmoji(it.d.kind), bg: poiColor(it.d.kind), label: poiKindTitle(it.d.kind) } });
       } else if (it.kind === "trail") {
         const coords = [];
         const getC = (c) => { if (typeof c[0] === "number") coords.push(c); else c.forEach(getC); };
@@ -6052,6 +6545,7 @@
       trailLayers.forEach((id) => map.getLayer(id) && map.setLayoutProperty(id, "visibility", allowed.includes(id) ? "visible" : "none"));
     }
     vis("stops", ["stops", "stop-name"]);
+    vis("pois", ["destinations-icon", "destinations-label"]);
     vis("live", ["veh-dir", "veh-icon", "veh-label"]);
     if (enabled.has("live")) startLive(); else stopLive();
     if (map.getSource("stations")) refreshStations();
@@ -6225,7 +6719,16 @@
             const r = LINES[tg.item.r];
             cur = { kind: "tag", id: tg.item.r };
             if (!(selected && selected.type === "route")) focusRoute(r);
-            tipShow("tag:" + tg.item.r, `<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}</span>`, "", ev(e, 14));
+            const schedInfo = r.cat === "peak"
+              ? `<span class="tt-sched peak">⚡ Peak commute only · Weekday rush hours</span>`
+              : isEveryday(r)
+              ? `<span class="tt-sched">🕒 Runs every day (7 days a week)</span>`
+              : `<span class="tt-sched part-time">🕒 Part-time service · Mon–Fri only</span>`;
+            const tr = getThroughRouteInfo(r);
+            const trInfo = tr && tr.partners.length
+              ? `<span class="tt-tr">🔄 Continues as ${tr.partners.map((p) => routeTitle(p)).join("/")} through Downtown</span>`
+              : "";
+            tipShow("tag:" + tg.item.r, `<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}${schedInfo}${trInfo}</span>`, "", ev(e, 14));
           } else {
             cur = { kind: "tag", id: "more" };
             if (!(selected && selected.type === "route") && tg.item.more?.length) {
@@ -6236,6 +6739,23 @@
             tipShow("more:" + tg.item.more.join("."), `<span class="tip-badges">${tg.item.more.slice(0, 12).map((i) => badgeHTML(LINES[i])).join("")}</span>`, "", ev(e, 14));
           }
           return;
+        }
+        if (enabled.has("pois")) {
+          const destHits = map.queryRenderedFeatures([[e.point.x - 8, e.point.y - 8], [e.point.x + 8, e.point.y + 8]], {
+            layers: ["destinations-icon", "destinations-label"].filter((l) => map.getLayer(l))
+          });
+          if (destHits.length) {
+            const dp = destHits[0].properties;
+            cur = { kind: "dest", id: dp.id };
+            showLens(null);
+            map.getCanvas().style.cursor = "pointer";
+            highlightStop(null);
+            const dObj = KEY_DESTINATIONS.find((k) => k.id === dp.id);
+            const emoji = dObj ? poiEmoji(dObj.kind) : "📍";
+            const kindText = dObj ? poiKindTitle(dObj.kind) : "Point of Interest";
+            tipShow("dest:" + dp.id, `<div class="tt-dest"><span class="tt-dest-name">${emoji} ${esc(dp.name || dp.short)}</span><span class="tt-dest-kind">${esc(kindText)}</span>${dp.transit ? `<span class="tt-dest-tr">🚌 ${esc(dp.transit)}</span>` : ""}<span class="tt-more">Tap for destination details & trip planner</span></div>`, "", ev(e));
+            return;
+          }
         }
         const st = pickStop(e.point);
         if (st) {
@@ -6265,8 +6785,17 @@
           const nal = rs.length === 1 ? routeAlerts(rs[0].id) : [];
           const more = (ln.n > 1 ? `<span class="tt-more">${ln.n} routes share this street</span>` : "")
             + (nal.length ? `<span class="tt-alert al-${LEVEL[nal[0].level][0]}">${alertIcon(nal[0].level)}${nal.length === 1 ? esc(LEVEL[nal[0].level][1]) : `${nal.length} alerts`}</span>` : "");
+          const schedInfo = r.cat === "peak"
+            ? `<span class="tt-sched peak">⚡ Peak commute only · Weekday rush hours</span>`
+            : isEveryday(r)
+            ? `<span class="tt-sched">🕒 Runs every day (7 days a week)</span>`
+            : `<span class="tt-sched part-time">🕒 Part-time service · Mon–Fri only</span>`;
+          const tr = getThroughRouteInfo(r);
+          const trInfo = tr && tr.partners.length
+            ? `<span class="tt-tr">🔄 Continues as ${tr.partners.map((p) => routeTitle(p)).join("/")} through Downtown (stay on bus)</span>`
+            : "";
           tipShow("line:" + rs.map((x) => x.id).join(","), rs.length === 1
-            ? `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}${more}</span>`
+            ? `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}${schedInfo}${trInfo}${more}</span>`
             : `<span class="tip-badges">${rs.slice(0, 6).map((x) => badgeHTML(x)).join("")}</span><span class="tt">${rs.length} routes here · Tap to choose</span>`, "", ev(e));
           return;
         }
@@ -6339,6 +6868,18 @@
       if (dirActiveField) {
         handleMapClickForDirections(e.lngLat);
         return;
+      }
+      if (enabled.has("pois")) {
+        const destHits = map.queryRenderedFeatures([[e.point.x - 10, e.point.y - 10], [e.point.x + 10, e.point.y + 10]], {
+          layers: ["destinations-icon", "destinations-label"].filter((l) => map.getLayer(l))
+        });
+        if (destHits.length) {
+          const dObj = KEY_DESTINATIONS.find((k) => k.id === destHits[0].properties.id);
+          if (dObj) {
+            showDestination(dObj);
+            return;
+          }
+        }
       }
       // a tap right on a station's circle opens the station, even with a train or bus on top of it
       const onStation = map.getLayer("stations") && map.getLayoutProperty("stations", "visibility") !== "none"
@@ -6768,9 +7309,10 @@
           tripline: { type: "geojson", data: empty },
           tripwalk: { type: "geojson", data: empty },
           trippts: { type: "geojson", data: empty },
+          destinations: { type: "geojson", data: destinationsGeoJSON() },
           mask: { type: "geojson", data: maskGeoJSON() },
         },
-        layers: [...baseLayers(P), ...areaLayers(P), ...transitLayers(P), ...poiLayers(P), ...stopLayers(P), ...tripLayers(P), ...liveLayers(P)],
+        layers: [...baseLayers(P), ...areaLayers(P), ...transitLayers(P), ...poiLayers(P), ...destLayers(P), ...stopLayers(P), ...tripLayers(P), ...liveLayers(P)],
       },
       bounds: narrow ? [[-122.42, 47.54], [-122.17, 47.72]] : [[-122.44, 47.50], [-122.10, 47.77]],
       fitBoundsOptions: { padding: narrow ? { top: 20, bottom: 150, left: 10, right: 10 } : { top: 30, bottom: 30, left: 420, right: 80 } },
@@ -6810,6 +7352,7 @@
       map.on("webglcontextrestored", () => { ribbons?.restore(); rebuild(); });
       refreshStations();
       map.getSource("stops").setData(stopsGeoJSON());
+      if (map.getSource("destinations")) map.getSource("destinations").setData(destinationsGeoJSON());
       applyLayerToggles();
       applyTheme();
       const attrib = document.querySelector(".maplibregl-ctrl-attrib");

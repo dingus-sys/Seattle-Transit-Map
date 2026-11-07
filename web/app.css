@@ -1269,3 +1269,403 @@ td.sched-cell-now {
 }
 .fav-del-btn:hover { background: color-mix(in srgb, #ff3b30 15%, transparent); color: #ff3b30; }
 
+/* ---------- Badge Lowlight (Part-time) & Suspended (Image 8) ---------- */
+.badge.part-time {
+  background: var(--group, #ffffff) !important;
+  border: 1.5px solid var(--badge-c, #3668c2);
+  color: var(--badge-c, #3668c2) !important;
+  box-shadow: inset 0 0 0 .5px rgba(0, 0, 0, .06);
+}
+:root[data-dark="1"] .badge.part-time {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border: 1.5px solid var(--badge-c, #93c5fd);
+  color: var(--badge-c, #93c5fd) !important;
+}
+.badge.suspended {
+  position: relative;
+  opacity: 0.72;
+}
+.badge.suspended::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: -2px;
+  right: -2px;
+  height: 2px;
+  background: #d0213b;
+  transform: rotate(-24deg);
+  border-radius: 1px;
+}
+
+/* Frequency pill runs status */
+.freq-pill.everyday {
+  background: color-mix(in srgb, #059669 12%, transparent);
+  color: #059669;
+}
+[data-dark="1"] .freq-pill.everyday {
+  color: #34d399;
+}
+.freq-pill.parttime {
+  background: color-mix(in srgb, #d97706 14%, transparent);
+  color: #d97706;
+}
+[data-dark="1"] .freq-pill.parttime {
+  color: #fbbf24;
+}
+
+/* Suspended Stop Alerts & Badges */
+.stop-susp-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 10px 0;
+  padding: 10px 12px;
+  border-radius: var(--r-group);
+  background: color-mix(in srgb, #d0213b 14%, var(--fill));
+  border: 1px solid color-mix(in srgb, #d0213b 35%, transparent);
+  color: var(--ink);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.stop-susp-banner .susp-icon {
+  font-size: 18px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.stop-susp-banner strong {
+  display: block;
+  color: #d0213b;
+  font-weight: 650;
+  margin-bottom: 2px;
+}
+:root[data-dark="1"] .stop-susp-banner strong {
+  color: #ff6b7f;
+}
+.stop-row-btn.is-suspended {
+  opacity: 0.75;
+}
+.stop-row-btn .suspended-text {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+.stop-susp-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  padding: 2px 7px;
+  border-radius: 99px;
+  background: color-mix(in srgb, #d0213b 18%, transparent);
+  color: #d0213b;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .01em;
+}
+:root[data-dark="1"] .stop-susp-pill {
+  color: #ff6b7f;
+}
+
+/* ---------- Through-Route Continuations (Image 7) ---------- */
+.through-route-card {
+  margin: 10px 0 12px;
+  padding: 12px 14px;
+  border-radius: var(--r-group);
+  background: color-mix(in srgb, #059669 8%, var(--fill));
+  border: 1px solid color-mix(in srgb, #059669 25%, var(--rim));
+}
+.tr-badge-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.tr-header-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tr-icon {
+  font-size: 16px;
+}
+.tr-title {
+  font-weight: 650;
+  font-size: 13px;
+  color: var(--ink);
+}
+.tr-time-tag {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--fill-2);
+  padding: 2px 7px;
+  border-radius: 99px;
+  text-transform: capitalize;
+}
+.tr-continuation {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  flex-wrap: wrap;
+}
+.tr-arrow {
+  font-size: 14px;
+  color: var(--muted);
+}
+.tr-targets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.tr-partner-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: var(--group);
+  border: 1px solid var(--rim);
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .15s ease;
+}
+.tr-partner-btn:hover {
+  background: var(--fill-2);
+  transform: translateY(-1px);
+}
+.tr-desc {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--ink-2);
+  margin: 6px 0 0;
+}
+
+/* Through-routes full guide view */
+.through-routes-view .tr-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+.tr-guide-card {
+  padding: 12px 14px;
+  border-radius: var(--r-group);
+  background: var(--fill);
+  box-shadow: inset 0 0 0 .5px var(--rim);
+}
+.tr-guide-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-bottom: 6px;
+}
+.tr-guide-pair {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 6px 0 8px;
+}
+.tr-col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.tr-pair-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tr-route-title {
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--ink);
+}
+.tr-guide-arrow {
+  font-size: 16px;
+  color: var(--muted);
+}
+.tr-guide-desc {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--ink-2);
+  margin: 6px 0 10px;
+}
+.tr-guide-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* ---------- Transit Map Guide & Legend View (Image 8) ---------- */
+.legend-guide-view {
+  display: flex;
+  flex-direction: column;
+}
+.legend-card {
+  margin: 12px 0;
+  padding: 14px;
+  border-radius: var(--r-group);
+  background: var(--fill);
+  box-shadow: inset 0 0 0 .5px var(--rim);
+}
+.legend-section {
+  margin-bottom: 16px;
+}
+.legend-section:last-child {
+  margin-bottom: 0;
+}
+.legend-sec-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  color: var(--muted);
+  margin-bottom: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--hairline);
+}
+.legend-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--ink);
+}
+.legend-row:last-child {
+  margin-bottom: 0;
+}
+.legend-swatch {
+  width: 34px;
+  height: 4px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.legend-swatch.dashed {
+  background: repeating-linear-gradient(90deg, currentColor, currentColor 4px, transparent 4px, transparent 8px);
+}
+.legend-badge-sample {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  width: 74px;
+  flex-shrink: 0;
+}
+
+/* ---------- Destination POI View & Badges ---------- */
+.destination-view .hero {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.poi-icon-badge {
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  font-size: 24px;
+  background: var(--fill);
+  box-shadow: inset 0 0 0 1px var(--rim);
+  flex-shrink: 0;
+}
+.poi-icon-badge.school { background: rgba(165, 103, 42, 0.15); color: #a5672a; }
+.poi-icon-badge.hospital { background: rgba(208, 33, 59, 0.15); color: #d0213b; }
+.poi-icon-badge.stadium { background: rgba(60, 111, 181, 0.15); color: #3c6fb5; }
+.poi-icon-badge.sight { background: rgba(194, 87, 26, 0.15); color: #c2571a; }
+.poi-icon-badge.park { background: rgba(63, 143, 67, 0.15); color: #3f8f43; }
+.poi-icon-badge.library { background: rgba(122, 90, 47, 0.15); color: #7a5a2f; }
+.poi-icon-badge.ferry { background: rgba(60, 120, 180, 0.15); color: #3c78b4; }
+.destination-view .desc {
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--ink-2);
+  margin-bottom: 14px;
+}
+.dest-transit-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--r-group);
+  background: var(--fill);
+  box-shadow: inset 0 0 0 .5px var(--rim);
+  margin-top: 8px;
+}
+.dest-tr-icon {
+  font-size: 18px;
+  line-height: 1.2;
+}
+.dest-tr-text strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--ink);
+  margin-bottom: 3px;
+}
+.dest-tr-text p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--ink-2);
+}
+
+/* Tooltip Enhancements */
+.tt-sched {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.tt-sched.part-time {
+  color: #d97706;
+}
+:root[data-dark="1"] .tt-sched.part-time {
+  color: #fbbf24;
+}
+.tt-sched.peak {
+  color: #2563eb;
+}
+:root[data-dark="1"] .tt-sched.peak {
+  color: #60a5fa;
+}
+.tt-tr {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 550;
+  color: var(--muted);
+  line-height: 1.3;
+}
+.tt-dest {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.tt-dest-name {
+  font-weight: 650;
+  font-size: 13px;
+  color: var(--ink);
+}
+.tt-dest-kind {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .02em;
+}
+.tt-dest-tr {
+  font-size: 11.5px;
+  color: var(--ink-2);
+  margin-top: 2px;
+}
+
