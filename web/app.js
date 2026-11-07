@@ -2093,7 +2093,14 @@
       feats.push({ type: "Feature", properties: { id: v.id, r: r.id, c, tc: c, lab: v.name || shortLabel(r), b: Math.round(b), m: vehKind(r),
         s: 20 - CAT[dkey(r)].prio, est: v.est ? 1 : 0 }, geometry: { type: "Point", coordinates: pos } });
     }
+    let liveCount = 0, estCount = 0;
+    for (const f of feats) {
+      if (f.properties.est) estCount++;
+      else liveCount++;
+    }
     live.count = feats.length;
+    live.liveCount = liveCount;
+    live.estCount = estCount;
     map.getSource("vehicles").setData({ type: "FeatureCollection", features: feats });
     if (typeof updateLiveHud === "function") updateLiveHud();
   }
@@ -2190,7 +2197,7 @@
     });
   }
   function vehicleLines(id, est) {
-    if (est) return `<span class="vs-note">Estimated from the timetable</span>`;
+    if (est) return `<span class="vs-note" style="color:var(--text-sub)">Estimated position from timetable (not GPS)</span>`;
     const v = live.vehicles.get(id), st = vehicleStatus(v);
     // the newest report for this vehicle: its position, or its agency's status report
     const raw = v && live.status.get(v.agency + "_" + plainId(v.vid));
@@ -2198,19 +2205,28 @@
     const oc = vehicleOccupancy(v);
     return `${st ? `<span class="vs vs-${st.cls}">${st.text}</span>` : ""}`
       + `${oc ? `<span class="vs vo-${oc.cls}">${esc(oc.text)}${oc.detail ? ` · ${esc(oc.detail)}` : ""}</span>` : ""}`
-      + `<span class="vs-note">${esc(updatedText(ts))}</span>`;
+      + `<span class="vs-note">Live GPS fix · ${esc(updatedText(ts))}</span>`;
   }
 
   function liveStatusText() {
     if (!enabled.has("live")) return "Buses, trains and ferries on the move";
     const mode = vehMode();
+    const liveCount = live.liveCount != null ? live.liveCount : 0;
+    const estCount = live.estCount != null ? live.estCount : (live.count || 0);
+    const total = live.count || 0;
     if (mode === "live") {
       const sec = Math.round((Date.now() - live.last) / 1000);
-      return `Live${live.current.some((v) => v.est) ? " & timetable" : ""} · ${live.count} on this map · updated ${sec < 5 ? "just now" : sec + " s ago"}`;
+      if (liveCount > 0 && estCount > 0) {
+        return `Live GPS & timetable · ${liveCount} live, ${estCount} scheduled · updated ${sec < 5 ? "just now" : sec + " s ago"}`;
+      } else if (liveCount > 0) {
+        return `Live GPS · ${liveCount} vehicles on map · updated ${sec < 5 ? "just now" : sec + " s ago"}`;
+      } else {
+        return `Estimated from timetable · ${estCount} vehicles on map`;
+      }
     }
     if (mode === "est") {
-      const why = !LIVE ? (MODE === "bundled" ? " (live positions on the website)" : " (live feed not set up)") : Date.now() < live.pauseUntil ? " (live feed busy)" : live.error ? " (live feed unreachable)" : "";
-      return `Estimated from the timetable · ${live.count} on this map${why}`;
+      const why = !LIVE ? (MODE === "bundled" ? " (live positions on website)" : " (live feed not configured)") : Date.now() < live.pauseUntil ? " (live feed busy)" : live.error ? " (live feed unreachable)" : "";
+      return `Estimated from timetable · ${total} on this map${why}`;
     }
     return "Loading…";
   }
@@ -5020,6 +5036,57 @@
     return res;
   }
 
+  // Look up actual timetable departure, arrival, and ride duration for a trip between boardStop and alightStop
+  function timetableTripTimes(route, boardStop, alightStop, earliestSec, day, prevDay) {
+    if (!SCHED || !DEP || !route || !boardStop || !alightStop) return null;
+    const bKeys = [...new Set([boardStop.key, boardStop.id, ...((boardStop.stops || []).map((sid) => stopIndex[sid] && stopIndex[sid].key).filter(Boolean))])].filter(Boolean);
+    const aKeys = new Set([...new Set([alightStop.key, alightStop.id, ...((alightStop.stops || []).map((sid) => stopIndex[sid] && stopIndex[sid].key).filter(Boolean))])].filter(Boolean));
+
+    let best = null;
+    for (const bk of bKeys) {
+      for (const [pi, i] of DEP.get(bk) || []) {
+        const p = SCHED.patterns[pi];
+        if (!p || !p.f || i >= p.f.length - 1) continue;
+        const pRoute = ROUTES[p.r];
+        if (!pRoute || pRoute.id !== route.id) continue;
+
+        let j = -1;
+        for (let k = i + 1; k < p.s.length; k++) {
+          const sid = p.s[k];
+          const st = stopIndex[sid];
+          if (aKeys.has(sid) || (st && aKeys.has(st.key))) {
+            j = k;
+            break;
+          }
+        }
+        if (j <= i) continue; // Must visit alight stop after board stop!
+
+        for (const [dayName, off] of [[day, 0], [prevDay, 86400]]) {
+          for (const [s0, du] of (SCHED.byPat[dayName] && SCHED.byPat[dayName].get(pi)) || []) {
+            const depTimeSec = s0 + p.f[i] * du - off;
+            if (depTimeSec >= earliestSec - 30) {
+              const arrTimeSec = s0 + p.f[j] * du - off;
+              const rideSec = Math.max(60, arrTimeSec - depTimeSec);
+              if (!best || depTimeSec < best.depSec) {
+                best = {
+                  pi,
+                  pattern: p,
+                  depSec: depTimeSec,
+                  arrSec: arrTimeSec,
+                  rideSec,
+                  rideMin: Math.max(1, Math.round(rideSec / 60)),
+                  waitMin: Math.max(0, Math.round((depTimeSec - earliestSec) / 60)),
+                  clock: CLOCK.format(new Date(Date.now() + Math.max(0, depTimeSec - pacificNow().secs) * 1000)),
+                };
+              }
+            }
+          }
+        }
+      }
+    }
+    return best;
+  }
+
   function planTransitTrip(orig, dest) {
     if (!orig || !dest) return null;
     const directWalkDist = distMeters(orig.lat, orig.lon, dest.lat, dest.lon);
@@ -5047,6 +5114,8 @@
       }
     }
 
+    const { day, prev } = pacificNow();
+    const nowSecs = pacificNow().secs;
     const directItineraries = [];
 
     for (const r of ROUTES) {
@@ -5100,9 +5169,25 @@
         }
 
         if (bestPair) {
-          const headway = r.midHeadway || (r.sched?.weekday?.mid) || (r.cat === "link" ? 8 : 15);
-          const waitTime = Math.round(Math.min(headway / 2, 8));
-          const totalDuration = bestPair.walk1Time + waitTime + bestPair.rideTime + bestPair.walk2Time;
+          const walk1Time = bestPair.walk1Time;
+          const walk2Time = bestPair.walk2Time;
+          const earliestBoardSec = nowSecs + walk1Time * 60;
+          const schedTrip = timetableTripTimes(r, bestPair.boardStop, bestPair.alightStop, earliestBoardSec, day, prev);
+
+          let waitTime, rideTime, totalDuration, schedVerified = false;
+          if (schedTrip) {
+            waitTime = schedTrip.waitMin;
+            rideTime = schedTrip.rideMin;
+            totalDuration = walk1Time + waitTime + rideTime + walk2Time;
+            schedVerified = true;
+          } else {
+            const hasServiceToday = r.sched && r.sched[day] && r.sched[day].trips > 0;
+            if (!hasServiceToday && SCHED) continue;
+            const headway = r.midHeadway || (r.sched?.weekday?.mid) || (r.cat === "link" ? 8 : 15);
+            waitTime = Math.round(Math.min(headway / 2, 12));
+            rideTime = bestPair.rideTime;
+            totalDuration = walk1Time + waitTime + rideTime + walk2Time;
+          }
 
           directItineraries.push({
             type: "direct",
@@ -5113,13 +5198,14 @@
             intermediateStopIds: bestPair.intermediateStopIds,
             numStops: bestPair.numStops,
             walk1Dist: bestPair.walk1Dist,
-            walk1Time: bestPair.walk1Time,
-            rideTime: bestPair.rideTime,
+            walk1Time,
+            rideTime,
             walk2Dist: bestPair.walk2Dist,
-            walk2Time: bestPair.walk2Time,
+            walk2Time,
             waitTime,
-            headway,
             totalDuration,
+            schedTrip,
+            schedVerified,
             transitDist: bestPair.transitDist,
           });
         }
@@ -5136,7 +5222,7 @@
       if (topDirect.length >= 3) break;
     }
 
-    // 1-transfer routes: support multi-modal transfer hubs (same stop, station complex, or walking connection <= 250m)
+    // 1-transfer routes: support multi-modal transfer hubs
     const stopToSt = getStopToStation();
     const origRoutes = new Set();
     for (const o of origStops) {
@@ -5150,7 +5236,7 @@
     function transferDistance(s1Id, s2Id) {
       if (s1Id === s2Id) return 0;
       const st1 = stopToSt.get(s1Id), st2 = stopToSt.get(s2Id);
-      if (st1 && st2 && st1 === st2) return 50; // connected inside same transit station/hub
+      if (st1 && st2 && st1 === st2) return 50;
       const s1 = stopIndex[s1Id], s2 = stopIndex[s2Id];
       if (!s1 || !s2) return Infinity;
       const d = distMeters(s1.lat, s1.lon, s2.lat, s2.lon);
@@ -5204,7 +5290,6 @@
                   const d1 = distMeters(boardStop.lat, boardStop.lon, s1.lat, s1.lon);
                   const d2 = distMeters(s2.lat, s2.lon, alightStop.lat, alightStop.lon);
 
-                  // Avoid boarding a vehicle for < 500m / 1 stop just to transfer when transfer stop is within walking range
                   if (numStops1 < 2 && d1 < 500) continue;
 
                   const ride1 = Math.max(2, Math.round(d1 / speed1) + Math.round(numStops1 * (isR1Rail ? 0.3 : 0.35)));
@@ -5212,15 +5297,43 @@
 
                   const walk1Time = Math.round((oMatch ? oMatch.dist : 0) / 80);
                   const walk2Time = Math.round((dMatch ? dMatch.dist : 0) / 80);
-                  const transferWalkTime = Math.round(tDist / 80);
+                  const transferWalkTime = Math.max(1, Math.round(tDist / 80));
 
-                  const h1 = r1.midHeadway || (r1.sched?.weekday?.mid) || (r1.cat === "link" ? 8 : 15);
-                  const h2 = r2.midHeadway || (r2.sched?.weekday?.mid) || (r2.cat === "link" ? 8 : 15);
-                  const wait1 = Math.round(Math.min(h1 / 2, 7));
-                  const wait2 = Math.round(Math.min(h2 / 2, 7)) + 2 + transferWalkTime;
+                  const earliestSec1 = nowSecs + walk1Time * 60;
+                  const leg1 = timetableTripTimes(r1, boardStop, s1, earliestSec1, day, prev);
+
+                  let leg2 = null;
+                  let wait1, wait2, ride1Time = ride1, ride2Time = ride2;
+                  let schedVerified = false;
+
+                  if (leg1) {
+                    wait1 = leg1.waitMin;
+                    ride1Time = leg1.rideMin;
+                    const earliestSec2 = leg1.arrSec + transferWalkTime * 60 + 120;
+                    leg2 = timetableTripTimes(r2, s2, alightStop, earliestSec2, day, prev);
+                    if (leg2) {
+                      const transferWaitMin = Math.round((leg2.depSec - leg1.arrSec - transferWalkTime * 60) / 60);
+                      if (transferWaitMin > 60 || transferWaitMin < 0) continue;
+                      wait2 = Math.max(2, transferWaitMin);
+                      ride2Time = leg2.rideMin;
+                      schedVerified = true;
+                    } else if (SCHED) {
+                      continue; // No achievable connecting trip in timetable
+                    }
+                  }
+
+                  if (!leg1 || !leg2) {
+                    const hasS1 = r1.sched && r1.sched[day] && r1.sched[day].trips > 0;
+                    const hasS2 = r2.sched && r2.sched[day] && r2.sched[day].trips > 0;
+                    if ((!hasS1 || !hasS2) && SCHED) continue;
+                    const h1 = r1.midHeadway || (r1.sched?.weekday?.mid) || (r1.cat === "link" ? 8 : 15);
+                    const h2 = r2.midHeadway || (r2.sched?.weekday?.mid) || (r2.cat === "link" ? 8 : 15);
+                    wait1 = Math.round(Math.min(h1 / 2, 7));
+                    wait2 = Math.round(Math.min(h2 / 2, 7)) + 2 + transferWalkTime;
+                  }
 
                   const railBonus = (isR1Rail ? 3 : 0) + (isR2Rail ? 3 : 0);
-                  const totalDuration = walk1Time + wait1 + ride1 + wait2 + ride2 + walk2Time;
+                  const totalDuration = walk1Time + wait1 + ride1Time + transferWalkTime + wait2 + ride2Time + walk2Time;
 
                   transferItineraries.push({
                     type: "transfer",
@@ -5236,10 +5349,14 @@
                     intermediateStops1: p1.stops.slice(firstOrig + 1, i),
                     intermediateStops2: p2.stops.slice(j + 1, lastDest),
                     numStops1, numStops2,
-                    ride1, ride2,
+                    ride1: ride1Time,
+                    ride2: ride2Time,
                     walk1Time, walk2Time,
                     wait1, wait2,
                     totalDuration,
+                    schedTrip1: leg1,
+                    schedTrip2: leg2,
+                    schedVerified,
                     score: totalDuration - railBonus,
                   });
                   break;
@@ -5291,6 +5408,7 @@
     if (!it || it.type === "walk") {
       return {
         type: "walk",
+        vehWord: "walk",
         text: "Walk anytime",
         clock: "Now",
         isLive: false,
@@ -5303,13 +5421,14 @@
     if (!route || !stop) return null;
 
     const sIds = stopIdsOf(stop);
-    const keys = [...new Set([stop.key, stop.id, ...((stop.stops || []).map((sid) => stopIndex[sid] && stopIndex[sid].key).filter(Boolean))])].filter(Boolean);
     const vehWord = route.cat === "link" || route.cat === "sounder" ? "train" : route.cat === "ferry" ? "ferry" : route.cat === "streetcar" ? "streetcar" : "bus";
+    const walk1Min = it.walk1Time || 0;
+    const minEarliestSec = pacificNow().secs + walk1Min * 60;
 
     // 1. Live departures check from agency
     const live = liveDepartures(sIds, 30);
     if (live && live.length) {
-      const match = live.find((d) => d.r && (d.r.id === route.id || d.r === route) && d.t >= -30);
+      const match = live.find((d) => d.r && (d.r.id === route.id || d.r === route) && (d.t >= walk1Min * 60 - 60));
       if (match) {
         const waitMin = Math.max(0, Math.round(match.t / 60));
         const clockTime = new Date(Date.now() + Math.max(0, match.t) * 1000);
@@ -5317,68 +5436,49 @@
         const text = match.t < 60 ? "Due now" : `in ${waitMin} min`;
         return {
           type: "live",
+          vehWord,
           isLive: !!match.live,
           mins: waitMin,
           text,
           clock: clockStr,
           routeLabel: route.short || route.label,
-          desc: match.t < 60 ? `${vehWord.charAt(0).toUpperCase() + vehWord.slice(1)} due now (${clockStr})` : `Soonest ${vehWord} in ${waitMin} min (${clockStr})`
+          desc: match.t < 60 ? `${vehWord.charAt(0).toUpperCase() + vehWord.slice(1)} due now (Live GPS · ${clockStr})` : `Soonest ${vehWord} in ${waitMin} min (Live GPS · ${clockStr})`
         };
       }
     }
 
     // 2. Timetable schedule departures check
-    if (SCHED && DEP) {
-      const now = pacificNow();
-      let bestT = Infinity;
-      for (const k of keys) {
-        for (const [pi, i] of DEP.get(k) || []) {
-          const p = SCHED.patterns[pi];
-          if (!p || !p.f || i >= p.f.length - 1) continue;
-          const pRoute = ROUTES[p.r];
-          if (!pRoute || pRoute.id !== route.id) continue;
-
-          for (const [day, off] of [[now.day, 0], [now.prev, 86400]]) {
-            for (const [s0, du] of (SCHED.byPat[day] && SCHED.byPat[day].get(pi)) || []) {
-              const t = s0 + p.f[i] * du - off - now.secs;
-              if (t >= -20 && t < bestT) {
-                bestT = t;
-              }
-            }
-          }
-        }
-      }
-
-      if (bestT < Infinity) {
-        const waitMin = Math.max(0, Math.round(bestT / 60));
-        const clockTime = new Date(Date.now() + Math.max(0, bestT) * 1000);
-        const clockStr = CLOCK.format(clockTime);
-        const text = bestT < 60 ? "Due now" : `in ${waitMin} min`;
-        return {
-          type: "sched",
-          isLive: false,
-          mins: waitMin,
-          text,
-          clock: clockStr,
-          routeLabel: route.short || route.label,
-          desc: bestT < 60 ? `Scheduled ${vehWord} now (${clockStr})` : `Soonest ${vehWord} in ${waitMin} min (${clockStr})`
-        };
-      }
+    const schedTrip = it.schedTrip || (it.type === "transfer" && it.schedTrip1) || timetableTripTimes(route, it.boardStop, it.type === "direct" ? it.alightStop : (it.transferStop1 || it.transferStop), minEarliestSec, pacificNow().day, pacificNow().prev);
+    if (schedTrip) {
+      const waitMin = schedTrip.waitMin;
+      const clockStr = schedTrip.clock;
+      const text = waitMin === 0 ? "Due now" : `in ${waitMin} min`;
+      return {
+        type: "sched",
+        vehWord,
+        isLive: false,
+        mins: waitMin,
+        text,
+        clock: clockStr,
+        routeLabel: route.short || route.label,
+        desc: waitMin === 0 ? `Scheduled ${vehWord} now (${clockStr})` : `Soonest ${vehWord} in ${waitMin} min (${clockStr})`
+      };
     }
 
     // 3. Fallback based on published route frequency
     const headway = route.midHeadway || (route.sched?.weekday?.mid) || (route.cat === "link" ? 8 : 15);
     const waitMin = Math.round(Math.min(headway / 2, 12));
-    const clockTime = new Date(Date.now() + waitMin * 60000);
+    const clockTime = new Date(Date.now() + (walk1Min + waitMin) * 60000);
     const clockStr = CLOCK.format(clockTime);
     return {
       type: "approx",
+      vehWord,
       isLive: false,
       mins: waitMin,
       text: `~${waitMin} min wait`,
       clock: clockStr,
       routeLabel: route.short || route.label,
-      desc: `Every ~${headway} min (next ~${clockStr})`
+      desc: `Every ~${headway} min (estimated next ~${clockStr})`
     };
   }
 
@@ -5662,13 +5762,22 @@
         <span class="soonest-text">${soonest.text}${soonest.clock ? ` · ${soonest.clock}` : ""}</span>
       </span>` : "";
 
+      const footLabel = it.type === "walk"
+        ? "Walking departure:"
+        : `Soonest ${soonest.vehWord || "departure"}${it.type === "transfer" && soonest.routeLabel ? ` (${esc(soonest.routeLabel)})` : ""}:`;
+      const footVal = it.type === "walk"
+        ? `<b>Walk anytime</b>`
+        : `<b>${soonest.text}</b>${soonest.clock ? ` (${soonest.clock})` : ""}`;
       const soonestFootHtml = soonest ? `<div class="trip-soonest-foot">
         <span class="soonest-icon">${soonest.isLive ? "🟢" : soonest.type === "walk" ? "🚶" : "🕒"}</span>
-        <span class="soonest-foot-label">Soonest ${it.type === "transfer" && soonest.routeLabel ? `(${esc(soonest.routeLabel)}):` : "bus:"}</span>
-        <span class="soonest-foot-val"><b>${soonest.text}</b>${soonest.clock ? ` (${soonest.clock})` : ""}</span>
+        <span class="soonest-foot-label">${footLabel}</span>
+        <span class="soonest-foot-val">${footVal}</span>
       </div>` : "";
 
-      return `<button type="button" class="trip-card${isAct ? " active" : ""}" data-plan-idx="${idx}">
+      const cardTitle = it.type === "walk" ? "Walk only" : (it.type === "direct" ? it.route.label : `${it.r1.label} to ${it.r2.label}`);
+      const cardAria = `Option ${idx + 1}: ${cardTitle}, ${it.totalDuration} minutes. ${soonest ? soonest.desc : ""}`;
+
+      return `<button type="button" class="trip-card${isAct ? " active" : ""}" data-plan-idx="${idx}" aria-label="${esc(cardAria)}">
         <div class="trip-card-head">
           <div class="trip-card-headline">
             <span class="trip-time">${it.totalDuration} min</span>
@@ -6086,13 +6195,23 @@
     }
   }
 
+  const geoCache = new Map();
+  let geoAbort = null;
+
   async function searchAddressesAndPois(query) {
     if (!query || query.trim().length < 3) return [];
     const q = query.trim();
-    // 1. Primary: Photon geocoder
+    const cacheKey = q.toLowerCase();
+    if (geoCache.has(cacheKey)) return geoCache.get(cacheKey);
+
+    if (geoAbort) {
+      try { geoAbort.abort(); } catch {}
+    }
+    geoAbort = new AbortController();
+
     try {
       const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&lat=47.6062&lon=-122.3321&limit=6`;
-      const res = await fetch(url, { signal: AbortSignal.timeout(3200) });
+      const res = await fetch(url, { signal: geoAbort.signal });
       if (res.ok) {
         const json = await res.json();
         const results = [];
@@ -6122,44 +6241,13 @@
             type: p.type
           });
         }
-        if (results.length > 0) return results;
+        geoCache.set(cacheKey, results);
+        return results;
       }
-    } catch {
-      // Fall through to fallback
+    } catch (e) {
+      if (e.name === "AbortError") return [];
     }
-
-    // 2. Fallback: OpenStreetMap Nominatim
-    try {
-      const qWithWa = q.toLowerCase().includes("wa") || q.toLowerCase().includes("washington") ? q : `${q}, Washington`;
-      const nomUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(qWithWa)}&format=json&viewbox=-122.8,48.3,-121.5,47.0&bounded=0&limit=5`;
-      const res = await fetch(nomUrl, {
-        headers: { "Accept-Language": "en" },
-        signal: AbortSignal.timeout(3000)
-      });
-      if (!res.ok) return [];
-      const json = await res.json();
-      const results = [];
-      for (const item of json) {
-        const lat = parseFloat(item.lat), lon = parseFloat(item.lon);
-        if (lat < 47.0 || lat > 48.3 || lon < -122.8 || lon > -121.5) continue;
-        const parts = (item.display_name || "").split(",").map((s) => s.trim());
-        const title = item.name || parts[0] || q;
-        const desc = parts.slice(1, 4).join(", ") || "Puget Sound, WA";
-        results.push({
-          kind: "poi",
-          name: title,
-          desc,
-          lat, lon,
-          osm_key: item.class,
-          osm_value: item.type,
-          class: item.class,
-          type: item.type
-        });
-      }
-      return results;
-    } catch {
-      return [];
-    }
+    return [];
   }
 
   function searchLocalStopsAndPois(q) {
@@ -6229,7 +6317,7 @@
         <span class="trail-glyph" aria-hidden="true" style="background:${bg};color:#fff">${glyph}</span>
         <span class="txt"><span class="name">${esc(it.name)}</span><span class="desc">${esc(it.desc)}</span></span>
       </button>`;
-    }).join("");
+    }).join("") + `<div class="dir-provider-note" style="padding:6px 12px;font-size:11px;color:var(--text-sub);border-top:1px solid var(--border,#e2e8f0);text-align:center">Address suggestions via Photon · OpenStreetMap data</div>`;
   }
 
   function renderDirSuggestions(query) {
@@ -7249,6 +7337,33 @@
     else if (!h && (selected || panelView !== "home")) clearSelection({ push: false });
   }
 
+  function updateSubtitle() {
+    const el = document.getElementById("mapSubtitle");
+    if (!el) return;
+    const now = new Date();
+    const m = now.getMonth();
+    const season = m >= 8 && m <= 10 ? "Fall" : m >= 5 && m <= 7 ? "Summer" : m >= 2 && m <= 4 ? "Spring" : "Winter";
+    const year = now.getFullYear();
+    el.textContent = `Every route and stop · ${season} ${year} service`;
+  }
+
+  function setupOfflineNotice() {
+    function check() {
+      const liveLine = $("#liveDesc");
+      if (!navigator.onLine && liveLine) {
+        liveLine.textContent = "Offline mode: viewing cached transit map & timetable";
+      }
+    }
+    window.addEventListener("online", () => {
+      showToast("Online: live updates resumed 🟢");
+      updateLiveUI();
+    });
+    window.addEventListener("offline", () => {
+      showToast("Offline mode: cached map & timetable available 📱");
+      check();
+    });
+  }
+
   // ---------------------------------------------------------------- boot
   async function boot() {
     registerProtocols();
@@ -7259,6 +7374,7 @@
     ]);
     MANIFEST = manifest;
     META = routes.meta; ROUTES = routes.routes; STOPNAMES = routes.stopNames; NET = net; STOPS = stops; AREAS = areas;
+    updateSubtitle();
     ROUTES.forEach((r, i) => { r._rank = i; RBY[r.id] = r; });
     LINES = NET.lines.map((id) => RBY[id]);
     LINES.forEach((r, i) => { LINEIDX[r.id] = i; });
@@ -7366,6 +7482,7 @@
       applyHash();
       loadSchedule();
       pollAlerts();
+      setupOfflineNotice();
     });
   }
 
@@ -7537,8 +7654,20 @@
       return;
     }
     $("#liveHud")?.classList.remove("off");
-    const count = live.count || live.vehicles?.size || 0;
-    txt.textContent = count ? `${count} Vehicles Live` : "Live Fleet";
+    const mode = vehMode();
+    const liveCount = live.liveCount || 0;
+    const estCount = live.estCount || 0;
+    const count = live.count || 0;
+
+    if (mode === "est" || (liveCount === 0 && estCount > 0)) {
+      txt.textContent = count ? `${count} Sched (Timetable)` : "Timetable Fleet";
+    } else if (liveCount > 0 && estCount > 0) {
+      txt.textContent = `${liveCount} Live · ${estCount} Sched`;
+    } else if (liveCount > 0) {
+      txt.textContent = `${liveCount} Vehicles Live`;
+    } else {
+      txt.textContent = "Live Fleet";
+    }
     updateLiveHudStats();
   }
 

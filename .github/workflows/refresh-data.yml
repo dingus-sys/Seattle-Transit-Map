@@ -26,6 +26,7 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python tools/check_repair.py
       - run: python pipeline/build_all.py --no-tiles --fresh
+      - run: python tools/validate_data.py
       - name: Commit updated data
         run: |
           git config user.name "transit-data-bot"

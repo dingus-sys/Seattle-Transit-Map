@@ -114,6 +114,9 @@ def safe_id(key, raw):
     return f"{key}-" + re.sub(r"[^A-Za-z0-9]+", "-", str(raw)).strip("-")
 
 
+REQUIRED_FEEDS = {"kcm", "st", "ct", "pt", "wsf"}
+
+
 def load_feeds():
     """Read every feed in config.FEEDS into combined tables with feed-prefixed ids."""
     os.makedirs(FEED_DIR, exist_ok=True)
@@ -129,10 +132,12 @@ def load_feeds():
                 try:
                     fetch(url, path)
                     break
-                except Exception as e:  # keep going: one missing agency shouldn't stop the build
+                except Exception as e:
                     print(f"  ! {key}: {url} failed ({e})")
         if not os.path.exists(path):
-            print(f"  ! skipping {key}: no feed")
+            if key in REQUIRED_FEEDS:
+                raise RuntimeError(f"Required agency feed '{key}' failed to download: aborting to protect dataset integrity.")
+            print(f"  ! skipping optional {key}: no feed")
             continue
         z = zipfile.ZipFile(path)
         names = set(z.namelist())
@@ -444,8 +449,23 @@ def main():
     day_trips = trips[trips.service_id.isin(all_services) & trips.route_id.isin(gtfs_to_slug)]
     served = st[st.trip_id.isin(day_trips.trip_id)][["trip_id", "stop_id"]].drop_duplicates()
     served = served.merge(day_trips[["trip_id", "route_id"]], on="trip_id")[["stop_id", "route_id"]].drop_duplicates()
+
+    pat_stops_by_slug = {r["id"]: set(sid for p in r.get("patterns", []) for sid in p.get("stops", [])) for r in out_routes}
+    pts_by_slug = {slug: [pt for line in route_shapes.get(slug, {}).get("lines", []) for pt in line] for slug in gtfs_to_slug.values()}
+
     for sid, rid in served.itertuples(index=False):
-        route_stops[sid].add(gtfs_to_slug[rid])
+        slug = gtfs_to_slug[rid]
+        if sid in pat_stops_by_slug.get(slug, set()):
+            route_stops[sid].add(slug)
+        elif sid in stops_idx.index:
+            pts = pts_by_slug.get(slug)
+            if pts:
+                s_lat, s_lon = float(stops_idx.loc[sid].stop_lat), float(stops_idx.loc[sid].stop_lon)
+                min_d = min(math.hypot((px - s_lon) * 75000, (py - s_lat) * 111000) for px, py in pts)
+                if min_d <= 2000:
+                    route_stops[sid].add(slug)
+            else:
+                route_stops[sid].add(slug)
 
     cat_of = {r["id"]: r["cat"] for r in out_routes}
     rank_of = {r["id"]: (CAT_RANK[r["cat"]], natural_key(r["short"])) for r in out_routes}
@@ -547,6 +567,12 @@ def main():
         "region": REGION,
         "rail_region": RAIL_REGION,
     }
+    # Validation checks to protect against partial/degraded builds
+    if len(out_routes) < 330:
+        raise ValueError(f"Build failed validation: only {len(out_routes)} routes found (expected >= 330)")
+    if len(out_stops) < 10000:
+        raise ValueError(f"Build failed validation: only {len(out_stops)} stops found (expected >= 10000)")
+
     json.dump({"meta": meta, "routes": out_routes, "stopNames": names},
               open(os.path.join(DATA, "routes.json"), "w"), separators=(",", ":"))
     json.dump({"stops": out_stops, "stations": out_stations},
