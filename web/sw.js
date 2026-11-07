@@ -1,5 +1,5 @@
-/* Seattle Transit Map Service Worker - Reliable Offline & Dynamic Cache (v10.0) */
-const CACHE_NAME = "seattle-transit-v10-0";
+/* Seattle Transit Map Service Worker - Reliable Offline & Dynamic Cache (v10.1) */
+const CACHE_NAME = "seattle-transit-v10-1";
 const STATIC_ASSETS = [
   "./",
   "index.html",

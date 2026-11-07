@@ -1283,6 +1283,58 @@ td.sched-cell-now {
   border: 1.5px solid var(--badge-c, #93c5fd);
   color: var(--badge-c, #93c5fd) !important;
 }
+.route-susp-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: color-mix(in srgb, #d0213b 12%, transparent);
+  border: 1px solid color-mix(in srgb, #d0213b 40%, transparent);
+  border-radius: 12px;
+  padding: 10px 14px;
+  margin-top: 10px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #991b1b;
+}
+:root[data-dark="1"] .route-susp-banner {
+  background: color-mix(in srgb, #f87171 16%, transparent);
+  border-color: color-mix(in srgb, #f87171 45%, transparent);
+  color: #fca5a5;
+}
+.route-susp-banner .susp-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+.tt-service-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 4px;
+  font-size: 11px;
+}
+.tt-cat {
+  font-weight: 600;
+  color: var(--ink);
+}
+.tt-run-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+}
+.tt-run-pill.everyday {
+  color: #15803d;
+}
+:root[data-dark="1"] .tt-run-pill.everyday {
+  color: #4ade80;
+}
+.tt-run-pill.part-time {
+  color: #b45309;
+}
+:root[data-dark="1"] .tt-run-pill.part-time {
+  color: #fbbf24;
+}
+
 .badge.suspended {
   position: relative;
   opacity: 0.72;

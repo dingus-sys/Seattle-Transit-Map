@@ -1245,6 +1245,16 @@
       g.items.forEach((t, k) => {
         ctx.fillStyle = g.fg;
         ctx.fillText(t, tx, halo + h / 2 + 0.5 * dpr);
+        const ref = g.refs[k];
+        const rRef = ref && ref.r != null ? LINES[ref.r] : null;
+        if (rRef && isRouteSuspended(rRef)) {
+          ctx.strokeStyle = "#d0213b";
+          ctx.lineWidth = 1.8 * dpr;
+          ctx.beginPath();
+          ctx.moveTo(tx - 2 * dpr, halo + h - 2 * dpr);
+          ctx.lineTo(tx + g.ws[k] + 2 * dpr, halo + 2 * dpr);
+          ctx.stroke();
+        }
         tx += g.ws[k];
         if (k < g.items.length - 1) {
           ctx.fillStyle = g.everyday ? (g.fg === "#ffffff" ? "rgba(255,255,255,0.42)" : "rgba(0,0,0,0.28)") : (dark ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.2)");
@@ -4113,7 +4123,10 @@
         </div>
         <p class="tr-desc">${esc(trInfo.desc)}</p>
       </div>` : "";
+    const isSusp = isRouteSuspended(r);
+    const suspBanner = isSusp ? `<div class="route-susp-banner"><span class="susp-icon">🚫</span><span><strong>Route Temporarily Suspended:</strong> Trips on this route are currently not operating due to an active service disruption or seasonal suspension.</span></div>` : "";
     let html = `${backBtn}
+      ${suspBanner}
       <div class="hero">${badgeHTML(r, "xl")}<div><h2>${esc(routeTitle(r))}</h2><p>${esc(r.name || "")}</p></div></div>
       <div class="chips"><span class="chip"><span class="dot" style="background:${color}"></span>${esc(CAT_NAME[r.cat])}</span><span class="chip">${esc(r.agency)}</span>${logoChips([r])}<span class="chip live-chip" id="liveChip" hidden><span class="pulse" aria-hidden="true"></span><span class="n"></span></span></div>
       <div class="card-actions">
@@ -6775,6 +6788,40 @@
       return { f, r: pr.r < 0 ? all[0] : pr.r, routes: all.map((i) => LINES[i]).filter(Boolean).sort(tagOrder), n: pr.n || 1 };
     };
     const ev = (e, dy = 0) => ({ clientX: e.originalEvent.clientX, clientY: e.originalEvent.clientY + dy });
+    function routeServiceDesc(r) {
+      if (!r) return "";
+      if (isRouteSuspended(r)) {
+        return `<div class="tt-service-info"><span class="tt-sched suspended">🚫 Service Suspended · Temporarily closed</span></div>`;
+      }
+      let catText = "";
+      if (r.cat === "frequent" || r.cat === "rapidride" || r.cat === "swift") {
+        catText = "🟢 Frequent Bus · Every 10–15 min all day";
+      } else if (r.cat === "peak") {
+        catText = "⚡ Peak Commute Only · Weekday rush hours";
+      } else if (r.cat === "dart") {
+        catText = "🚐 Dial-a-Ride (DART) · Flexible on-demand zone";
+      } else if (r.cat === "local") {
+        catText = "🔷 All-Day Bus · Regular 15–30 min service";
+      } else if (r.cat === "link") {
+        catText = "🚆 Link Light Rail · Frequent rapid transit";
+      } else if (r.cat === "sounder") {
+        catText = "🚂 Sounder Commuter Train · Peak regional rail";
+      } else if (r.cat === "streetcar") {
+        catText = "🚋 Seattle Streetcar · Neighborhood connector";
+      } else if (r.cat === "monorail") {
+        catText = "🚝 Seattle Center Monorail · Direct express";
+      } else if (r.cat === "ferry" || r.cat === "watertaxi") {
+        catText = "⛴️ Ferry · Cross-sound water connection";
+      } else {
+        catText = `${CAT_NAME[r.cat] || "Transit route"}`;
+      }
+
+      const runText = isEveryday(r)
+        ? "Runs every day (7 days/wk)"
+        : "Part-time (Mon–Fri only)";
+
+      return `<div class="tt-service-info"><span class="tt-cat">${esc(catText)}</span><span class="tt-run-pill ${isEveryday(r) ? "everyday" : "part-time"}">${esc(runText)}</span></div>`;
+    }
     let moveRaf = 0, lastMoveEvent = null;
     map.on("mousemove", (e) => {
       lastMoveEvent = e;
@@ -6807,14 +6854,10 @@
             const r = LINES[tg.item.r];
             cur = { kind: "tag", id: tg.item.r };
             if (!(selected && selected.type === "route")) focusRoute(r);
-            const schedInfo = r.cat === "peak"
-              ? `<span class="tt-sched peak">⚡ Peak commute only · Weekday rush hours</span>`
-              : isEveryday(r)
-              ? `<span class="tt-sched">🕒 Runs every day (7 days a week)</span>`
-              : `<span class="tt-sched part-time">🕒 Part-time service · Mon–Fri only</span>`;
+            const schedInfo = routeServiceDesc(r);
             const tr = getThroughRouteInfo(r);
             const trInfo = tr && tr.partners.length
-              ? `<span class="tt-tr">🔄 Continues as ${tr.partners.map((p) => routeTitle(p)).join("/")} through Downtown</span>`
+              ? `<span class="tt-tr">🔄 Stay on bus: continues as ${tr.partners.map((p) => routeTitle(p)).join("/")} through Downtown</span>`
               : "";
             tipShow("tag:" + tg.item.r, `<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}${schedInfo}${trInfo}</span>`, "", ev(e, 14));
           } else {
@@ -6873,14 +6916,10 @@
           const nal = rs.length === 1 ? routeAlerts(rs[0].id) : [];
           const more = (ln.n > 1 ? `<span class="tt-more">${ln.n} routes share this street</span>` : "")
             + (nal.length ? `<span class="tt-alert al-${LEVEL[nal[0].level][0]}">${alertIcon(nal[0].level)}${nal.length === 1 ? esc(LEVEL[nal[0].level][1]) : `${nal.length} alerts`}</span>` : "");
-          const schedInfo = r.cat === "peak"
-            ? `<span class="tt-sched peak">⚡ Peak commute only · Weekday rush hours</span>`
-            : isEveryday(r)
-            ? `<span class="tt-sched">🕒 Runs every day (7 days a week)</span>`
-            : `<span class="tt-sched part-time">🕒 Part-time service · Mon–Fri only</span>`;
+          const schedInfo = routeServiceDesc(r);
           const tr = getThroughRouteInfo(r);
           const trInfo = tr && tr.partners.length
-            ? `<span class="tt-tr">🔄 Continues as ${tr.partners.map((p) => routeTitle(p)).join("/")} through Downtown (stay on bus)</span>`
+            ? `<span class="tt-tr">🔄 Stay on bus: continues as ${tr.partners.map((p) => routeTitle(p)).join("/")} through Downtown</span>`
             : "";
           tipShow("line:" + rs.map((x) => x.id).join(","), rs.length === 1
             ? `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}${schedInfo}${trInfo}${more}</span>`
