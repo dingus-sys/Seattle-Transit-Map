@@ -232,9 +232,15 @@
     if (!list.length) return false;
     return list.some((a) => a.level === 2 && /\b(suspended|cancelled|canceled|not operating|no service)\b/i.test(a.title));
   };
+  const stopIdsOf = (s) => (s ? [s.id, s.key, ...(s.stops || [])].filter(Boolean) : []);
   const stopIsSuspended = (stopId) => {
     if (!stopId || !alerts || !alerts.byStop) return false;
-    const list = alerts.byStop.get(stopId) || [];
+    const s = typeof stopId === "object" ? stopId : (typeof stopIndex !== "undefined" ? stopIndex[stopId] : null);
+    const ids = s ? stopIdsOf(s) : [stopId];
+    const list = [];
+    for (const id of ids) {
+      for (const a of alerts.byStop.get(id) || []) list.push(a);
+    }
     if (!list.length) return false;
     return list.some((a) => {
       if (a.level === 2) return true;
@@ -805,6 +811,15 @@
     panelView = "dest";
     openSheet("half");
     map.easeTo({ center: d.coords, zoom: Math.max(map.getZoom(), 14.5), duration: 700 });
+    let destRoutes = [];
+    try {
+      const nearbyStopsList = findNearbyStops(d.coords[1], d.coords[0], 450, 900);
+      const nearbyRouteIds = new Set();
+      for (const item of nearbyStopsList) {
+        for (const rid of (item.stop.routes || [])) nearbyRouteIds.add(rid);
+      }
+      destRoutes = [...nearbyRouteIds].map((id) => RBY[id]).filter((r) => r && LINEIDX[r.id] != null).sort(tagOrder);
+    } catch (_) {}
     const html = `${backBtn}
       <div class="destination-view">
         <div class="hero">
@@ -833,12 +848,25 @@
             <p>${esc(d.transit)}</p>
           </div>
         </div>
+        ${destRoutes.length ? `
+          <div class="dest-routes-list">
+            <h4 class="dest-routes-title">Nearby routes · Tap to follow on map</h4>
+            <div class="sc-badges">
+              ${destRoutes.map((r) => `<button type="button" class="dest-route-badge-btn press" data-dest-route="${esc(r.id)}" title="${esc(routeTitle(r))}">${badgeHTML(r)}</button>`).join("")}
+            </div>
+          </div>
+        ` : ""}
       </div>`;
     setView(html);
     $("#back").addEventListener("click", () => {
       selected = null;
       panelView = null;
       showHome();
+    });
+    body().querySelectorAll("[data-dest-route]").forEach((b) => {
+      b.addEventListener("click", () => {
+        selectRoute(b.dataset.destRoute, { fit: true });
+      });
     });
   }
   function liveLayers(P) {
@@ -1840,8 +1868,6 @@
     const list = routeAlerts(r.id);
     box.innerHTML = list.length ? `<h3 class="section">Service alerts</h3><ul class="group alerts" role="list">${list.map((a) => alertHTML(a, { routes: a.routes.size > 1 })).join("")}</ul>` : "";
     bindAlertList(box);
-  }
-  const stopIdsOf = (s) => [s.id, s.key, ...(s.stops || [])].filter(Boolean);
   function fillStopAlerts(s) {
     const box = $("#stopAlerts");
     if (!box) return;
@@ -2815,7 +2841,9 @@
     const stopIds = [...new Set(all.flatMap(stopIdsOf))];
     const codes = [...new Set(all.map((x) => x.code).filter(Boolean))];
     const kind = s.kind === "stop" ? (codes.length > 1 ? `Stops ${esc(codes.join(" & "))}` : codes.length ? `Stop ${esc(codes[0])}` : "Bus stop") : "Station";
-    let h = `<div class="sc"><div class="sc-name">${esc(s.name)}</div><div class="sc-sub">${kind} · ${rs.length} route${rs.length === 1 ? "" : "s"}${end === 2 ? " · <b>End of the line</b>" : end === 1 ? " · <b>Trips start here</b>" : ""}</div>`;
+    const susp = stopIsSuspended(s.id);
+    let h = `<div class="sc"><div class="sc-name">${esc(s.name)}${susp ? ` <span class="stop-susp-pill">🚫 Closed</span>` : ""}</div><div class="sc-sub">${susp ? `<span style="color:#d0213b;font-weight:600">Service Suspended</span> · ` : ""}${kind} · ${rs.length} route${rs.length === 1 ? "" : "s"}${end === 2 ? " · <b>End of the line</b>" : end === 1 ? " · <b>Trips start here</b>" : ""}</div>`;
+    if (susp) h += `<div class="stop-susp-banner" style="margin:4px 0 6px;padding:6px 8px;font-size:11.5px"><span class="susp-icon" style="font-size:14px">🚫</span><span><strong>Stop Closed</strong> · Regular transit service is currently suspended</span></div>`;
     if (rs.length) h += `<div class="sc-badges">${rs.slice(0, 10).map((r) => badgeHTML(r)).join("")}${rs.length > 10 ? `<span class="sc-more">+${rs.length - 10}</span>` : ""}</div>`;
     h += alertTeaser(stopAlerts(stopIds));
     h += `<div id="scDeps">${depRowsHTML(keys, stopIds)}</div>`;
@@ -3610,6 +3638,15 @@
           </div>
 
           <div class="legend-section">
+            <h3 class="legend-sec-title">Through-Routes (Stay on the Bus)</h3>
+            <div class="legend-row">
+              <span style="font-size:18px">🔄</span>
+              <div><strong>Direct downtown transfers</strong><br><span class="muted">Paired routes that continue through Downtown Seattle without a transfer or second fare</span></div>
+            </div>
+            <button type="button" class="legend-nav-btn press" id="legendOpenThrough">View all 6 through-route pairs ➔</button>
+          </div>
+
+          <div class="legend-section">
             <h3 class="legend-sec-title">Connections & Points of Interest</h3>
             <div class="legend-row"><span style="font-size:18px">★</span> <div><strong>Point of Interest</strong> · Sights, waterfront, Space Needle</div></div>
             <div class="legend-row"><span style="font-size:18px">🎓</span> <div><strong>College / University</strong> · UW, Seattle U, SPU, SCC, Bellevue College</div></div>
@@ -3628,6 +3665,10 @@
     $("#back")?.addEventListener("click", () => {
       panelView = "home";
       showHome();
+    });
+    $("#legendOpenThrough")?.addEventListener("click", () => {
+      panelView = "through-routes";
+      showThroughRoutesGuide();
     });
   }
   const layersHead = () => `<h2 class="view-title">Layers</h2>${isDefaultLayers() ? "" : `<button class="text-btn" id="resetLayers" type="button">Reset</button>`}`;
@@ -4085,9 +4126,24 @@
 
   function getThroughRouteInfo(r) {
     if (!r) return null;
+    const isMetro = r.agencyShort === "Metro" || r.agency === "Metro" || r.agency === "King County Metro" || (r.id && r.id.startsWith("metro-"));
+    if (!isMetro) return null;
     const tr = THROUGH_ROUTES.find((t) => t.ids.includes(r.id) || t.shorts.includes(r.short));
     if (!tr) return null;
-    const partnerIds = tr.ids.filter((id) => id !== r.id);
+    let partnerIds = [];
+    if (r.short === "1") partnerIds = ["metro-14"];
+    else if (r.short === "14") partnerIds = ["metro-1"];
+    else if (r.short === "2") partnerIds = ["metro-13"];
+    else if (r.short === "13") partnerIds = ["metro-2"];
+    else if (r.short === "5") partnerIds = ["metro-21"];
+    else if (r.short === "21") partnerIds = ["metro-5"];
+    else if (r.short === "24") partnerIds = ["metro-124"];
+    else if (r.short === "33") partnerIds = ["metro-124", "metro-27"];
+    else if (r.short === "124") partnerIds = ["metro-24", "metro-33"];
+    else if (r.short === "28") partnerIds = ["metro-131", "metro-132"];
+    else if (r.short === "131" || r.short === "132") partnerIds = ["metro-28"];
+    else if (r.short === "27") partnerIds = ["metro-33"];
+    else partnerIds = tr.ids.filter((id) => id !== r.id);
     const partners = partnerIds.map((id) => RBY[id]).filter(Boolean);
     return { ...tr, partners };
   }
@@ -4384,6 +4440,24 @@
         d
       });
     }
+    searchIndex.push({
+      kind: "guide",
+      id: "guide-legend",
+      view: "legend",
+      title: "Transit Map Guide & Legend",
+      desc: "Service levels, bus runs, infrequent routes, dashed lines & badge symbols",
+      icon: "📖",
+      key: "transit map guide legend symbols key bus runs everyday not everyday part-time frequent infrequent peak dashed line help explanation".toLowerCase()
+    });
+    searchIndex.push({
+      kind: "guide",
+      id: "guide-through-routes",
+      view: "through-routes",
+      title: "Stay on the Bus · Through Routes",
+      desc: "Direct transfers through Downtown Seattle (Routes 1/14, 2/13, 5/21, 24/33/124, 28/131/132)",
+      icon: "🔄",
+      key: "stay on the bus through routes pairs transfer downtown seattle direct connection continuation 1 14 2 13 5 21 24 33 124 28 131 132".toLowerCase()
+    });
   }
   function search(q) {
     q = q.trim().toLowerCase();
@@ -4391,8 +4465,9 @@
     const words = q.split(/\s+/), scored = [];
     for (const it of searchIndex) {
       if (!words.every((w) => it.key.includes(w))) continue;
-      let score = it.kind === "route" ? 0 : it.kind === "dest" ? 6 : it.kind === "station" ? 10 : it.kind === "pr" ? 12 : it.kind === "trail" ? 14 : it.kind === "hill" ? 16 : 20;
+      let score = it.kind === "route" ? 0 : it.kind === "guide" ? 4 : it.kind === "dest" ? 6 : it.kind === "station" ? 10 : it.kind === "pr" ? 12 : it.kind === "trail" ? 14 : it.kind === "hill" ? 16 : 20;
       if (it.kind === "route" && (it.label === q || it.r.short.toLowerCase() === q)) score -= 100;
+      if (it.kind === "guide" && (q.includes("legend") || q.includes("guide") || q.includes("through") || q.includes("transfer") || q.includes("symbol") || q.includes("run") || q.includes("badge"))) score -= 50;
       if (it.kind === "dest" && (it.d.name.toLowerCase().startsWith(q) || it.d.short.toLowerCase().startsWith(q))) score -= 30;
       if (it.key.startsWith(q)) score -= 5;
       if (it.kind === "trail" && (q.includes("bike") || q.includes("trail") || q.includes("cycle") || q.includes("cycling") || q.includes("greenway") || q.includes("pbl") || q.includes("lane"))) score -= 25;
@@ -4403,7 +4478,7 @@
     scored.sort((a, b) => a[0] - b[0]);
     const seen = new Set();
     return scored.map((x) => x[1]).filter((it) => {
-      const k = it.kind === "stop" ? it.s.name : it.kind === "dest" ? it.d.name : it.kind === "trail" ? it.f.properties.name : it.kind === "pr" ? it.pr.name : it.kind === "hill" ? it.hill.name : it.kind + it.id;
+      const k = it.kind === "stop" ? it.s.name : it.kind === "dest" ? it.d.name : it.kind === "trail" ? it.f.properties.name : it.kind === "pr" ? it.pr.name : it.kind === "hill" ? it.hill.name : it.kind === "guide" ? it.id : it.kind + it.id;
       if (seen.has(k)) return false;
       seen.add(k);
       return true;
@@ -4740,6 +4815,9 @@
           const cat = p.cat_name || "Bicycle Facility";
           return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true">${icon}</span><span class="txt"><span class="name">${esc(p.name)}</span><span class="desc">${esc(cat)}${p.length_mi ? ` · ${p.length_mi} mi` : ""}${p.surface === "unpaved" ? " · Gravel" : ""}${p.region ? ` (${esc(p.region)})` : ""}</span></span></button>`;
         }
+        if (it.kind === "guide") {
+          return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true" style="background:#2563eb;color:#fff">${it.icon}</span><span class="txt"><span class="name">${esc(it.title)}</span><span class="desc">${esc(it.desc)}</span></span></button>`;
+        }
         if (it.kind === "dest") {
           const d = it.d;
           return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true" style="background:${poiColor(d.kind)};color:#fff">${poiEmoji(d.kind)}</span><span class="txt"><span class="name">${esc(d.name)}</span><span class="desc">${esc(poiKindTitle(d.kind))} · ${esc(d.short)}</span></span></button>`;
@@ -4770,6 +4848,12 @@
       input.value = "";
       input.blur();
       if (it.kind === "route") selectRoute(it.id);
+      else if (it.kind === "guide") {
+        panelView = it.view;
+        if (it.view === "legend") showLegendGuide();
+        else if (it.view === "through-routes") showThroughRoutesGuide();
+        openSheet("half");
+      }
       else if (it.kind === "dest") showDestination(it.d);
       else if (it.kind === "trail") selectTrail(it.f);
       else if (it.kind === "pr") selectPR(it.pr);
@@ -6794,14 +6878,20 @@
         return `<div class="tt-service-info"><span class="tt-sched suspended">🚫 Service Suspended · Temporarily closed</span></div>`;
       }
       let catText = "";
-      if (r.cat === "frequent" || r.cat === "rapidride" || r.cat === "swift") {
-        catText = "🟢 Frequent Bus · Every 10–15 min all day";
+      const w = r.sched?.weekday;
+      const midMin = w && w.mid_n >= 3 ? w.mid : null;
+      if (r.cat === "frequent") {
+        catText = midMin ? `🟢 Frequent Bus · Every ${midMin} min all day` : "🟢 Frequent Bus · Every 10–15 min all day";
+      } else if (r.cat === "rapidride") {
+        catText = midMin ? `🔴 RapidRide BRT · Every ${midMin} min all day` : "🔴 RapidRide BRT · Frequent arterial service";
+      } else if (r.cat === "swift") {
+        catText = midMin ? `🔵 Swift BRT · Every ${midMin} min all day` : "🔵 Swift BRT · Frequent arterial service";
       } else if (r.cat === "peak") {
-        catText = "⚡ Peak Commute Only · Weekday rush hours";
+        catText = "⚡ Peak Commute Only · Weekday rush hours (dashed line)";
       } else if (r.cat === "dart") {
-        catText = "🚐 Dial-a-Ride (DART) · Flexible on-demand zone";
+        catText = "🚐 Dial-a-Ride (DART) · Flexible on-demand zone (dashed line)";
       } else if (r.cat === "local") {
-        catText = "🔷 All-Day Bus · Regular 15–30 min service";
+        catText = midMin ? `🔷 All-Day Bus · Every ${midMin} min midday` : "🔷 All-Day Bus · Regular 20–60 min service";
       } else if (r.cat === "link") {
         catText = "🚆 Link Light Rail · Frequent rapid transit";
       } else if (r.cat === "sounder") {
@@ -6811,14 +6901,16 @@
       } else if (r.cat === "monorail") {
         catText = "🚝 Seattle Center Monorail · Direct express";
       } else if (r.cat === "ferry" || r.cat === "watertaxi") {
-        catText = "⛴️ Ferry · Cross-sound water connection";
+        catText = "⛴️ Ferry · Cross-sound water connection (dashed line)";
       } else {
         catText = `${CAT_NAME[r.cat] || "Transit route"}`;
       }
 
       const runText = isEveryday(r)
         ? "Runs every day (7 days/wk)"
-        : "Part-time (Mon–Fri only)";
+        : (r.sched?.saturday && (r.sched.saturday.mid_n > 0 || r.sched.saturday.trips > 5))
+          ? "Runs Mon–Sat · No Sunday"
+          : "Part-time (Mon–Fri only · No weekends)";
 
       return `<div class="tt-service-info"><span class="tt-cat">${esc(catText)}</span><span class="tt-run-pill ${isEveryday(r) ? "everyday" : "part-time"}">${esc(runText)}</span></div>`;
     }
@@ -6859,7 +6951,7 @@
             const trInfo = tr && tr.partners.length
               ? `<span class="tt-tr">🔄 Stay on bus: continues as ${tr.partners.map((p) => routeTitle(p)).join("/")} through Downtown</span>`
               : "";
-            tipShow("tag:" + tg.item.r, `<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}${schedInfo}${trInfo}</span>`, "", ev(e, 14));
+            tipShow("tag:" + tg.item.r, `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}${schedInfo}${trInfo}</span>`, "", ev(e, 14));
           } else {
             cur = { kind: "tag", id: "more" };
             if (!(selected && selected.type === "route") && tg.item.more?.length) {

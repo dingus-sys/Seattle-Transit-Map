@@ -1722,4 +1722,55 @@ td.sched-cell-now {
   color: var(--ink-2);
   margin-top: 2px;
 }
+.tt-sched.suspended {
+  color: #d0213b;
+  font-weight: 650;
+}
+:root[data-dark="1"] .tt-sched.suspended {
+  color: #ff6b7f;
+}
+
+/* Legend Navigation Button */
+.legend-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px 14px;
+  background: color-mix(in srgb, #059669 12%, transparent);
+  border: 1px solid color-mix(in srgb, #059669 35%, transparent);
+  border-radius: var(--r-badge);
+  color: #059669;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  width: 100%;
+  justify-content: center;
+}
+:root[data-dark="1"] .legend-nav-btn {
+  color: #34d399;
+}
+.legend-nav-btn:hover {
+  background: color-mix(in srgb, #059669 20%, transparent);
+}
+
+/* POI Nearby Routes */
+.dest-routes-list {
+  margin-top: 10px;
+}
+.dest-routes-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+}
+.dest-route-badge-btn {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
 
