@@ -517,9 +517,9 @@
   function areaLayers(P) {
     const acc = theme === "dark" ? "#bf9cf5" : "#7b5cc4";
     const trailCol = theme === "dark" ? "#2dd4bf" : "#047857";
-    const trailGreenway = theme === "dark" ? "#34d399" : "#059669";
-    const trailLane = theme === "dark" ? "#14b8a6" : "#0d9488";
-    const trailSharrow = theme === "dark" ? "#86efac" : "#16a34a";
+    const trailGreenway = theme === "dark" ? "#86efac" : "#16a34a";
+    const trailLane = theme === "dark" ? "#67e8f9" : "#0284c7";
+    const trailSharrow = theme === "dark" ? "#d9f99d" : "#65a30d";
     const trailHalo = theme === "dark" ? "#090d16" : "#ffffff";
     const trailText = theme === "dark" ? "#5eead4" : "#065f46";
     const trailCase = theme === "dark" ? "#041d16" : "#ffffff";
@@ -557,7 +557,7 @@
         paint: {
           "line-color": trailGreenway,
           "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1.4, 11, 2.0, 13, 2.8, 15, 3.8, 17, 4.8],
-          "line-dasharray": [4, 2],
+          "line-dasharray": [6, 3],
           "line-opacity": 0.92,
         } },
       // 4. Bicycle Lanes (Buffered, Climbing & Striped Lanes) - clean teal lane stroke
@@ -574,7 +574,7 @@
         paint: {
           "line-color": trailSharrow,
           "line-width": ["interpolate", ["linear"], ["zoom"], 11, 1.1, 13, 1.5, 15, 2.0, 17, 2.6],
-          "line-dasharray": [1.5, 2.5],
+          "line-dasharray": [1.2, 3],
           "line-opacity": 0.85,
         } },
       // 6. Unpaved / gravel trails
@@ -745,7 +745,6 @@
     { id: "dest-arboretum", name: "Washington Park Arboretum", short: "Arboretum", kind: "park", desc: "230-acre botanical collection on Lake Washington with Japanese Garden.", coords: [-122.2950, 47.6360], transit: "Route 11, Route 43, Route 48" },
     { id: "dest-tacoma-dome", name: "Tacoma Dome & Station", short: "Tacoma Dome", kind: "stadium", desc: "Major indoor arena and southern Sound Transit / Amtrak rail hub.", coords: [-122.4270, 47.2420], transit: "Sounder S Line, T Line Light Rail, Amtrak Cascades, Pierce Transit" }
   ];
-
   function destinationsGeoJSON() {
     const dark = theme === "dark";
     const colors = dark ? POI_COLOR_D : POI_COLOR;
@@ -758,6 +757,7 @@
           name: d.name,
           short: d.short,
           kind: d.kind,
+          rank: PROMINENT_DESTINATION_IDS.has(d.id) ? 2 : 1,
           color: colors[d.kind] || (dark ? "#fff" : "#1d1d1f"),
           transit: d.transit,
         },
@@ -766,14 +766,68 @@
     };
   }
 
+  // These are wayfinding anchors rather than an exhaustive directory. They stay
+  // visible from a regional view; the remaining custom destinations appear as
+  // the rider zooms closer so Downtown does not turn into a field of labels.
+  const PROMINENT_DESTINATION_IDS = new Set([
+    "dest-space-needle", "dest-pike-place", "dest-climate-pledge", "dest-tmobile-park", "dest-lumen-field",
+    "dest-uw", "dest-childrens", "dest-colman-dock", "dest-pier-50", "dest-woodland-zoo",
+    "dest-museum-flight", "dest-green-lake", "dest-alki-beach", "dest-tacoma-dome"
+  ]);
+  const DESTINATION_LAYER_IDS = ["destinations-major-icon", "destinations-major-label", "destinations-icon", "destinations-label"];
+
   function destLayers(P) {
     const dark = theme === "dark";
+    const major = [">=", ["get", "rank"], 2];
+    const detail = ["<", ["get", "rank"], 2];
     return [
+      // A small, curated set of regional anchors: unlike ordinary tile POIs,
+      // these icons never disappear in a collision and are visible before the
+      // detailed custom destinations below.
+      {
+        id: "destinations-major-icon",
+        type: "symbol",
+        source: "destinations",
+        minzoom: 9.6,
+        filter: major,
+        layout: {
+          "icon-image": ["concat", "poi:", ["get", "kind"], ":", dark ? "d" : "l"],
+          "icon-size": ["interpolate", ["linear"], ["zoom"], 9.6, 0.92, 13, 1.08],
+          "icon-allow-overlap": true,
+          "icon-ignore-placement": true,
+          "icon-padding": 10,
+          "symbol-sort-key": ["get", "rank"],
+        },
+      },
+      {
+        id: "destinations-major-label",
+        type: "symbol",
+        source: "destinations",
+        minzoom: 10.5,
+        filter: major,
+        layout: {
+          "text-field": ["get", "short"],
+          "text-font": F_BOLD,
+          "text-size": ["interpolate", ["linear"], ["zoom"], 10.5, 9.5, 15, 12],
+          "text-anchor": "left",
+          "text-offset": [1.05, 0],
+          "text-max-width": 8,
+          "text-padding": 5,
+          "text-optional": true,
+          "symbol-sort-key": ["get", "rank"],
+        },
+        paint: {
+          "text-color": ["get", "color"],
+          "text-halo-color": P.halo,
+          "text-halo-width": 1.8,
+        },
+      },
       {
         id: "destinations-icon",
         type: "symbol",
         source: "destinations",
         minzoom: 11.2,
+        filter: detail,
         layout: {
           "icon-image": ["concat", "poi:", ["get", "kind"], ":", dark ? "d" : "l"],
           "icon-size": ["interpolate", ["linear"], ["zoom"], 11.2, 0.82, 14, 1.05],
@@ -787,6 +841,7 @@
         type: "symbol",
         source: "destinations",
         minzoom: 11.8,
+        filter: detail,
         layout: {
           "text-field": ["get", "short"],
           "text-font": F_BOLD,
@@ -2915,7 +2970,9 @@
       for (const id of [`glass-${g}`, `center-${g}`, `dots-${g}`, `ties-${g}`]) map.setLayoutProperty(id, "visibility", dim ? "none" : "visible");
       for (const id of [`case-${g}`, `shadow-${g}`]) if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", dim ? "none" : "visible");
     }
-    setNetDim(dim ? 0.2 : 1);
+    // Keep enough of the surrounding network visible to orient a rider while
+    // leaving the selected line unmistakably in front.
+    setNetDim(dim ? 0.38 : 1);
     // the selected route shows its own arrows; the faded network's would only be noise
     if (map.getLayer("arrows")) map.setLayoutProperty("arrows", "visibility", dim ? "none" : "visible");
   }
@@ -3418,6 +3475,14 @@
         </button></li>`).join("")}
       </ul>` : "";
 
+    const throughRoutePreview = [RBY["metro-1"], RBY["metro-14"]].filter(Boolean);
+    const throughRoutesHomeHTML = `<button type="button" class="through-routes-home press" id="openThroughRoutes">
+      <span class="through-routes-home-icon" aria-hidden="true">🔄</span>
+      <span class="txt"><span class="name">Stay on board through Downtown</span><span class="desc">Some buses continue as another route — no curbside transfer or extra fare.</span></span>
+      <span class="through-routes-home-badges" aria-hidden="true">${throughRoutePreview.map((r) => badgeHTML(r)).join("<span class=\"through-routes-home-arrow\">➔</span>")}</span>
+      <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="m1.5 1.5 5 5.5-5 5.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>`;
+
     const nonTrailKeys = keys.filter((l) => l.key !== "trails");
     const hasTrails = enabled.has("trails");
     const bikeLegendHTML = hasTrails ? `
@@ -3461,16 +3526,12 @@
     const html = `<div class="home-view">
       <p class="live-line${live ? "" : " off"}"><span class="pulse" aria-hidden="true"></span><span${live ? ' id="liveDesc"' : ""}>${live ? esc(liveStatusText()) : "Vehicles are hidden"}</span></p>
       ${favSectionHTML}
+      ${throughRoutesHomeHTML}
       <h3 class="section">Explore</h3>
       <ul class="group" role="list">
         <li><button class="row nav-row" id="openLayers" type="button">
           <span class="icon"><svg viewBox="0 0 30 30" aria-hidden="true"><path d="M15 7 25 12 15 17 5 12Z" fill="var(--accent)" opacity=".9"/><path d="M6.5 16.3 15 20.5l8.5-4.2" stroke="var(--accent)" stroke-width="1.8" fill="none" stroke-linejoin="round" stroke-linecap="round" opacity=".55"/></svg></span>
           <span class="txt"><span class="name">Layers</span><span class="desc">${shown} of ${LAYERS.length} shown${isDefaultLayers() ? "" : " · customized"}</span></span>
-          <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="m1.5 1.5 5 5.5-5 5.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </button></li>
-        <li><button class="row nav-row" id="openThroughRoutes" type="button">
-          <span class="icon" style="background:#059669;color:#fff;font-size:15px;display:flex;align-items:center;justify-content:center;border-radius:8px">🔄</span>
-          <span class="txt"><span class="name">Stay on the bus</span><span class="desc">Direct transfers through Downtown Seattle</span></span>
           <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="m1.5 1.5 5 5.5-5 5.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button></li>
         <li><button class="row nav-row" id="openLegendGuide" type="button">
@@ -3509,7 +3570,7 @@
     const pairsHTML = THROUGH_ROUTES.map((tr) => {
       const routes = tr.ids.map((id) => RBY[id]).filter(Boolean);
       return `
-        <div class="tr-guide-card">
+        <div class="tr-guide-card" data-tr-preview="${esc(tr.ids.join(","))}" tabindex="0">
           <div class="tr-guide-header">
             <span class="tr-time-tag">${esc(tr.time === "all-day" ? "All Day Service" : tr.time)}</span>
           </div>
@@ -3524,6 +3585,7 @@
             </div>
           </div>
           <p class="tr-guide-desc">${esc(tr.desc)}</p>
+          <p class="tr-guide-preview">Hover to preview every route in this continuation on the map.</p>
           <div class="tr-guide-actions">
             ${routes.map((r) => `<button type="button" class="tr-partner-btn press" data-tr-select="${esc(r.id)}">${badgeHTML(r)} <span>View Line</span></button>`).join("")}
           </div>
@@ -3554,6 +3616,22 @@
         const id = b.dataset.trSelect;
         if (id && RBY[id]) selectRoute(id, { fit: true });
       });
+    });
+    let previewTimer = 0;
+    body().querySelectorAll("[data-tr-preview]").forEach((card) => {
+      const preview = () => {
+        clearTimeout(previewTimer);
+        const routes = String(card.dataset.trPreview || "").split(",").map((id) => RBY[id]).filter(Boolean);
+        if (routes.length) focusRoutes(routes, false, { glow: true, widthScale: 1.58 });
+      };
+      const revert = () => {
+        clearTimeout(previewTimer);
+        previewTimer = setTimeout(() => { if (panelView === "through-routes") focusOff(); }, 180);
+      };
+      card.addEventListener("mouseenter", preview);
+      card.addEventListener("mouseleave", revert);
+      card.addEventListener("focusin", preview);
+      card.addEventListener("focusout", (e) => { if (!card.contains(e.relatedTarget)) revert(); });
     });
   }
 
@@ -3769,27 +3847,27 @@
   }
   function bikeSwatch(type) {
     const trailCol = theme === "dark" ? "#2dd4bf" : "#047857";
-    const trailGreenway = theme === "dark" ? "#34d399" : "#059669";
-    const trailLane = theme === "dark" ? "#14b8a6" : "#0d9488";
-    const trailSharrow = theme === "dark" ? "#86efac" : "#16a34a";
+    const trailGreenway = theme === "dark" ? "#86efac" : "#16a34a";
+    const trailLane = theme === "dark" ? "#67e8f9" : "#0284c7";
+    const trailSharrow = theme === "dark" ? "#d9f99d" : "#65a30d";
     const trailDash = theme === "dark" ? "#fbbf24" : "#b45309";
     const trailCase = theme === "dark" ? "#041d16" : "#ffffff";
     if (type === "pbl") {
-      return `<svg viewBox="0 0 30 30" aria-hidden="true"><path d="M4 15 H26" stroke="${trailCase}" stroke-width="6" stroke-linecap="round"/><path d="M4 15 H26" stroke="${trailCol}" stroke-width="3.5" stroke-linecap="round"/></svg>`;
+      return `<svg viewBox="0 0 46 32" aria-hidden="true"><path d="M4 16 H42" stroke="${trailCase}" stroke-width="9" stroke-linecap="round"/><path d="M4 16 H42" stroke="${trailCol}" stroke-width="5" stroke-linecap="round"/><path d="M7 16 H39" stroke="#fff" stroke-opacity=".34" stroke-width="1.1" stroke-linecap="round"/></svg>`;
     }
     if (type === "greenway") {
-      return `<svg viewBox="0 0 30 30" aria-hidden="true"><path d="M4 15 H26" stroke="${trailGreenway}" stroke-width="3.2" stroke-linecap="round" stroke-dasharray="4 2.5"/></svg>`;
+      return `<svg viewBox="0 0 46 32" aria-hidden="true"><path d="M4 16 H42" stroke="${trailGreenway}" stroke-width="4.2" stroke-linecap="round" stroke-dasharray="8 4"/></svg>`;
     }
     if (type === "lane") {
-      return `<svg viewBox="0 0 30 30" aria-hidden="true"><path d="M4 15 H26" stroke="${trailLane}" stroke-width="3.2" stroke-linecap="round"/></svg>`;
+      return `<svg viewBox="0 0 46 32" aria-hidden="true"><path d="M4 16 H42" stroke="${trailLane}" stroke-width="4.2" stroke-linecap="round"/></svg>`;
     }
     if (type === "sharrow") {
-      return `<svg viewBox="0 0 30 30" aria-hidden="true"><path d="M4 15 H26" stroke="${trailSharrow}" stroke-width="2.6" stroke-linecap="round" stroke-dasharray="1.5 3"/></svg>`;
+      return `<svg viewBox="0 0 46 32" aria-hidden="true"><path d="M4 16 H42" stroke="${trailSharrow}" stroke-width="3.8" stroke-linecap="round" stroke-dasharray="1.2 4"/></svg>`;
     }
     if (type === "unpaved") {
-      return `<svg viewBox="0 0 30 30" aria-hidden="true"><path d="M4 15 H26" stroke="${trailDash}" stroke-width="3" stroke-linecap="round" stroke-dasharray="3.5 2.5"/></svg>`;
+      return `<svg viewBox="0 0 46 32" aria-hidden="true"><path d="M4 16 H42" stroke="${trailDash}" stroke-width="4" stroke-linecap="round" stroke-dasharray="5 3"/></svg>`;
     }
-    return `<svg viewBox="0 0 30 30"></svg>`;
+    return `<svg viewBox="0 0 46 32"></svg>`;
   }
 
   function swatch(l) {
@@ -6763,7 +6841,7 @@
       trailLayers.forEach((id) => map.getLayer(id) && map.setLayoutProperty(id, "visibility", allowed.includes(id) ? "visible" : "none"));
     }
     vis("stops", ["stops", "stop-name"]);
-    vis("pois", ["destinations-icon", "destinations-label"]);
+    vis("pois", DESTINATION_LAYER_IDS);
     vis("live", ["veh-dir", "veh-icon", "veh-label"]);
     if (enabled.has("live")) startLive(); else stopLive();
     if (map.getSource("stations")) refreshStations();
@@ -6998,7 +7076,7 @@
         }
         if (enabled.has("pois")) {
           const destHits = map.queryRenderedFeatures([[e.point.x - 8, e.point.y - 8], [e.point.x + 8, e.point.y + 8]], {
-            layers: ["destinations-icon", "destinations-label"].filter((l) => map.getLayer(l))
+            layers: DESTINATION_LAYER_IDS.filter((l) => map.getLayer(l))
           });
           if (destHits.length) {
             const dp = destHits[0].properties;
@@ -7123,7 +7201,7 @@
       }
       if (enabled.has("pois")) {
         const destHits = map.queryRenderedFeatures([[e.point.x - 10, e.point.y - 10], [e.point.x + 10, e.point.y + 10]], {
-          layers: ["destinations-icon", "destinations-label"].filter((l) => map.getLayer(l))
+          layers: DESTINATION_LAYER_IDS.filter((l) => map.getLayer(l))
         });
         if (destHits.length) {
           const dObj = KEY_DESTINATIONS.find((k) => k.id === destHits[0].properties.id);
