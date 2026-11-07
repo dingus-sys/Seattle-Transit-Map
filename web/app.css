@@ -153,8 +153,14 @@ button, input { font: inherit; color: inherit; letter-spacing: inherit; }
 .sheet-head { padding: 14px 16px 12px; display: grid; gap: 12px; }
 .grabber { display: none; }
 .title-row { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.app-icon { flex: none; width: 44px; height: 44px; border-radius: 11px; box-shadow: 0 2px 6px rgba(0, 0, 0, .18); }
-.app-icon svg { display: block; }
+/* Header mark is a logo, not an app tile: no rounded square or drop shadow. */
+.app-icon {
+  flex: none; width: 40px; height: 40px; display: block;
+  background: var(--ink);
+  -webkit-mask: url("logo-mark.svg") center / contain no-repeat;
+  mask: url("logo-mark.svg") center / contain no-repeat;
+}
+.app-icon svg { display: none; }
 .titles { min-width: 0; }
 .titles h1 { margin: 0; font: 700 20px/1.15 var(--font-display); letter-spacing: -.02em; text-wrap: balance; }
 .titles p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
@@ -1656,21 +1662,21 @@ td.sched-cell-now {
 .poi-icon-badge {
   display: inline-grid;
   place-items: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
+  width: 34px;
+  height: 34px;
+  border-radius: 0;
   font-size: 24px;
-  background: var(--fill);
-  box-shadow: inset 0 0 0 1px var(--rim);
+  background: transparent;
+  box-shadow: none;
   flex-shrink: 0;
 }
-.poi-icon-badge.school { background: rgba(165, 103, 42, 0.15); color: #a5672a; }
-.poi-icon-badge.hospital { background: rgba(208, 33, 59, 0.15); color: #d0213b; }
-.poi-icon-badge.stadium { background: rgba(60, 111, 181, 0.15); color: #3c6fb5; }
-.poi-icon-badge.sight { background: rgba(194, 87, 26, 0.15); color: #c2571a; }
-.poi-icon-badge.park { background: rgba(63, 143, 67, 0.15); color: #3f8f43; }
-.poi-icon-badge.library { background: rgba(122, 90, 47, 0.15); color: #7a5a2f; }
-.poi-icon-badge.ferry { background: rgba(60, 120, 180, 0.15); color: #3c78b4; }
+.poi-icon-badge.school { color: #a5672a; }
+.poi-icon-badge.hospital { color: #d0213b; }
+.poi-icon-badge.stadium { color: #3c6fb5; }
+.poi-icon-badge.sight { color: #c2571a; }
+.poi-icon-badge.park { color: #3f8f43; }
+.poi-icon-badge.library { color: #7a5a2f; }
+.poi-icon-badge.ferry { color: #3c78b4; }
 .destination-view .desc {
   font-size: 13.5px;
   line-height: 1.45;

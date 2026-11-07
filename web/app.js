@@ -642,16 +642,17 @@
           "icon-size": ["interpolate", ["linear"], ["zoom"], 9, 0.72, 13, 0.85, 16, 0.95], "icon-padding": 30, "symbol-avoid-edges": true } },
     ];
   }
-  // a small round symbol for a place: white figure on its color
+  // Place glyphs deliberately have no enclosing disc: the transit map already
+  // uses circles for stops and live vehicles, while a standalone symbol reads
+  // as a landmark at a glance.
   function drawPoiIcon(id) {
     const [, kind, th] = id.split(":");
     const color = (th === "d" ? POI_COLOR_D : POI_COLOR)[kind] || "#777";
-    const dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1)), S = Math.round(18 * dpr), c = S / 2, R = 7.4 * dpr;
+    const dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1)), S = Math.round(20 * dpr), c = S / 2, R = 8.6 * dpr;
     const cv = document.createElement("canvas"); cv.width = cv.height = S;
     const x = cv.getContext("2d");
-    x.beginPath(); x.arc(c, c, R + 1.3 * dpr, 0, Math.PI * 2); x.fillStyle = th === "d" ? "#1c1c1e" : "#fff"; x.fill();
-    x.beginPath(); x.arc(c, c, R, 0, Math.PI * 2); x.fillStyle = color; x.fill();
-    x.save(); x.translate(c, c); x.scale(R * 0.62, R * 0.62); x.fillStyle = "#fff"; x.strokeStyle = "#fff"; x.lineCap = "round"; x.lineJoin = "round";
+    x.save(); x.translate(c, c); x.scale(R * 0.72, R * 0.72); x.fillStyle = color; x.strokeStyle = color; x.lineCap = "round"; x.lineJoin = "round";
+    x.shadowColor = th === "d" ? "rgba(0,0,0,.9)" : "rgba(255,255,255,.96)"; x.shadowBlur = 1.8 * dpr;
     const P = (pts) => { x.beginPath(); x.moveTo(pts[0][0], pts[0][1]); for (const q of pts.slice(1)) x.lineTo(q[0], q[1]); x.closePath(); x.fill(); };
     const dot = (a, b, r) => { x.beginPath(); x.arc(a, b, r, 0, Math.PI * 2); x.fill(); };
     if (kind === "park") { P([[0, -0.95], [0.75, 0.25], [-0.75, 0.25]]); x.fillRect(-0.13, 0.2, 0.26, 0.7); }
