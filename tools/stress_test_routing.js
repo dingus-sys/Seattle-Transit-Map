@@ -316,6 +316,26 @@ test('2.2 Real Network Transfers: verify buffers in actual planTransitTrip execu
   assert(transferCount > 0, 'Must have evaluated at least 1 real transfer itinerary');
 });
 
+test('2.3 Cross-water trips can use a ferry plus a local shuttle', () => {
+  // Alaska Junction → south Vashon cannot be represented by a direct or
+  // one-transfer plan: it needs Metro C Line → WSF ferry → Route 118.
+  const plan = planTransitTrip(
+    { lat: 47.5605, lon: -122.3805 },
+    { lat: 47.4475, lon: -122.4606 }
+  );
+  assert(plan && Array.isArray(plan.multi), 'Planner must expose bounded multi-leg options');
+  const ferryPlan = plan.multi.find((it) => it.legs.some((leg) => leg.route.cat === 'ferry'));
+  assert(ferryPlan, 'Expected a Vashon itinerary that uses a ferry');
+  assert(ferryPlan.legs.length >= 3, 'Vashon itinerary must support two or more transfers');
+  assert(ferryPlan.legs.some((leg) => leg.route.id === 'wsf-fauntleroy-vashon-island'), 'Expected the Fauntleroy–Vashon ferry');
+  assert(ferryPlan.legs.some((leg) => leg.route.id === 'metro-118' || leg.route.id === 'metro-119'), 'Expected an island shuttle connection');
+  for (const leg of ferryPlan.legs.slice(1)) {
+    assert(leg.transferWalkDist <= 360, 'Multi-leg transfer walk must stay within 360m');
+    assert(leg.waitTime >= 2, 'Multi-leg connection must keep at least a 2-minute buffer');
+  }
+  totalAssertions += 6 + (ferryPlan.legs.length - 1) * 2;
+});
+
 // -----------------------------------------------------------------------------
 // SECTION 3: INVARIANT — Walking Legs (80 m/min, Added Before Departure Query)
 // -----------------------------------------------------------------------------

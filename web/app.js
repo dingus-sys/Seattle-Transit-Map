@@ -1273,9 +1273,9 @@
   // ---------------------------------------------------------------- route tags (canvas)
   // Plain, flat labels in the manner of the printed map: one small solid pill per service
   // type, route numbers side by side with hairline dividers, a thin halo to lift it off the
-  // lines. No gloss, no cards, no stacks.
+  // lines. On vertical corridors, the same compact pills stack with the road.
   function drawBadge(id) {
-    const [, th, list] = id.split(":");
+    const [, th, list, orientation = "h"] = id.split(":");
     const dark = th === "d";
     let rs = list.split(".").map((i) => LINES[+i]).filter(Boolean);
     const MAX = 6;
@@ -1300,6 +1300,58 @@
     for (const g of groups) {
       g.ws = g.items.map((t) => ctx.measureText(t).width);
       g.w = Math.max(h, g.ws.reduce((a, b) => a + b, 0) + sep * (g.items.length - 1) + pad * 2);
+    }
+    // Route tags remain upright for legibility.  On a north/south road their
+    // pills stack in the direction of the road instead of becoming one long
+    // horizontal obstruction; four or more use a compact 2-column grid.
+    if (orientation === "v") {
+      const cells = [];
+      for (const g of groups) {
+        g.items.forEach((label, index) => cells.push({ label, ref: g.refs[index], color: g.c, fg: g.fg, everyday: g.everyday, width: g.ws[index] }));
+      }
+      const cols = cells.length <= 3 ? 1 : 2;
+      const cellGap = 2 * dpr;
+      const cellW = Math.max(h, ...cells.map((cell) => cell.width + pad * 2));
+      const rows = Math.ceil(cells.length / cols);
+      const W = cols * cellW + (cols - 1) * cellGap + halo * 2;
+      const H = rows * h + (rows - 1) * cellGap + halo * 2;
+      cv.width = Math.ceil(W); cv.height = Math.ceil(H);
+      ctx.font = font;
+      ctx.textBaseline = "middle";
+      const layout = { w: cv.width / dpr, h: cv.height / dpr, axis: "y", items: [] };
+      cells.forEach((cell, index) => {
+        const col = index % cols, row = Math.floor(index / cols);
+        const x = halo + col * (cellW + cellGap), y = halo + row * (h + cellGap);
+        ctx.fillStyle = dark ? "#1c1c1e" : "#ffffff";
+        roundRect(ctx, x - halo, y - halo, cellW + halo * 2, h + halo * 2, rad + halo); ctx.fill();
+        if (cell.everyday) {
+          ctx.fillStyle = cell.color;
+          roundRect(ctx, x, y, cellW, h, rad); ctx.fill();
+        } else {
+          ctx.fillStyle = dark ? "rgba(255,255,255,0.08)" : "#ffffff";
+          roundRect(ctx, x, y, cellW, h, rad); ctx.fill();
+          ctx.strokeStyle = cell.color;
+          ctx.lineWidth = 1.25 * dpr;
+          roundRect(ctx, x + 0.6 * dpr, y + 0.6 * dpr, cellW - 1.2 * dpr, h - 1.2 * dpr, rad - 0.5 * dpr); ctx.stroke();
+        }
+        const tx = x + (cellW - cell.width) / 2;
+        ctx.fillStyle = cell.fg;
+        ctx.fillText(cell.label, tx, y + h / 2 + 0.5 * dpr);
+        const rRef = cell.ref && cell.ref.r != null ? LINES[cell.ref.r] : null;
+        if (rRef && isRouteSuspended(rRef)) {
+          ctx.strokeStyle = "#d0213b";
+          ctx.lineWidth = 1.8 * dpr;
+          ctx.beginPath();
+          ctx.moveTo(tx - 2 * dpr, y + h - 2 * dpr);
+          ctx.lineTo(tx + cell.width + 2 * dpr, y + 2 * dpr);
+          ctx.stroke();
+        }
+        layout.items.push({ ...cell.ref, x0: x / dpr, x1: (x + cellW) / dpr, y0: y / dpr, y1: (y + h) / dpr });
+      });
+      BADGE_LAYOUT.set(id, layout);
+      const data = ctx.getImageData(0, 0, cv.width, cv.height);
+      if (!map.hasImage(id)) map.addImage(id, { width: cv.width, height: cv.height, data: data.data }, { pixelRatio: dpr });
+      return;
     }
     const W = groups.reduce((a, g) => a + g.w, 0) + gap * (groups.length - 1) + halo * 2;
     const H = h + halo * 2;
@@ -3109,7 +3161,7 @@
     } else {
       const origName = orig.isLocation ? "Your location" : orig.name;
       const destName = dest.isLocation ? "Your location" : dest.name;
-      const summary = it ? (it.type === "direct" ? it.route.short || it.route.label : it.type === "transfer" ? `${it.r1.short || it.r1.label} ➔ ${it.r2.short || it.r2.label}` : "Walk") : "";
+      const summary = it ? (it.type === "direct" ? it.route.short || it.route.label : it.type === "transfer" ? `${it.r1.short || it.r1.label} ➔ ${it.r2.short || it.r2.label}` : it.type === "multi" ? it.legs.map((leg) => leg.route.short || leg.route.label).join(" ➔ ") : "Walk") : "";
       trips.push({
         id: "trip-" + Date.now(),
         name: `${origName} → ${destName}`,
@@ -5276,6 +5328,257 @@
     return best;
   }
 
+  // The quick direct/one-transfer search below is useful for the common case.
+  // Regional trips need more than that, though: a bus to a ferry and a local
+  // shuttle on the other shore is two transfers.  Build a small, cached view of
+  // the all-mode network so the bounded connection search can use every route
+  // category without turning a trip request into an all-pairs scan.
+  let plannerNetworkCache = null;
+  function getPlannerNetwork() {
+    if (plannerNetworkCache) return plannerNetworkCache;
+    const stopsById = new Map();
+    for (const stop of getPlannerStops()) if (stop && stop.id && !stopsById.has(stop.id)) stopsById.set(stop.id, stop);
+
+    const cellSize = 0.0035; // roughly 390 m north/south in the map's service area
+    const cellKey = (lat, lon) => `${Math.floor(lat / cellSize)},${Math.floor(lon / cellSize)}`;
+    const cells = new Map();
+    for (const stop of stopsById.values()) {
+      if (!Number.isFinite(stop.lat) || !Number.isFinite(stop.lon)) continue;
+      const key = cellKey(stop.lat, stop.lon);
+      if (!cells.has(key)) cells.set(key, []);
+      cells.get(key).push(stop);
+    }
+
+    const atStop = new Map();
+    const addAtStop = (sid, entry) => {
+      if (!sid) return;
+      if (!atStop.has(sid)) atStop.set(sid, []);
+      atStop.get(sid).push(entry);
+      const keyed = stopIndex[sid] && stopIndex[sid].key;
+      if (keyed && keyed !== sid) {
+        if (!atStop.has(keyed)) atStop.set(keyed, []);
+        atStop.get(keyed).push(entry);
+      }
+    };
+    for (const route of ROUTES) {
+      for (const pattern of (route.patterns || [])) {
+        for (let index = 0; index < pattern.stops.length; index++) {
+          addAtStop(pattern.stops[index], { route, pattern, index });
+        }
+      }
+    }
+
+    plannerNetworkCache = { stopsById, cellSize, cellKey, cells, atStop, transferCache: new Map(), routeNeighbors: null };
+    return plannerNetworkCache;
+  }
+
+  function transferBoardsFrom(stop) {
+    const net = getPlannerNetwork();
+    const source = stop && (stopIndex[stop.id] || net.stopsById.get(stop.id) || stop);
+    if (!source || !source.id || !Number.isFinite(source.lat) || !Number.isFinite(source.lon)) return [];
+    if (net.transferCache.has(source.id)) return net.transferCache.get(source.id);
+
+    const result = new Map();
+    const add = (candidate, dist) => {
+      if (!candidate || !candidate.id || !Number.isFinite(dist) || dist > 360) return;
+      const old = result.get(candidate.id);
+      if (!old || dist < old.dist) result.set(candidate.id, { stop: candidate, dist });
+    };
+    add(source, 0);
+
+    const station = getStopToStation().get(source.id);
+    if (station) {
+      for (const sid of (station.stops || [])) add(stopIndex[sid] || net.stopsById.get(sid), sid === source.id ? 0 : 50);
+    }
+
+    const cx = Math.floor(source.lat / net.cellSize), cy = Math.floor(source.lon / net.cellSize);
+    for (let dx = -2; dx <= 2; dx++) {
+      for (let dy = -2; dy <= 2; dy++) {
+        for (const candidate of net.cells.get(`${cx + dx},${cy + dy}`) || []) {
+          add(candidate, distMeters(source.lat, source.lon, candidate.lat, candidate.lon));
+        }
+      }
+    }
+    const out = [...result.values()];
+    net.transferCache.set(source.id, out);
+    return out;
+  }
+
+  function boardEntriesFor(stop) {
+    const net = getPlannerNetwork();
+    const found = new Map();
+    const keys = new Set([stop && stop.id, stop && stop.key, ...((stop && stop.stops) || [])]);
+    for (const key of keys) {
+      for (const entry of net.atStop.get(key) || []) {
+        found.set(`${entry.route.id}|${entry.pattern.dir || ""}|${entry.index}|${entry.pattern.stops[0]}`, entry);
+      }
+    }
+    return [...found.values()];
+  }
+
+  function routeConnections() {
+    const net = getPlannerNetwork();
+    if (net.routeNeighbors) return net.routeNeighbors;
+    const links = new Map();
+    const link = (from, to) => {
+      if (!from || !to || from === to) return;
+      if (!links.has(from)) links.set(from, new Set());
+      links.get(from).add(to);
+    };
+    for (const [sid, entries] of net.atStop) {
+      const source = stopIndex[sid] || net.stopsById.get(sid);
+      if (!source) continue;
+      const fromRoutes = new Set(entries.map((entry) => entry.route.id));
+      for (const option of transferBoardsFrom(source)) {
+        const toEntries = boardEntriesFor(option.stop);
+        for (const from of fromRoutes) for (const entry of toEntries) {
+          link(from, entry.route.id);
+          link(entry.route.id, from);
+        }
+      }
+    }
+    net.routeNeighbors = links;
+    return links;
+  }
+
+  function routeHopsTo(destRoutes, maxTransfers) {
+    const links = routeConnections();
+    const hops = new Map();
+    const queue = [];
+    for (const routeId of destRoutes) { hops.set(routeId, 0); queue.push(routeId); }
+    for (let cursor = 0; cursor < queue.length; cursor++) {
+      const routeId = queue[cursor], distance = hops.get(routeId);
+      if (distance >= maxTransfers) continue;
+      for (const next of links.get(routeId) || []) {
+        if (!hops.has(next)) { hops.set(next, distance + 1); queue.push(next); }
+      }
+    }
+    return hops;
+  }
+
+  function estimatedRideMinutes(route, boardStop, alightStop, numStops) {
+    const rail = route.cat === "link" || route.cat === "sounder" || route.cat === "amtrak";
+    const speed = rail ? 750 : route.cat === "ferry" || route.cat === "watertaxi" ? 500 : 380;
+    return Math.max(2, Math.round(distMeters(boardStop.lat, boardStop.lon, alightStop.lat, alightStop.lon) / speed) + Math.round(numStops * (rail ? 0.3 : 0.35)));
+  }
+
+  // A time-aware, bounded (four vehicles / three transfers) search.  It is
+  // deliberately separate from the fast one-transfer results so short trips
+  // keep their familiar compact choices while regional, cross-water trips are
+  // still found and rendered as complete itineraries.
+  function planMultiLegTrips(origStops, destStops, origStopMap, destStopMap, nowSecs, day, prev) {
+    const MAX_LEGS = 4;
+    const MAX_STATES = 520;
+    const destRoutes = new Set();
+    for (const item of destStops) for (const routeId of (item.stop.routes || [])) destRoutes.add(routeId);
+    if (!destRoutes.size) return [];
+
+    const hops = routeHopsTo(destRoutes, MAX_LEGS - 1);
+    const queue = [];
+    for (const item of origStops) {
+      const stop = item.stop;
+      if (!boardEntriesFor(stop).some((entry) => hops.has(entry.route.id))) continue;
+      queue.push({ atStop: stop, arrSec: nowSecs + Math.round(item.dist / 80) * 60, totalDuration: Math.round(item.dist / 80), walk1Dist: item.dist, walk1Time: Math.round(item.dist / 80), legs: [], schedVerified: true });
+    }
+
+    const bestAt = new Map();
+    const found = [];
+    let explored = 0;
+    while (queue.length && explored++ < MAX_STATES) {
+      queue.sort((a, b) => a.arrSec - b.arrSec);
+      const state = queue.shift();
+      const prior = state.legs[state.legs.length - 1];
+      const boardOptions = prior ? transferBoardsFrom(state.atStop) : [{ stop: state.atStop, dist: 0 }];
+
+      for (const boardOption of boardOptions) {
+        const boardStop = boardOption.stop;
+        const transferWalkTime = prior ? Math.max(1, Math.round(boardOption.dist / 80)) : 0;
+        const earliestSec = prior ? state.arrSec + boardOption.dist / 80 * 60 + 120 : state.arrSec;
+        for (const entry of boardEntriesFor(boardStop)) {
+          const route = entry.route, pattern = entry.pattern, from = entry.index;
+          if (prior && prior.route.id === route.id) continue;
+          const routeHops = hops.get(route.id);
+          const legCount = state.legs.length + 1;
+          if (routeHops == null || routeHops > MAX_LEGS - legCount || from >= pattern.stops.length - 1) continue;
+
+          const targets = [];
+          for (let to = from + 1; to < pattern.stops.length; to++) {
+            const sid = pattern.stops[to], alightStop = stopIndex[sid];
+            if (!alightStop) continue;
+            const destination = destStopMap.get(sid);
+            if (destination) {
+              targets.push({ to, alightStop, destination });
+              continue;
+            }
+            if (legCount >= MAX_LEGS || routeHops <= 0) continue;
+            const canContinue = transferBoardsFrom(alightStop).some((option) =>
+              boardEntriesFor(option.stop).some((next) => next.route.id !== route.id && (hops.get(next.route.id) ?? Infinity) < routeHops)
+            );
+            if (canContinue) targets.push({ to, alightStop, destination: null });
+          }
+
+          // A pattern can pass many equivalent transfer bays.  Keeping the
+          // first dozen preserves meaningful alternatives without flooding the
+          // bounded search with the same connection over and over.
+          for (const target of targets.slice(0, 12)) {
+            const numStops = target.to - from;
+            const scheduled = timetableTripTimes(route, boardStop, target.alightStop, earliestSec, day, prev);
+            let waitTime, rideTime, arrSec, schedVerified = state.schedVerified;
+            if (scheduled) {
+              waitTime = prior ? Math.max(2, Math.round((scheduled.depSec - state.arrSec - boardOption.dist / 80 * 60) / 60)) : scheduled.waitMin;
+              if (prior && (waitTime < 2 || waitTime > 60)) continue;
+              rideTime = scheduled.rideMin;
+              arrSec = scheduled.arrSec;
+            } else {
+              const hasServiceToday = route.sched && route.sched[day] && route.sched[day].trips > 0;
+              if (SCHED && !hasServiceToday) continue;
+              const headway = route.midHeadway || route.sched?.[day]?.mid || route.sched?.weekday?.mid || (route.cat === "link" ? 8 : 15);
+              waitTime = prior ? Math.max(2, Math.round(Math.min(headway / 2, route.cat === "ferry" ? 45 : 12))) : Math.round(Math.min(headway / 2, route.cat === "ferry" ? 45 : 12));
+              rideTime = estimatedRideMinutes(route, boardStop, target.alightStop, numStops);
+              arrSec = earliestSec + (waitTime + rideTime) * 60;
+              schedVerified = false;
+            }
+
+            const leg = {
+              route, pattern, boardStop, alightStop: target.alightStop,
+              intermediateStopIds: pattern.stops.slice(from + 1, target.to), numStops,
+              rideTime, waitTime, schedTrip: scheduled,
+              transferWalkDist: prior ? boardOption.dist : 0,
+              transferWalkTime,
+            };
+            const totalDuration = state.totalDuration + (prior ? transferWalkTime : 0) + waitTime + rideTime;
+            const legs = [...state.legs, leg];
+            if (target.destination) {
+              if (legs.length < 3) continue;
+              const walk2Time = Math.round(target.destination.dist / 80);
+              found.push({
+                type: "multi", legs, boardStop: legs[0].boardStop, alightStop: target.alightStop,
+                walk1Dist: state.walk1Dist, walk1Time: state.walk1Time,
+                walk2Dist: target.destination.dist, walk2Time,
+                totalDuration: totalDuration + walk2Time,
+                schedTrip: legs[0].schedTrip, schedVerified,
+              });
+              continue;
+            }
+            if (legs.length >= MAX_LEGS) continue;
+            const key = `${target.alightStop.id}|${route.id}|${legs.length}`;
+            if (bestAt.has(key) && bestAt.get(key) <= arrSec) continue;
+            bestAt.set(key, arrSec);
+            queue.push({ atStop: target.alightStop, arrSec, totalDuration, walk1Dist: state.walk1Dist, walk1Time: state.walk1Time, legs, schedVerified });
+          }
+        }
+      }
+    }
+
+    const seen = new Set();
+    return found.sort((a, b) => a.totalDuration - b.totalDuration).filter((it) => {
+      const key = it.legs.map((leg) => leg.route.id).join(">");
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).slice(0, 4);
+  }
+
   function planTransitTrip(orig, dest) {
     if (!orig || !dest) return null;
     const directWalkDist = distMeters(orig.lat, orig.lon, dest.lat, dest.lon);
@@ -5568,6 +5871,11 @@
       if (topTransfer.length >= 4) break;
     }
 
+    // Cross-water and regional trips often need two or three transfers (for
+    // example, bus → ferry → Vashon shuttle).  Search those after the lighter
+    // direct and one-transfer passes, with the same timetable/buffer rules.
+    const multi = planMultiLegTrips(origStops, destStops, origStopMap, destStopMap, nowSecs, day, prev);
+
     let directWalk = null;
     if (directWalkDist <= 2500) {
       directWalk = {
@@ -5577,7 +5885,7 @@
       };
     }
 
-    return { direct: topDirect, transfer: topTransfer, directWalk };
+    return { direct: topDirect, transfer: topTransfer, multi, directWalk };
   }
 
   function clearTripMap() {
@@ -5623,7 +5931,7 @@
       };
     }
 
-    const route = it.type === "direct" ? it.route : it.r1;
+    const route = it.type === "direct" ? it.route : it.type === "multi" ? it.legs?.[0]?.route : it.r1;
     const stop = it.boardStop;
     if (!route || !stop) return null;
 
@@ -5656,7 +5964,7 @@
     }
 
     // 2. Timetable schedule departures check
-    const schedTrip = it.schedTrip || (it.type === "transfer" && it.schedTrip1) || timetableTripTimes(route, it.boardStop, it.type === "direct" ? it.alightStop : (it.transferStop1 || it.transferStop), minEarliestSec, pacificNow().day, pacificNow().prev);
+    const schedTrip = it.schedTrip || (it.type === "transfer" && it.schedTrip1) || (it.type === "multi" && it.legs?.[0]?.schedTrip) || timetableTripTimes(route, it.boardStop, it.type === "direct" ? it.alightStop : (it.transferStop1 || it.transferStop), minEarliestSec, pacificNow().day, pacificNow().prev);
     if (schedTrip) {
       const waitMin = schedTrip.waitMin;
       const clockStr = schedTrip.clock;
@@ -5844,9 +6152,70 @@
         for (const pt of seg2Coords) allCoords.push(pt);
       }
       focusOff();
+    } else if (it.type === "multi") {
+      const legs = it.legs || [];
+      if (!legs.length) return;
+      const firstBoard = [legs[0].boardStop.lon, legs[0].boardStop.lat];
+      const finalAlight = [legs[legs.length - 1].alightStop.lon, legs[legs.length - 1].alightStop.lat];
+      allCoords.push(firstBoard, finalAlight);
+      walkFeatures.push({
+        type: "Feature",
+        geometry: { type: "LineString", coordinates: [origPt, firstBoard] },
+        properties: { type: "walk1" }
+      });
+      walkFeatures.push({
+        type: "Feature",
+        geometry: { type: "LineString", coordinates: [finalAlight, destPt] },
+        properties: { type: "walk2" }
+      });
+
+      legs.forEach((leg, index) => {
+        const boardPt = [leg.boardStop.lon, leg.boardStop.lat];
+        const alightPt = [leg.alightStop.lon, leg.alightStop.lat];
+        allCoords.push(boardPt, alightPt);
+        if (index === 0) {
+          ptFeatures.push({
+            type: "Feature", geometry: { type: "Point", coordinates: boardPt },
+            properties: { role: "board", color: tagColor(leg.route), label: leg.route.short || leg.route.label }
+          });
+        } else {
+          const prior = legs[index - 1];
+          const priorPt = [prior.alightStop.lon, prior.alightStop.lat];
+          if (leg.transferWalkDist > 5) {
+            walkFeatures.push({
+              type: "Feature", geometry: { type: "LineString", coordinates: [priorPt, boardPt] },
+              properties: { type: "transferWalk" }
+            });
+          }
+          ptFeatures.push({
+            type: "Feature", geometry: { type: "Point", coordinates: priorPt },
+            properties: { role: "transfer", color: "#8b5cf6", label: "Transfer" }
+          });
+          if (leg.transferWalkDist > 5 && (priorPt[0] !== boardPt[0] || priorPt[1] !== boardPt[1])) {
+            ptFeatures.push({
+              type: "Feature", geometry: { type: "Point", coordinates: boardPt },
+              properties: { role: "transfer2", color: tagColor(leg.route), label: leg.route.short || leg.route.label }
+            });
+          }
+        }
+        const routeIdx = LINEIDX[leg.route.id];
+        const segment = getRouteSegmentGeometry(routeIdx, leg.boardStop, leg.alightStop, leg.intermediateStopIds || []);
+        if (segment.length >= 2) {
+          lineFeatures.push({
+            type: "Feature", geometry: { type: "LineString", coordinates: segment },
+            properties: { color: tagColor(leg.route), isRail: leg.route.cat === "link" || leg.route.cat === "sounder" ? 1 : 0 }
+          });
+          for (const point of segment) allCoords.push(point);
+        }
+      });
+      ptFeatures.push({
+        type: "Feature", geometry: { type: "Point", coordinates: finalAlight },
+        properties: { role: "alight", color: tagColor(legs[legs.length - 1].route), label: "Exit" }
+      });
+      focusOff();
     }
 
-    const dartTripRoute = [it.r, it.r1, it.r2].find((r) => r && r.cat === "dart");
+    const dartTripRoute = [it.r, it.r1, it.r2, ...((it.legs || []).map((leg) => leg.route))].find((r) => r && r.cat === "dart");
     if (dartTripRoute) highlightDartArea(dartTripRoute.id);
     else if (!(selected && selected.type === "route" && RBY[selected.id]?.cat === "dart")) highlightDartArea(null);
 
@@ -5882,6 +6251,7 @@
     if (plan) {
       if (plan.direct && plan.direct.length) allItins.push(...plan.direct);
       if (plan.transfer && plan.transfer.length) allItins.push(...plan.transfer);
+      if (plan.multi && plan.multi.length) allItins.push(...plan.multi);
       if (plan.directWalk) allItins.push(plan.directWalk);
     }
     allItins.sort((a, b) => {
@@ -5963,6 +6333,11 @@
         const t2 = it.transferStop2 || it.transferStop;
         const tName = (t1 && t2 && t1.id !== t2.id && t1.name !== t2.name) ? `${esc(t1.name)} / ${esc(t2.name)}` : esc(t1.name);
         descHtml = `Transfer at <b>${tName}</b> · ${it.numStops1 + it.numStops2} total stops`;
+      } else if (it.type === "multi") {
+        badgeHtml = it.legs.map((leg) => badgeHTML(leg.route)).join(' <span class="trip-arrow">➔</span> ');
+        const modes = [...new Set(it.legs.map((leg) => currentVehWord(leg.route)))];
+        const stops = it.legs.reduce((total, leg) => total + leg.numStops, 0);
+        descHtml = `${it.legs.length - 1} transfer${it.legs.length > 2 ? "s" : ""} · ${stops} total stops · ${modes.join(" + ")}`;
       }
 
       const soonestPillHtml = soonest ? `<span class="trip-soonest-pill${soonest.isLive ? " is-live" : ""}">
@@ -5972,7 +6347,7 @@
 
       const footLabel = it.type === "walk"
         ? "Walking departure:"
-        : `Soonest ${soonest.vehWord || "departure"}${it.type === "transfer" && soonest.routeLabel ? ` (${esc(soonest.routeLabel)})` : ""}:`;
+        : `Soonest ${soonest.vehWord || "departure"}${(it.type === "transfer" || it.type === "multi") && soonest.routeLabel ? ` (${esc(soonest.routeLabel)})` : ""}:`;
       const footVal = it.type === "walk"
         ? `<b>Walk anytime</b>`
         : `<b>${soonest.text}</b>${soonest.clock ? ` (${soonest.clock})` : ""}`;
@@ -5982,7 +6357,7 @@
         <span class="soonest-foot-val">${footVal}</span>
       </div>` : "";
 
-      const cardTitle = it.type === "walk" ? "Walk only" : (it.type === "direct" ? it.route.label : `${it.r1.label} to ${it.r2.label}`);
+      const cardTitle = it.type === "walk" ? "Walk only" : (it.type === "direct" ? it.route.label : it.type === "multi" ? it.legs.map((leg) => leg.route.label).join(" to ") : `${it.r1.label} to ${it.r2.label}`);
       const cardAria = `Option ${idx + 1}: ${cardTitle}, ${it.totalDuration} minutes. ${soonest ? soonest.desc : ""}`;
 
       return `<button type="button" class="trip-card${isAct ? " active" : ""}" data-plan-idx="${idx}" aria-label="${esc(cardAria)}">
@@ -6125,6 +6500,24 @@
           </div>
         </div>
       </div>`;
+    } else if (cur.type === "multi") {
+      const rows = [];
+      rows.push(`<div class="step-row"><span class="step-line"></span>${origIconHtml}<div class="step-content"><div class="step-main">Start at ${esc(origTitle)}</div></div></div>`);
+      rows.push(`<div class="step-row"><span class="step-line"></span><span class="step-icon">🚶</span><div class="step-content"><div class="step-main">Walk to ${esc(cur.legs[0].boardStop.name)}</div><div class="step-meta">${cur.walk1Time} min walk · ${Math.round(cur.walk1Dist)} m</div></div></div>`);
+      cur.legs.forEach((leg, index) => {
+        const firstDeparture = index === 0 && curSoonest ? `<span class="step-soonest${curSoonest.isLive ? " is-live" : ""}">${curSoonest.isLive ? "🟢 Live departure:" : "🕒 Soonest departure:"} <b>${curSoonest.text}</b>${curSoonest.clock ? ` (${curSoonest.clock})` : ""}</span> · ` : "";
+        rows.push(`<div class="step-row"><span class="step-line"></span><span class="step-icon transit">${modeIcon(leg.route)}</span><div class="step-content"><div class="step-main">Board ${badgeHTML(leg.route)} towards ${esc(leg.pattern.headsign || "Destination")}</div><div class="step-meta">${firstDeparture}${leg.rideTime} min · ${leg.numStops} stop${leg.numStops === 1 ? "" : "s"}</div></div></div>`);
+        if (index < cur.legs.length - 1) {
+          const next = cur.legs[index + 1];
+          const transferName = leg.alightStop.id !== next.boardStop.id && leg.alightStop.name !== next.boardStop.name
+            ? `Walk ${next.transferWalkTime} min from ${esc(leg.alightStop.name)} to ${esc(next.boardStop.name)}`
+            : `Transfer at ${esc(leg.alightStop.name)}`;
+          rows.push(`<div class="step-row"><span class="step-line"></span><span class="step-icon">🔄</span><div class="step-content"><div class="step-main">${transferName}</div><div class="step-meta">Connection buffer ~${next.waitTime} min</div></div></div>`);
+        }
+      });
+      rows.push(`<div class="step-row"><span class="step-line"></span><span class="step-icon">🚶</span><div class="step-content"><div class="step-main">Alight at ${esc(cur.alightStop.name)}</div><div class="step-meta">Walk ${cur.walk2Time} min · ${Math.round(cur.walk2Dist)} m to destination</div></div></div>`);
+      rows.push(`<div class="step-row">${destIconHtml}<div class="step-content"><div class="step-main">Arrive at ${esc(destTitle)}</div></div></div>`);
+      stepsHtml = `<div class="trip-steps">${rows.join("")}</div>`;
     }
 
     const appleUrl = `https://maps.apple.com/?saddr=${dirOrigin.lat},${dirOrigin.lon}&daddr=${dirDest.lat},${dirDest.lon}&dirflg=r`;
@@ -7444,9 +7837,11 @@
     for (const f of hits) {
       const L = BADGE_LAYOUT.get("b:" + f.properties.k);
       if (!L) continue;
-      const c = map.project(f.geometry.coordinates), left = c.x - L.w / 2, top = c.y - L.h / 2, dx = pt.x - left;
-      if (dx < 0 || dx > L.w || pt.y < top || pt.y > top + L.h) continue;
-      const item = L.items.find((it) => dx >= it.x0 && dx < it.x1) || L.items[L.items.length - 1];
+      const c = map.project(f.geometry.coordinates), left = c.x - L.w / 2, top = c.y - L.h / 2, dx = pt.x - left, dy = pt.y - top;
+      if (dx < 0 || dx > L.w || dy < 0 || dy > L.h) continue;
+      const item = L.axis === "y"
+        ? (L.items.find((it) => dx >= it.x0 && dx < it.x1 && dy >= it.y0 && dy < it.y1) || L.items[L.items.length - 1])
+        : (L.items.find((it) => dx >= it.x0 && dx < it.x1) || L.items[L.items.length - 1]);
       return { item, left, top, L, coords: f.geometry.coordinates };
     }
     return null;
@@ -7458,7 +7853,7 @@
     const key = hit.left.toFixed(0) + "," + hit.top.toFixed(0) + "," + hit.item.x0;
     const rect = map.getCanvas().getBoundingClientRect();
     lens.style.left = rect.left + hit.left + (hit.item.x0 + hit.item.x1) / 2 + "px";
-    lens.style.top = rect.top + hit.top + hit.L.h / 2 + "px";
+    lens.style.top = rect.top + hit.top + (hit.L.axis === "y" ? (hit.item.y0 + hit.item.y1) / 2 : hit.L.h / 2) + "px";
     if (key === lensKey) return;
     lensKey = key;
     const it = hit.item;

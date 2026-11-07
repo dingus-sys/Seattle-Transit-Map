@@ -762,7 +762,10 @@ const KCTMGeom = (() => {
           const Lo = lay[e], vertical = Math.abs(dy) >= Math.abs(dx);
           const side = (i) => { const o = Lo.sp.has(i) ? Lo.sp.get(i) : 0; return vertical ? nx * o : -ny * o; };
           const ordered = t.rs.slice().sort((a, b) => (side(a) - side(b)) || tagOrder(a, b));
-          labels.push({ type: "Feature", properties: { k: `${p.theme}:${ordered.join(".")}`, p: t.p }, geometry: { type: "Point", coordinates: toLL(q) } });
+          // Keep the badges themselves upright.  A vertical corridor receives a
+          // stacked/grid badge sprite so parallel services do not form a long
+          // horizontal bar across the road.
+          labels.push({ type: "Feature", properties: { k: `${p.theme}:${ordered.join(".")}:${vertical ? "v" : "h"}`, p: t.p }, geometry: { type: "Point", coordinates: toLL(q) } });
         }
       }
       // the selected route's own tag: along its whole path about every 550 px, never two within ~380 px
