@@ -1868,6 +1868,7 @@
     const list = routeAlerts(r.id);
     box.innerHTML = list.length ? `<h3 class="section">Service alerts</h3><ul class="group alerts" role="list">${list.map((a) => alertHTML(a, { routes: a.routes.size > 1 })).join("")}</ul>` : "";
     bindAlertList(box);
+  }
   function fillStopAlerts(s) {
     const box = $("#stopAlerts");
     if (!box) return;
@@ -2433,9 +2434,13 @@
   function stopGroup(prefix, src, P, mult = 1) {
     return [
       { id: `${prefix}-stops-halo`, type: "circle", source: src,
-        paint: { "circle-radius": stopRadius(mult * 2.5), "circle-color": ["get", "c"], "circle-opacity": prefix === "hl" ? 0.3 : 0.2, "circle-blur": 0.85 } },
+        paint: { "circle-radius": stopRadius(mult * 2.5),
+          "circle-color": ["case", ["==", ["get", "suspended"], 1], "#d0213b", ["get", "c"]],
+          "circle-opacity": prefix === "hl" ? 0.3 : 0.2, "circle-blur": 0.85 } },
       { id: `${prefix}-stops`, type: "circle", source: src,
-        paint: { "circle-radius": stopRadius(mult), "circle-color": P.stopFill, "circle-stroke-color": ["get", "c"],
+        paint: { "circle-radius": stopRadius(mult),
+          "circle-color": ["case", ["==", ["get", "suspended"], 1], "#d0213b", P.stopFill],
+          "circle-stroke-color": ["case", ["==", ["get", "suspended"], 1], "#ffffff", ["get", "c"]],
           "circle-stroke-width": stopStroke(mult), "circle-pitch-alignment": "map" } },
     ];
   }
@@ -2504,7 +2509,8 @@
       for (const st of routeStops(r)) {
         const k = st.lon + "," + st.lat;
         if (seen.has(k)) continue;
-        seen.set(k, { type: "Feature", properties: { id: st.id, name: st.name, c: color, end: withEnds ? st.end : 0 },
+        const susp = stopIsSuspended(st.id);
+        seen.set(k, { type: "Feature", properties: { id: st.id, name: st.name, c: color, end: withEnds ? st.end : 0, suspended: susp ? 1 : 0 },
           geometry: { type: "Point", coordinates: [st.lon, st.lat] } });
       }
     }
@@ -2651,7 +2657,8 @@
     if (!f) { cancelAnimationFrame(anims.hl); src.setData(fc([])); return; }
     const s = stopIndex[id], rs = s ? (s.routes || []).map((x) => RBY[x]).filter(Boolean).sort(tagOrder) : [];
     const c = f.properties.c || f.properties.stroke || (rs[0] ? keyColor(dkey(rs[0])) : BASE[theme].stopStroke);
-    src.setData(fc([{ type: "Feature", properties: { id, c, end: 0 }, geometry: { type: "Point", coordinates: f.geometry.coordinates } }]));
+    const susp = stopIsSuspended(id);
+    src.setData(fc([{ type: "Feature", properties: { id, c, end: 0, suspended: susp ? 1 : 0 }, geometry: { type: "Point", coordinates: f.geometry.coordinates } }]));
     popIn("hl", 1.8);
   }
 
@@ -3151,7 +3158,9 @@
     const everyday = isEveryday(r);
     const runsPill = everyday
       ? `<span class="freq-pill everyday" title="Runs 7 days a week">📅 7 Days · Every day</span>`
-      : `<span class="freq-pill parttime" title="Part-time service (no weekend service)">🕒 Mon–Fri only · Part-time</span>`;
+      : (r.sched?.saturday && (r.sched.saturday.mid_n > 0 || r.sched.saturday.trips > 5))
+        ? `<span class="freq-pill parttime" title="Runs Monday through Saturday, no Sunday service">🕒 Mon–Sat · Part-time</span>`
+        : `<span class="freq-pill parttime" title="Part-time service (Monday–Friday only)">🕒 Mon–Fri only · Part-time</span>`;
     return `<div class="freq-badge-row">
       <span class="freq-pill headway" title="Typical midday wait time"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 1 0 8 8A8 8 0 0 0 8 0zm.5 4.5v3.25l2.5 1.5-.75 1.25-3.25-2V4.5z"/></svg>${esc(headwayText)}</span>
       <span class="freq-pill span" title="Daily hours of service"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M6 .278a.768.768 0 0 1 .08.858 7.208 7.208 0 0 0-.878 3.46c0 4.021 3.278 7.277 7.318 7.277.527 0 1.04-.055 1.533-.16a.787.787 0 0 1 .81.316.733.733 0 0 1-.031.893A8.349 8.349 0 0 1 8.344 16C3.734 16 0 12.286 0 7.71 0 4.266 2.114 1.312 5.124.06A.752.752 0 0 1 6 .278z"/></svg>${esc(spanText)}</span>

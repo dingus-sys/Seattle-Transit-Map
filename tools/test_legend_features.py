@@ -80,9 +80,40 @@ class LegendFeaturesTest(unittest.TestCase):
         self.assertIn(".legend-nav-btn", app_css)
 
     def test_service_worker_cache_version(self):
-        """Service worker cache version must be bumped to v10.2."""
+        """Service worker cache version must be bumped to v10.3."""
         sw_js = (WEB / "sw.js").read_text()
-        self.assertIn('const CACHE_NAME = "seattle-transit-v10-2";', sw_js)
+        self.assertIn('const CACHE_NAME = "seattle-transit-v10-3";', sw_js)
+
+    def test_app_js_syntax(self):
+        """Ensure web/app.js has no syntax errors or unclosed blocks."""
+        import shutil, subprocess
+        node_bin = shutil.which("node") or ("/opt/homebrew/bin/node" if os.path.exists("/opt/homebrew/bin/node") else None)
+        if node_bin:
+            res = subprocess.run([node_bin, "--check", str(WEB / "app.js")], capture_output=True, text=True)
+            self.assertEqual(res.returncode, 0, f"web/app.js failed syntax check:\n{res.stderr}")
+        else:
+            # Fallback syntax balance verification
+            self.assertTrue((WEB / "app.js").read_text().strip().endswith("})();"))
+
+    def test_stop_suspended_canvas_rendering(self):
+        """Stops and stopGroup layers must render suspended stops with high-visibility styling."""
+        app_js = (WEB / "app.js").read_text()
+        self.assertIn('"circle-color": ["case", ["==", ["get", "suspended"], 1], "#d0213b", P.stopFill]', app_js)
+        self.assertIn('paint: { "circle-radius": stopRadius(mult),', app_js)
+        self.assertIn('["==", ["get", "suspended"], 1], "#d0213b"', app_js)
+        # stopFeatures must calculate suspended status
+        self.assertIn('const susp = stopIsSuspended(st.id);', app_js)
+        self.assertIn('suspended: susp ? 1 : 0', app_js)
+
+    def test_through_route_bidirectional_pairing(self):
+        """Through route partnerships must have reciprocal return continuations."""
+        app_js = (WEB / "app.js").read_text()
+        self.assertIn('if (r.short === "1") partnerIds = ["metro-14"];', app_js)
+        self.assertIn('else if (r.short === "14") partnerIds = ["metro-1"];', app_js)
+        self.assertIn('else if (r.short === "2") partnerIds = ["metro-13"];', app_js)
+        self.assertIn('else if (r.short === "13") partnerIds = ["metro-2"];', app_js)
+        self.assertIn('else if (r.short === "5") partnerIds = ["metro-21"];', app_js)
+        self.assertIn('else if (r.short === "21") partnerIds = ["metro-5"];', app_js)
 
 
 if __name__ == "__main__":

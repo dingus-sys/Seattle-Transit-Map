@@ -30,8 +30,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Check route geometry before publishing
+      - name: Check source syntax and route geometry before publishing
         run: |
+          node --check web/app.js
+          node --check web/geom.js
+          node --check web/ribbons.js
+          python3 -m unittest discover -s tools -p 'test_*.py'
           node tools/geometry_check.js
           node tools/ribbon_check.js
       - uses: actions/configure-pages@v5
