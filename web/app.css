@@ -419,7 +419,9 @@ button, input { font: inherit; color: inherit; letter-spacing: inherit; }
   70% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--on) 0%, transparent); }
   100% { box-shadow: 0 0 0 0 transparent; }
 }
-.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
+#routeAlerts:not(:empty) { margin-bottom: 14px; }
+#routeAlerts .alerts, #stopAlerts .alerts { margin-bottom: 14px; }
 .tile {
   display: flex; flex-direction: column; gap: 3px; background: var(--group); border-radius: var(--r-group); padding: 11px 13px; min-width: 0;
   box-shadow: inset 0 0 0 .5px var(--rim), inset 1px 1px 1px -.5px var(--rim-hi);
@@ -688,12 +690,19 @@ td.sched-cell-now {
 }
 .snow-banner .snow-icon { font-size: 16px; flex-shrink: 0; }
 
-/* Steep Hill Incline Warning */
+/* Steep Hill Incline Warning & Notes */
 .incline-badge {
   display: inline-flex; align-items: center; gap: 3px; padding: 2px 6px; border-radius: 6px;
   background: color-mix(in srgb, #ff9500 16%, transparent); color: #d97706; font-size: 11px; font-weight: 600; margin-left: 4px;
 }
 :root[data-dark="1"] .incline-badge { color: #fbbf24; }
+.hill-note {
+  display: flex; align-items: flex-start; gap: 8px; margin: 12px 0 6px; padding: 9px 12px;
+  border-radius: var(--r-group); background: var(--fill);
+  box-shadow: inset 0 0 0 .5px var(--rim); font-size: 12px; line-height: 1.4; color: var(--ink-2);
+}
+.hill-note strong { color: var(--ink); font-weight: 600; }
+.hill-note .hill-icon { font-size: 15px; flex-shrink: 0; line-height: 1.2; }
 
 /* ---------- Map overlays ---------- */
 /* the pointer's card: positioned by transform (it glides after the pointer), fades and grows in,

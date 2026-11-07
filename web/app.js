@@ -3638,7 +3638,9 @@
     const color = keyColor(dkey(r));
     const fav = isFav("route", r.id);
     const steepHill = STEEP_HILLS.find((h) => h.routes.includes(r.short) || h.routes.includes(r.label) || h.routes.includes(r.id) || (r.short === "G" && h.id === "hill-madison"));
-    const hillNotice = steepHill ? `<div class="snow-banner" style="border-color:#f59e0b;background:color-mix(in srgb, #f59e0b 14%, var(--glass));"><span class="snow-icon">⚠️</span><span><strong>Steep Grade Corridor (${steepHill.grade}):</strong> Traverses ${esc(steepHill.location)}. ${esc(steepHill.snowBypass)}</span></div>` : "";
+    const showHillNotice = steepHill && (specialFilter === "snow" || enabled.has("trails"));
+    const isSnow = specialFilter === "snow";
+    const hillNotice = showHillNotice ? `<div class="hill-note"><span class="hill-icon">${isSnow ? "❄️" : "🚲"}</span><span><strong>${isSnow ? "Winter Snow Bypass" : "Steep Incline Corridor"} (${steepHill.grade}):</strong> ${esc(isSnow ? steepHill.snowBypass : `Traverses ${steepHill.location}. ${steepHill.snowBypass}`)}</span></div>` : "";
     const snowBanner = specialFilter === "snow" ? `<div class="snow-banner"><span class="snow-icon">${isSnowRoute(r) ? "❄️" : "⚠️"}</span><span>${isSnowRoute(r) ? "<strong>Active Winter Snow Route:</strong> Operates on plowed arterials during winter storms. Avoids steep hills and non-essential branches." : "<strong>Suspended during Snow Emergencies:</strong> This route is not part of the Emergency Snow Network and pauses during severe winter conditions."}</span></div>` : "";
     let html = `${backBtn}
       <div class="hero">${badgeHTML(r, "xl")}<div><h2>${esc(routeTitle(r))}</h2><p>${esc(r.name || "")}</p></div></div>
@@ -3654,7 +3656,6 @@
         </button>
       </div>
       ${snowBanner}
-      ${hillNotice}
       ${routeBadgesHTML(r)}
       <div id="routeAlerts"></div>${r.id.startsWith("wsf-") ? showFerryInfo([...new Set(pats.flatMap((p) => p.stops).filter((id) => /^wsf-\d+$/.test(id)).map((id) => +id.slice(4)))]) : ""}
       <div class="tiles">
@@ -3662,7 +3663,8 @@
         <div class="tile"><span class="k">Weekday hours</span><span class="v sm">${esc(span)}</span></div>
       </div>
       <h3 class="section">Schedule at a glance</h3>${scheduleTable(r)}
-      <p class="foot">Typical wait in the busier direction, from the published schedule for ${esc(dayLabel())}.</p>`;
+      <p class="foot">Typical wait in the busier direction, from the published schedule for ${esc(dayLabel())}.</p>
+      ${hillNotice}`;
     if (pats.length) {
       html += `<h3 class="section">Stops</h3><div class="segmented" role="tablist">${pats.map((p, i) =>
         `<button role="tab" type="button" aria-selected="${i === 0}" data-i="${i}">To ${esc((p.headsign || "terminal").replace(/^to\s+/i, ""))}</button>`).join("")}<span class="seg-thumb" aria-hidden="true"></span></div>
