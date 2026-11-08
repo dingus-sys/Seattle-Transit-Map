@@ -1612,10 +1612,6 @@ td.sched-cell-now {
   color: var(--ink-2);
   margin: 6px 0 10px;
 }
-.tr-guide-preview {
-  margin: 0 0 9px; color: #047857; font-size: 11.5px; font-weight: 650;
-}
-[data-dark="1"] .tr-guide-preview { color: #6ee7b7; }
 .tr-guide-actions {
   display: flex;
   gap: 6px;

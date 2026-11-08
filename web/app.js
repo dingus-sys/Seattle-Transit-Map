@@ -3802,7 +3802,6 @@
             </div>
           </div>
           <p class="tr-guide-desc">${esc(tr.desc)}</p>
-          <p class="tr-guide-preview">Hover to preview every route in this continuation on the map.</p>
           <div class="tr-guide-actions">
             ${routes.map((r) => `<button type="button" class="tr-partner-btn press" data-tr-select="${esc(r.id)}">${badgeHTML(r)} <span>View Line</span></button>`).join("")}
           </div>
