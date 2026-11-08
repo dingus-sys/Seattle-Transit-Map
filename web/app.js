@@ -3813,7 +3813,22 @@
     if (quiet && existing) existing.outerHTML = html;
     else setView(html);
     $("#openLayers")?.addEventListener("click", () => { panelView = "layers"; showLayers(); openSheet("half"); });
-    $("#openThroughRoutes")?.addEventListener("click", () => { panelView = "through-routes"; showThroughRoutesGuide(); openSheet("half"); });
+    const homeTr = $("#openThroughRoutes");
+    if (homeTr) {
+      homeTr.addEventListener("click", () => { panelView = "through-routes"; showThroughRoutesGuide(); openSheet("half"); });
+      homeTr.addEventListener("mouseenter", () => {
+        if (panelView === "home") {
+          setNetDim(0.35);
+          focusRoutes(throughRoutePreview, false, { glow: true, widthScale: 1.58 });
+        }
+      });
+      homeTr.addEventListener("mouseleave", () => {
+        if (panelView === "home") {
+          setNetDim(1);
+          focusOff();
+        }
+      });
+    }
     $("#openLegendGuide")?.addEventListener("click", () => { panelView = "legend"; showLegendGuide(); openSheet("half"); });
     const oa = $("#openAlerts");
     if (oa) oa.addEventListener("click", () => { panelView = "alerts"; showAlerts(); openSheet("half"); });
@@ -3838,18 +3853,18 @@
             <span class="tr-time-tag">${esc(tr.time === "all-day" ? "All Day Service" : tr.time)}</span>
           </div>
           <div class="tr-guide-pair">
-            <div class="tr-col">
+            <div class="tr-col tr-route-item" data-tr-route="${esc(routes[0]?.id || "")}" tabindex="0" role="button" title="Highlight ${esc(routes[0] ? routeTitle(routes[0]) : "")}">
               ${routes[0] ? badgeHTML(routes[0]) : ""}
               <span class="tr-route-title">${esc(routes[0] ? routeTitle(routes[0]) : "")}</span>
             </div>
             <span class="tr-guide-arrow">➔</span>
             <div class="tr-col">
-              ${routes.slice(1).map((r) => `<div class="tr-pair-sub">${badgeHTML(r)} <span class="tr-route-title">${esc(routeTitle(r))}</span></div>`).join("")}
+              ${routes.slice(1).map((r) => `<div class="tr-pair-sub tr-route-item" data-tr-route="${esc(r.id)}" tabindex="0" role="button" title="Highlight ${esc(routeTitle(r))}">${badgeHTML(r)} <span class="tr-route-title">${esc(routeTitle(r))}</span></div>`).join("")}
             </div>
           </div>
           <p class="tr-guide-desc">${esc(tr.desc)}</p>
           <div class="tr-guide-actions">
-            ${routes.map((r) => `<button type="button" class="tr-partner-btn press" data-tr-select="${esc(r.id)}">${badgeHTML(r)} <span>View Line</span></button>`).join("")}
+            ${routes.map((r) => `<button type="button" class="tr-partner-btn press" data-tr-select="${esc(r.id)}" title="Follow ${esc(routeTitle(r))}">${badgeHTML(r)} <span>View Line</span></button>`).join("")}
           </div>
         </div>`;
     }).join("");
@@ -3871,29 +3886,108 @@
     setView(html);
     $("#back")?.addEventListener("click", () => {
       panelView = "home";
+      setNetDim(1);
+      focusOff();
       showHome();
     });
-    body().querySelectorAll("[data-tr-select]").forEach((b) => {
-      b.addEventListener("click", () => {
-        const id = b.dataset.trSelect;
-        if (id && RBY[id]) selectRoute(id, { fit: true });
-      });
-    });
+
     let previewTimer = 0;
     body().querySelectorAll("[data-tr-preview]").forEach((card) => {
-      const preview = () => {
+      const cardRoutes = String(card.dataset.trPreview || "").split(",").map((id) => RBY[id]).filter(Boolean);
+      let itemHoverTimer = 0;
+
+      const previewAll = () => {
         clearTimeout(previewTimer);
-        const routes = String(card.dataset.trPreview || "").split(",").map((id) => RBY[id]).filter(Boolean);
-        if (routes.length) focusRoutes(routes, false, { glow: true, widthScale: 1.58 });
+        clearTimeout(itemHoverTimer);
+        if (panelView !== "through-routes") return;
+        setNetDim(0.35);
+        if (cardRoutes.length) focusRoutes(cardRoutes, false, { glow: true, widthScale: 1.58 });
       };
-      const revert = () => {
+
+      const revertAll = () => {
         clearTimeout(previewTimer);
-        previewTimer = setTimeout(() => { if (panelView === "through-routes") focusOff(); }, 180);
+        clearTimeout(itemHoverTimer);
+        previewTimer = setTimeout(() => {
+          if (panelView === "through-routes" && !card.matches(":hover")) {
+            setNetDim(1);
+            focusOff();
+          }
+        }, 180);
       };
-      card.addEventListener("mouseenter", preview);
-      card.addEventListener("mouseleave", revert);
-      card.addEventListener("focusin", preview);
-      card.addEventListener("focusout", (e) => { if (!card.contains(e.relatedTarget)) revert(); });
+
+      card.addEventListener("mouseenter", () => {
+        const hoveredItem = card.querySelector(".tr-partner-btn:hover, [data-tr-route]:hover");
+        if (hoveredItem) {
+          const rid = hoveredItem.dataset.trSelect || hoveredItem.dataset.trRoute;
+          const r = RBY[rid];
+          if (r) {
+            clearTimeout(previewTimer);
+            clearTimeout(itemHoverTimer);
+            setNetDim(0.18);
+            focusRoutes([r], false, { glow: true, widthScale: 1.85 });
+            return;
+          }
+        }
+        previewAll();
+      });
+
+      card.addEventListener("mouseleave", revertAll);
+
+      const items = card.querySelectorAll("[data-tr-select], [data-tr-route]");
+      items.forEach((item) => {
+        const rid = item.dataset.trSelect || item.dataset.trRoute;
+        const r = RBY[rid];
+        if (!r) return;
+
+        const onEnter = (e) => {
+          clearTimeout(previewTimer);
+          clearTimeout(itemHoverTimer);
+          setNetDim(0.18);
+          focusRoutes([r], false, { glow: true, widthScale: 1.85 });
+          item.classList.add("is-hovered");
+          card.querySelectorAll(`[data-tr-select="${rid}"], [data-tr-route="${rid}"]`).forEach((el) => el.classList.add("is-active-strand"));
+        };
+
+        const onLeave = () => {
+          item.classList.remove("is-hovered");
+          card.querySelectorAll(`[data-tr-select="${rid}"], [data-tr-route="${rid}"]`).forEach((el) => el.classList.remove("is-active-strand"));
+          clearTimeout(itemHoverTimer);
+          itemHoverTimer = setTimeout(() => {
+            if (panelView === "through-routes" && card.matches(":hover")) {
+              previewAll();
+            }
+          }, 40);
+        };
+
+        item.addEventListener("mouseenter", onEnter);
+        item.addEventListener("mouseleave", onLeave);
+        item.addEventListener("focus", onEnter);
+        item.addEventListener("blur", onLeave);
+        item.addEventListener("click", (e) => {
+          e.stopPropagation();
+          selectRoute(r.id, { fit: true });
+        });
+      });
+
+      card.addEventListener("focusin", (e) => {
+        const item = e.target.closest("[data-tr-select], [data-tr-route]");
+        if (item) {
+          const rid = item.dataset.trSelect || item.dataset.trRoute;
+          const r = RBY[rid];
+          if (r) {
+            clearTimeout(previewTimer);
+            clearTimeout(itemHoverTimer);
+            setNetDim(0.18);
+            focusRoutes([r], false, { glow: true, widthScale: 1.85 });
+            return;
+          }
+        }
+        previewAll();
+      });
+
+      card.addEventListener("focusout", (e) => {
+        if (!card.contains(e.relatedTarget)) revertAll();
+      });
     });
   }
 
@@ -4595,10 +4689,24 @@
         url: `${location.origin}${location.pathname}#route-${r.id}`
       });
     });
-    body().querySelectorAll("[data-tr-route]").forEach((b) => {
+    body().querySelectorAll(".through-route-card [data-tr-route]").forEach((b) => {
+      const p = RBY[b.dataset.trRoute];
+      if (!p) return;
+      b.addEventListener("mouseenter", () => {
+        setNetDim(0.18);
+        focusRoutes([p], false, { glow: true, widthScale: 1.85 });
+      });
+      b.addEventListener("mouseleave", () => {
+        if (selected && selected.type === "route") {
+          setNetDim(0.38);
+          focusOff();
+        } else {
+          setNetDim(1);
+          focusOff();
+        }
+      });
       b.addEventListener("click", () => {
-        const p = RBY[b.dataset.trRoute];
-        if (p) selectRoute(p.id, { fit: true });
+        selectRoute(p.id, { fit: true });
       });
     });
     const renderStops = (i) => {
@@ -7098,10 +7206,10 @@
         badgeHtml = `<span class="trip-walk-pill">${poiIconSVG("walk", 14)} Walk only</span>`;
         descHtml = `Direct walk · ${(it.dist / 1609.34).toFixed(1)} miles`;
       } else if (it.type === "direct") {
-        badgeHtml = badgeHTML(it.route);
+        badgeHtml = `<span class="trip-leg-badge" data-plan-route="${esc(it.route.id)}">${badgeHTML(it.route)}</span>`;
         descHtml = `Board <b>${esc(it.boardStop.name)}</b> → ${it.numStops} stop${it.numStops > 1 ? "s" : ""} → Alight <b>${esc(it.alightStop.name)}</b>`;
       } else if (it.type === "transfer") {
-        badgeHtml = `${badgeHTML(it.r1)} <span class="trip-arrow">➔</span> ${badgeHTML(it.r2)}`;
+        badgeHtml = `<span class="trip-leg-badge" data-plan-route="${esc(it.r1.id)}">${badgeHTML(it.r1)}</span> <span class="trip-arrow">➔</span> <span class="trip-leg-badge" data-plan-route="${esc(it.r2.id)}">${badgeHTML(it.r2)}</span>`;
         const t1 = it.transferStop1 || it.transferStop;
         const t2 = it.transferStop2 || it.transferStop;
         const tName = (t1 && t2 && t1.id !== t2.id && t1.name !== t2.name) ? `${esc(t1.name)} / ${esc(t2.name)}` : esc(t1.name);
@@ -7110,7 +7218,7 @@
           ? `<span class="tr-stay-on-pill">${poiIconSVG("transfer", 13)} Stay on board</span> at <b>${tName}</b> · continues as Route ${esc(it.r2.short || it.r2.label)} · ${it.numStops1 + it.numStops2} total stops`
           : `Transfer at <b>${tName}</b> · ${it.numStops1 + it.numStops2} total stops`;
       } else if (it.type === "multi") {
-        badgeHtml = it.legs.map((leg) => badgeHTML(leg.route)).join(' <span class="trip-arrow">➔</span> ');
+        badgeHtml = it.legs.map((leg) => `<span class="trip-leg-badge" data-plan-route="${esc(leg.route.id)}">${badgeHTML(leg.route)}</span>`).join(' <span class="trip-arrow">➔</span> ');
         const modes = [...new Set(it.legs.map((leg) => currentVehWord(leg.route)))];
         const stops = it.legs.reduce((total, leg) => total + leg.numStops, 0);
         descHtml = `${it.legs.length - 1} transfer${it.legs.length > 2 ? "s" : ""} · ${stops} total stops · ${modes.join(" + ")}`;
@@ -7374,6 +7482,24 @@
         }
       });
     }
+
+    body().querySelectorAll("[data-plan-route]").forEach((badge) => {
+      badge.addEventListener("mouseenter", (e) => {
+        e.stopPropagation();
+        const r = RBY[badge.dataset.planRoute];
+        if (r) {
+          setNetDim(0.18);
+          focusRoutes([r], false, { glow: true, widthScale: 1.85 });
+        }
+      });
+      badge.addEventListener("mouseleave", (e) => {
+        e.stopPropagation();
+        if (panelView === "directions" && selectedItinerary) {
+          setNetDim(1);
+          renderTripOnMap(selectedItinerary, { fit: false, isHover: false });
+        }
+      });
+    });
 
     // Ensure live departures for all boarding stops in the options list
     const allBoardStops = currentItineraries.flatMap((it) => it.boardStop ? stopIdsOf(it.boardStop) : []);

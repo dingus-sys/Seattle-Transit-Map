@@ -1702,9 +1702,35 @@ td.sched-cell-now {
   cursor: pointer;
   transition: all .15s ease;
 }
-.tr-partner-btn:hover {
+.tr-partner-btn:hover,
+.tr-partner-btn.is-hovered,
+.tr-partner-btn.is-active-strand {
   background: var(--fill-2);
+  border-color: var(--accent, #007aff);
+  box-shadow: 0 0 0 1.5px var(--accent, #007aff), 0 2px 6px rgba(0, 0, 0, 0.12);
   transform: translateY(-1px);
+}
+.tr-route-item {
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 3px 6px;
+  margin: -3px -6px;
+  transition: all .14s ease;
+}
+.tr-route-item:hover,
+.tr-route-item.is-hovered,
+.tr-route-item.is-active-strand {
+  background: color-mix(in srgb, var(--accent, #007aff) 12%, var(--fill));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent, #007aff) 50%, var(--rim));
+}
+.tr-guide-actions:has(.tr-partner-btn:hover) .tr-partner-btn:not(:hover),
+.tr-guide-actions:has(.tr-partner-btn.is-hovered) .tr-partner-btn:not(.is-hovered) {
+  opacity: 0.55;
+  filter: grayscale(20%);
+}
+.tr-guide-pair:has(.tr-route-item:hover) .tr-route-item:not(:hover),
+.tr-guide-pair:has(.tr-route-item.is-active-strand) .tr-route-item:not(.is-active-strand) {
+  opacity: 0.55;
 }
 .tr-desc {
   font-size: 12px;
