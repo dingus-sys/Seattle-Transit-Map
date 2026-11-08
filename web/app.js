@@ -1511,7 +1511,7 @@
     const MAX = 6;
     let extra = 0;
     if (rs.length > MAX) { extra = rs.length - (MAX - 1); rs = rs.slice(0, MAX - 1); }
-    const groups = [], all = list.split(".").map(Number);
+    const groups = [], all = [...new Set(list.split(".").map(Number))];
     for (const r of rs) {
       const c = tagColor(r, dark ? "dark" : "light");
       const everyday = isEveryday(r);
@@ -1520,7 +1520,10 @@
       g.items.push(shortLabel(r));
       g.refs.push({ r: LINEIDX[r.id] });
     }
-    if (extra) { groups[groups.length - 1].items.push(`+${extra}`); groups[groups.length - 1].refs.push({ more: all.slice(MAX - 1) }); }
+    if (extra) {
+      groups[groups.length - 1].items.push(`+${extra}`);
+      groups[groups.length - 1].refs.push({ more: all, overflow: all.slice(MAX - 1), extra });
+    }
     const dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
     const h = 15 * dpr, pad = 4.5 * dpr, sep = 7 * dpr, gap = 2 * dpr, halo = 1.5 * dpr, rad = 3.5 * dpr;
     const cv = document.createElement("canvas");
@@ -5224,7 +5227,7 @@
     if (quiet && body().querySelector(".corridor-picker")) return;
     panelView = "corridor";
     setNetDim(1);
-    focusRoutes(corridorRoutes.map((id) => RBY[id]), false, { glow: false, widthScale: 1.35 });
+    focusRoutes(corridorRoutes.map((id) => RBY[id]), false, { glow: true, widthScale: 1.65 });
     const query = routes ? "" : $("#corridorQuery")?.value || "";
     const rs = corridorRoutes.map((id) => RBY[id]).filter(Boolean).sort((a, b) =>
       a.label.localeCompare(b.label, undefined, { numeric: true }) || tagOrder(a, b));
@@ -8838,7 +8841,7 @@
     const revert = () => {
       if (panelView === "corridor" && corridorRoutes.length) {
         setNetDim(1);
-        focusRoutes(corridorRoutes.map((id) => RBY[id]), false, { glow: false, widthScale: 1.35 });
+        focusRoutes(corridorRoutes.map((id) => RBY[id]), false, { glow: true, widthScale: 1.65 });
       } else if (selected && selected.type === "route") {
         setNetDim(0.38);
         focusOff();
@@ -9025,11 +9028,20 @@
           } else {
             cur = { kind: "tag", id: "more" };
             if (tg.item.more?.length) {
-              focusRoutes(tg.item.more.map((i) => LINES[i]));
+              focusRoutes(tg.item.more.map((i) => LINES[i]), false, { glow: true, widthScale: 1.65 });
             } else {
               setHover(null);
             }
-            tipShow("more:" + tg.item.more.join("."), `<span class="tip-badges">${tg.item.more.slice(0, 12).map((i) => badgeHTML(LINES[i])).join("")}</span>`, "", ev(e, 14));
+            const allRoutes = (tg.item.more || []).map((i) => LINES[i]).filter(Boolean);
+            const overflowRoutes = ((tg.item.overflow && tg.item.overflow.length) ? tg.item.overflow : tg.item.more || []).map((i) => LINES[i]).filter(Boolean);
+            const badgeList = overflowRoutes.slice(0, 10).map((r) => badgeHTML(r)).join("");
+            tipShow(
+              "more:" + tg.item.more.join("."),
+              `<span class="tip-badges">${badgeList}</span>`
+              + `<span class="tt-more">${allRoutes.length} routes share this street · Click to view all</span>`,
+              "",
+              ev(e, 14)
+            );
           }
           return;
         }
@@ -9253,8 +9265,13 @@
       const tg = tagAt(e.point);
       if (tg) {
         showLens(null);
-        if (tg.item.r != null) selectRoute(LINES[tg.item.r].id, { fit: true });
-        else showCorridor(tg.item.more.map((i) => LINES[i]).sort(tagOrder));
+        if (tg.item.r != null) {
+          selectRoute(LINES[tg.item.r].id, { fit: true });
+        } else {
+          const corridorList = (tg.item.more || []).map((i) => LINES[i]).filter(Boolean).sort(tagOrder);
+          showCorridor(corridorList);
+          focusRoutes(corridorList, false, { glow: true, widthScale: 1.65 });
+        }
         return;
       }
       const hit = map.queryRenderedFeatures([[e.point.x - 7, e.point.y - 7], [e.point.x + 7, e.point.y + 7]], { layers: hitLayers() });
@@ -9311,6 +9328,15 @@
       }
       if (selected) {
         clearSelection();
+        return;
+      }
+      if (panelView === "corridor") {
+        panelView = "home";
+        corridorRoutes = [];
+        focusOff();
+        setNetDim(1);
+        showHome();
+        openSheet("peek");
         return;
       }
       const area = map.queryRenderedFeatures(e.point, { layers: ["flex-fill", "dart-fill", "access-fill"].filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none") });
@@ -9505,7 +9531,7 @@
     lensKey = key;
     const it = hit.item;
     lens.innerHTML = it.r != null ? `<span class="lens-in">${badgeHTML(LINES[it.r])}</span>`
-      : `<span class="lens-in"><span class="badge lens-more">+${it.more.length}</span></span>`;
+      : `<span class="lens-in"><span class="badge lens-more">+${it.extra || it.more.length}</span></span>`;
     lens.hidden = false;
   }
 
