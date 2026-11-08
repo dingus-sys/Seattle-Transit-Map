@@ -415,7 +415,13 @@
           "text-letter-spacing": 0.06, "text-max-width": 7 },
         paint: { "text-color": P.waterLabel, "text-halo-color": P.water, "text-halo-width": 1 } },
       { id: "street-name", type: "symbol", source: "base", "source-layer": "transportation_name", minzoom: 13,
-        filter: ["any", ["in", ["get", "class"], ["literal", ["primary", "secondary", "trunk"]]], [">=", ["zoom"], 15]],
+        filter: ["all",
+          ["!=", ["get", "class"], "ferry"],
+          ["any",
+            ["in", ["get", "class"], ["literal", ["primary", "secondary", "trunk", "motorway", "tertiary"]]],
+            ["all", [">=", ["zoom"], 15], ["in", ["get", "class"], ["literal", ["minor", "service"]]]]
+          ]
+        ],
         layout: { "symbol-placement": "line", "text-field": ["get", "name"], "text-font": F_REG,
           "text-size": ["interpolate", ["linear"], ["zoom"], 13, 10, 17, 12.5], "symbol-spacing": 420, "text-padding": 6 },
         paint: { "text-color": P.label, "text-halo-color": P.halo, "text-halo-width": 1.4 } },
