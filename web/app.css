@@ -449,7 +449,7 @@ button, input { font: inherit; color: inherit; letter-spacing: inherit; }
 }
 .group > li { position: relative; }
 .group > li + li::before {
-  content: ""; position: absolute; top: 0; left: 54px; right: 0; height: .5px; background: var(--hairline);
+  content: ""; position: absolute; top: 0; left: 12px; right: 12px; height: .5px; background: var(--hairline);
 }
 .row {
   display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 12px;
@@ -496,6 +496,21 @@ button, input { font: inherit; color: inherit; letter-spacing: inherit; }
 .nav-row { grid-template-columns: 30px minmax(0, 1fr) auto; }
 .nav-row .chev { color: var(--muted); opacity: .6; }
 .nav-row .icon { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.nav-row .guide-row-ic {
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  color: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(37, 99, 235, .28), inset 0 0.5px 0 rgba(255, 255, 255, .3);
+  --guide-route: #fde047;
+}
+.guide-hero-ic {
+  width: 44px; height: 44px; border-radius: 12px;
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  color: #ffffff;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, .35), inset 0 1px 0 rgba(255, 255, 255, .35);
+  --guide-route: #fde047;
+}
 .key-grid {
   list-style: none; margin: 0; padding: 8px 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 2px 12px;
   background: var(--group); border-radius: var(--r-group);
