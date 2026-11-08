@@ -1798,7 +1798,8 @@
         const rawFrom = vehPos(prev, now);
         const d = geoDist(rawFrom, to);
         const isStale = (prev.t0 && (now - prev.t0 > 45000)) || prev.snap;
-        from = (d > 1100 || isStale) ? to : rawFrom;
+        const isSame = prev.to && Math.hypot(to[0] - prev.to[0], to[1] - prev.to[1]) < 0.00001;
+        from = (d > 1100 || isStale || isSame) ? to : rawFrom;
       }
       live.vehicles.set(id, { ...prev, id, agency: "95", vid: String(w.VesselID), r, ts,
         from, to, t0: now, b: Number.isFinite(w.Heading) ? w.Heading : -1,
@@ -2181,7 +2182,8 @@
     if (!v.from || !v.to) return v.to || [0, 0];
     if (v.from[0] === v.to[0] && v.from[1] === v.to[1]) return v.to;
     const dur = v.dur || POLL_MS;
-    const t = Math.min(1.02, Math.max(0, (now - v.t0) / dur));
+    const t = Math.min(1, Math.max(0, (now - v.t0) / dur));
+    if (t >= 1) return v.to;
     return [v.from[0] + (v.to[0] - v.from[0]) * t, v.from[1] + (v.to[1] - v.from[1]) * t];
   }
   async function pollLive() {
@@ -2261,18 +2263,35 @@
           // Washington State Ferries' boats go by name (OneBusAway's vehicle number is WSF's vessel id)
           const name = a === "95" && WSF_VESSELS[v.id] ? WSF_VESSELS[v.id] : "";
           if (prev) {
-            const rawFrom = vehPos(prev, now);
+            const isSame = prev.to && Math.hypot(to[0] - prev.to[0], to[1] - prev.to[1]) < 0.00001;
+            const rawFrom = isSame ? to : vehPos(prev, now);
             const d = geoDist(rawFrom, to);
             const routeChanged = prev.r && r && prev.r.id !== r.id;
             const isStale = (prev.t0 && (now - prev.t0 > 25000)) || (prev.ts && v.ts && (v.ts - prev.ts > 45));
             const maxGlide = a === "95" ? 1100 : 380;
-            const snap = routeChanged || isStale || d > maxGlide || prev.snap;
-            const from = snap ? to : rawFrom;
-            const b = v.bearing != null && v.bearing > 0 ? v.bearing : d > 12 ? geoBearing(from, to) : prev.b;
+            const snap = routeChanged || isStale || d > maxGlide || prev.snap || isSame;
+            let isBackward = false;
+            if (!snap && prev.b != null && prev.b >= 0 && d > 0) {
+              const moveBearing = geoBearing(rawFrom, to);
+              const revDiff = Math.abs(((moveBearing - prev.b + 540) % 360) - 180);
+              // Backward GPS drift while stopped/slowing: don't glide backwards
+              if (revDiff > 100 && d < 40) isBackward = true;
+            }
+            const from = (snap || isBackward) ? (isBackward ? (prev.to || to) : to) : rawFrom;
+            const targetTo = isBackward ? from : to;
+            let b = prev.b;
+            if (v.bearing != null && v.bearing > 0) {
+              b = v.bearing;
+            } else if (d > 12 && !isBackward) {
+              const moveB = geoBearing(from, targetTo);
+              if (prev.b == null || prev.b < 0 || Math.abs(((moveB - prev.b + 540) % 360) - 180) <= 100) {
+                b = moveB;
+              }
+            }
             const b0 = snap ? b : (prev.curB != null ? prev.curB : (prev.b != null && prev.b >= 0 ? prev.b : b));
             const occ = occCode(v.occ);
             const dur = prev.t0 && !snap ? Math.min(30000, Math.max(5000, now - prev.t0)) : POLL_MS;
-            Object.assign(prev, { from, to, t0: now, dur, r, b0, b, ts: v.ts, label: v.label || prev.label, vid: v.id, name, head: v.head || prev.head,
+            Object.assign(prev, { from, to: targetTo, t0: now, dur, r, b0, b, ts: v.ts, label: v.label || prev.label, vid: v.id, name, head: v.head || prev.head,
               occ: occ != null ? occ : prev.occ, occPct: v.occPct != null ? v.occPct : prev.occPct, snap: false });
           } else {
             live.vehicles.set(id, { id, agency: a, from: to, to, t0: now, dur: POLL_MS, r, b0: v.bearing > 0 ? v.bearing : -1, b: v.bearing > 0 ? v.bearing : -1, ts: v.ts, label: v.label, vid: v.id, name, head: v.head,
@@ -2361,9 +2380,9 @@
     else if (mode === "live") {
       for (const v of live.vehicles.values()) if (Date.now() / 1000 - v.ts <= 300 && Date.now() - (live.fresh?.[v.agency] || 0) < 90000) {
         const dur = v.dur || POLL_MS;
-        const t = Math.min(1.02, Math.max(0, (now - v.t0) / dur));
+        const t = Math.min(1, Math.max(0, (now - v.t0) / dur));
         const pos = vehPos(v, now);
-        const b = (v.b0 != null && v.b != null && v.b >= 0 && v.b0 >= 0) ? lerpAngle(v.b0, v.b, Math.min(1, t)) : v.b;
+        const b = (v.b0 != null && v.b != null && v.b >= 0 && v.b0 >= 0) ? lerpAngle(v.b0, v.b, t) : v.b;
         v.curB = b;
         list.push({ id: v.id, r: v.r, pos, b, name: v.name });
       }
@@ -2436,9 +2455,18 @@
     const hit = nearestOn(ix, toM(pos[0], pos[1]), reach,
       sel ? null : (pr) => (pr.r >= 0 ? pr.r === i : pr.cat === key && EDGES[pr.e] && EDGES[pr.e].l.includes(i)));
     if (!hit) return isWater ? [pos, b] : null;
-    let hb = (Math.atan2(hit.dir[0], hit.dir[1]) * 180 / Math.PI + 360) % 360;
-    if (b >= 0) { const diff = Math.abs(((hb - b + 540) % 360) - 180); if (diff > 90) hb = (hb + 180) % 360; }
-    return [toLonLat(hit.q), b >= 0 ? hb : b];
+    if (isWater) return [toLonLat(hit.q), b];
+    let finalB = b;
+    if (b >= 0) {
+      let hb = (Math.atan2(hit.dir[0], hit.dir[1]) * 180 / Math.PI + 360) % 360;
+      const diff = Math.abs(((hb - b + 540) % 360) - 180);
+      const streetAngle = diff > 90 ? (hb + 180) % 360 : hb;
+      const alignDiff = Math.abs(((streetAngle - b + 540) % 360) - 180);
+      // Snap pin to street angle when corridor is aligned with vehicle's travel direction (<= 45°).
+      // When turning corners or at intersections, keep the vehicle's smoothed heading so the pin rotates cleanly without flipping 180°.
+      finalB = alignDiff <= 45 ? streetAngle : b;
+    }
+    return [toLonLat(hit.q), finalB];
   }
   setInterval(() => { if (map && enabled.has("live") && !document.hidden && !map.isMoving()) renderVehicles(); }, 1000);
 

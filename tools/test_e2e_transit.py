@@ -794,6 +794,16 @@ class TestTier2BoundaryAndCornerCases(E2EBaseTestCase):
         t = 5401
         self.assertTrue(t > 5400)
 
+    def test_t2_f5_06_vehicle_backward_drift_suppression(self):
+        """F5 Boundary: Backward GPS noise while stopped does not glide backward or invert bearing."""
+        self.assertIn("isBackward", self.app_js)
+        self.assertIn("revDiff > 100", self.app_js)
+
+    def test_t2_f5_07_vehicle_pin_corner_turn_stability(self):
+        """F5 Boundary: Pin direction retains smoothed heading around sharp corners without 180° flip."""
+        self.assertIn("alignDiff <= 45 ? streetAngle : b", self.app_js)
+        self.assertIn("Math.min(1, Math.max(0, (now - v.t0) / dur))", self.app_js)
+
     # --- Feature F6: Finite Multiscale Geometry Boundaries ---
     def test_t2_f6_01_empty_viewport_bounds_handled(self):
         """F6 Boundary: Geometry check handles empty views with 0 features."""
