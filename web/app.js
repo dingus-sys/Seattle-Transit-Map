@@ -5650,6 +5650,22 @@
     picker.innerHTML = `${presetsHtml}${monthNavHtml}${weekdaysHtml}${gridHtml}${timeSecHtml}${footerHtml}`;
   }
 
+  let _planTripDebounce = null;
+  function scheduleTripPlan(delayMs = 0) {
+    if (_planTripDebounce) {
+      clearTimeout(_planTripDebounce);
+      _planTripDebounce = null;
+    }
+    if (delayMs <= 0) {
+      if (dirOrigin && dirDest) executeTripPlan();
+      return;
+    }
+    _planTripDebounce = setTimeout(() => {
+      _planTripDebounce = null;
+      if (dirOrigin && dirDest) executeTripPlan();
+    }, delayMs);
+  }
+
   function handleCustomPickerClick(e) {
     const target = e.target.closest("button");
     if (!target) return;
@@ -5677,7 +5693,7 @@
       const newDate = new Date(y, m - 1, d, curDate.getHours(), curDate.getMinutes());
       dirTimeValue = localDateTimeValue(newDate);
       syncDirTimeControls();
-      if (dirOrigin && dirDest) executeTripPlan();
+      scheduleTripPlan(60);
       return;
     }
 
@@ -5686,7 +5702,7 @@
       const newDate = new Date(y, m - 1, d, curDate.getHours(), curDate.getMinutes());
       dirTimeValue = localDateTimeValue(newDate);
       syncDirTimeControls();
-      if (dirOrigin && dirDest) executeTripPlan();
+      scheduleTripPlan(60);
       return;
     }
 
@@ -5698,7 +5714,7 @@
       const newDate = new Date(curDate.getFullYear(), curDate.getMonth(), curDate.getDate(), h, curDate.getMinutes());
       dirTimeValue = localDateTimeValue(newDate);
       syncDirTimeControls();
-      if (dirOrigin && dirDest) executeTripPlan();
+      scheduleTripPlan(60);
       return;
     }
 
@@ -5718,7 +5734,7 @@
       const newDate = new Date(curDate.getFullYear(), curDate.getMonth(), curDate.getDate(), newH, newM);
       dirTimeValue = localDateTimeValue(newDate);
       syncDirTimeControls();
-      if (dirOrigin && dirDest) executeTripPlan();
+      scheduleTripPlan(60);
       return;
     }
 
@@ -5727,12 +5743,13 @@
       calViewYear = null;
       calViewMonth = null;
       syncDirTimeControls();
-      if (dirOrigin && dirDest) executeTripPlan();
+      scheduleTripPlan(0);
       return;
     }
 
     if (target.id === "calDoneBtn") {
       closeCustomDatePicker();
+      scheduleTripPlan(0);
       return;
     }
   }
@@ -5751,7 +5768,7 @@
     const newDate = new Date(curDate.getFullYear(), curDate.getMonth(), curDate.getDate(), h24, min);
     dirTimeValue = localDateTimeValue(newDate);
     syncDirTimeControls();
-    if (dirOrigin && dirDest) executeTripPlan();
+    scheduleTripPlan(60);
   }
 
   function syncDirTimeControls() {
@@ -6052,11 +6069,40 @@
     return res;
   }
 
+  function getStopKeyArr(stop) {
+    if (!stop) return [];
+    if (stop._keyArr) return stop._keyArr;
+    const s = new Set();
+    if (stop.key) s.add(stop.key);
+    if (stop.id) s.add(stop.id);
+    for (const sid of (stop.stops || [])) {
+      s.add(sid);
+      const st = stopIndex[sid];
+      if (st && st.key) s.add(st.key);
+    }
+    stop._keyArr = Array.from(s);
+    stop._keySet = s;
+    return stop._keyArr;
+  }
+
+  function getStopKeySet(stop) {
+    if (stop && stop._keySet) return stop._keySet;
+    getStopKeyArr(stop);
+    return stop ? stop._keySet : new Set();
+  }
+
+  const _ttCache = new Map();
   // Look up actual timetable departure, arrival, and ride duration for a trip between boardStop and alightStop
   function timetableTripTimes(route, boardStop, alightStop, earliestSec, day, prevDay, planningTime = pacificNow()) {
     if (!SCHED || !DEP || !route || !boardStop || !alightStop) return null;
-    const bKeys = [...new Set([boardStop.key, boardStop.id, ...((boardStop.stops || []).map((sid) => stopIndex[sid] && stopIndex[sid].key).filter(Boolean))])].filter(Boolean);
-    const aKeys = new Set([...new Set([alightStop.key, alightStop.id, ...((alightStop.stops || []).map((sid) => stopIndex[sid] && stopIndex[sid].key).filter(Boolean))])].filter(Boolean));
+    const bk0 = boardStop.key || boardStop.id;
+    const ak0 = alightStop.key || alightStop.id;
+    const cKey = `${route.id}|${bk0}|${ak0}|${earliestSec}|${day}`;
+    const cached = _ttCache.get(cKey);
+    if (cached !== undefined) return cached;
+
+    const bKeys = getStopKeyArr(boardStop);
+    const aKeys = getStopKeySet(alightStop);
 
     let best = null;
     for (const bk of bKeys) {
@@ -6100,6 +6146,7 @@
         }
       }
     }
+    _ttCache.set(cKey, best);
     return best;
   }
 
@@ -6253,6 +6300,7 @@
     if (!destRoutes.size) return [];
 
     const hops = routeHopsTo(destRoutes, MAX_LEGS - 1);
+    const _canContinueCache = new Map();
 
     const destPt = destStops[0]?.stop || { lat: 47.6, lon: -122.3 };
     const stateScore = (s) => {
@@ -6353,9 +6401,14 @@
             }
             if (legCount >= MAX_LEGS) continue;
             const maxRemaining = MAX_LEGS - legCount;
-            const canContinue = transferBoardsFrom(alightStop).some((option) =>
-              boardEntriesFor(option.stop).some((next) => next.route.id !== route.id && (hops.get(next.route.id) ?? Infinity) <= maxRemaining - 1)
-            );
+            const ccKey = `${sid}|${route.id}|${maxRemaining}`;
+            let canContinue = _canContinueCache.get(ccKey);
+            if (canContinue === undefined) {
+              canContinue = transferBoardsFrom(alightStop).some((option) =>
+                boardEntriesFor(option.stop).some((next) => next.route.id !== route.id && (hops.get(next.route.id) ?? Infinity) <= maxRemaining - 1)
+              );
+              _canContinueCache.set(ccKey, canContinue);
+            }
             if (canContinue) targets.push({ to, alightStop, destination: null });
           }
 
@@ -7979,7 +8032,7 @@
           closeCustomDatePicker();
         }
         syncDirTimeControls();
-        if (dirOrigin && dirDest) executeTripPlan();
+        scheduleTripPlan(dirTimeMode === "leave-now" ? 0 : 50);
       });
     }
 
@@ -8015,7 +8068,7 @@
     $("#dirTimeInput")?.addEventListener("change", (event) => {
       dirTimeValue = event.target.value;
       syncDirTimeControls();
-      if (dirOrigin && dirDest) executeTripPlan();
+      scheduleTripPlan(50);
     });
     $("#dirOrigClear")?.addEventListener("click", () => {
       dirOrigin = null;

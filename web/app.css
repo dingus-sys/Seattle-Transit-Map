@@ -261,14 +261,29 @@ button, input { font: inherit; color: inherit; letter-spacing: inherit; }
   position: absolute; opacity: 0; pointer-events: none; width: 0; height: 0; margin: 0; padding: 0; border: 0;
 }
 
-/* Custom Glass Calendar Popover */
+/* Custom Calendar Popover: Solid opaque card, zero transparency bleed */
 .dir-custom-picker {
-  position: absolute; left: 0; right: 0; top: calc(100% + 5px); z-index: 60;
+  position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 100;
   border-radius: 18px; padding: 12px 14px 13px;
-  background: var(--dropdown-bg) !important;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, .28), 0 0 0 1px var(--rim), inset 0 1px 0 rgba(255, 255, 255, .4);
+  background: #ffffff !important;
+  background-color: #ffffff !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, .28), 0 0 0 1px var(--rim), 0 4px 12px rgba(0, 0, 0, .08);
   display: flex; flex-direction: column; gap: 10px;
-  animation: jelly-pop .25s var(--spring) both;
+  animation: jelly-pop .2s var(--spring) both;
+}
+.dir-custom-picker::before,
+.dir-custom-picker::after {
+  display: none !important;
+}
+:root[data-theme="dark"] .dir-custom-picker,
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .dir-custom-picker {
+    background: #1e1e21 !important;
+    background-color: #1e1e21 !important;
+    box-shadow: 0 20px 48px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .15);
+  }
 }
 
 .cal-presets {
