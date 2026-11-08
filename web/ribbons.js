@@ -61,7 +61,7 @@ const KCTMRibbons = (() => {
       };
       if (selected || glow) stroke("glow", (p.gm || (p.wm + 2.8)) * (widthScale > 1 ? widthScale * 0.95 : 1), 0);
       if (!hover && !selected && p.sh > 0) stroke("shadow", p.sh + 0.8);
-      if (!p.d) stroke("case", p.cm * widthScale * (hover ? 0.97 : 1));
+      if (!p.d || p.g !== "water") stroke("case", p.cm * widthScale * (hover ? 0.97 : 1));
       const w = p.wm * widthScale;
       stroke(p.d ? "dash" : "body", w, p.d ? 1 : 0, !p.d);
       if (!hover && p.hm > 0) stroke(p.h === 3 ? "dots" : p.h === 4 ? "ties" : "shine", p.hm, p.h === 3 ? 2 : p.h === 4 ? 3 : 0, p.h !== 4);
@@ -110,7 +110,14 @@ const KCTMRibbons = (() => {
               if (u_pattern > 1.5 && u_pattern < 2.5) {
                 float dx = min(along, period - along) * 2.0;
                 alpha *= 1.0 - smoothstep(1.0 - aa, 1.0, length(vec2(dx, v_side)));
-              } else if (along > dash) discard;
+              } else {
+                if (along > dash) discard;
+                if (u_pattern < 1.5) {
+                  float pixDist = 1.0 / max(0.1, 2.0 * v_half);
+                  float endDist = min(along, dash - along);
+                  alpha *= smoothstep(0.0, pixDist, endDist);
+                }
+              }
             }
             vec3 color = mix(u_color.rgb, v_color, u_own);
             alpha *= u_opacity * u_color.a;

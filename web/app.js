@@ -42,9 +42,9 @@
     swift:     { group: "rapid", w: 2.5,  tier: 0, prio: 5,  inner: "dots" },
     frequent:  { group: "bus",   w: 2.35, tier: 1, prio: 6,  inner: "glass" },
     local:     { group: "bus",   w: 1.9,  tier: 2, prio: 7,  inner: "glass" },
-    peak:      { group: "bus",   w: 1.4,  tier: 2, prio: 8,  dash: true },
+    peak:      { group: "bus",   w: 1.85, tier: 2, prio: 8,  dash: true },
     shuttle:   { group: "bus",   w: 1.7,  tier: 2, prio: 9,  inner: "glass" },
-    dart:      { group: "bus",   w: 1.35, tier: 2, prio: 10, dash: true },
+    dart:      { group: "bus",   w: 1.7,  tier: 2, prio: 10, dash: true },
     watertaxi: { group: "water", w: 1.9,  tier: 0, prio: 11, dash: true },
     ferry:     { group: "water", w: 1.9,  tier: 0, prio: 12, dash: true },
   };
@@ -60,7 +60,7 @@
   const LINE = {
     light: {
       link: "#173d7a", link1: "#5ead56", link2: "#479ed8", linkT: "#e57a00", sounder: "#4b5563", streetcar: "#e8772e", monorail: "#8a8f98", rapidride: "#c8102e",
-      swift: "#1f6fe0", frequent: "#1d4ed8", local: "#3668c2", peak: "#2b6cb0", shuttle: "#3668c2",
+      swift: "#1f6fe0", frequent: "#1d4ed8", local: "#3668c2", peak: "#1b5bb0", shuttle: "#3668c2",
       dart: "#b83280", watertaxi: "#1690ad", ferry: "#0d768a",
       soundtransit: "#173d7a",
     },
@@ -435,7 +435,7 @@
   // network, RapidRide and trains read first in busy places like downtown. Focused routes use
   // their full service color below; a commuter route must never remain washed out on hover/tap.
   const LINE_OP = 1;
-  const SOFT = { peak: 0.90, local: 0.95, dart: 0.85 };
+  const SOFT = { local: 0.95 };
   const mixHex = (a, b, t) => { // a toward b by (1 - t)
     const pa = [1, 3, 5].map((i) => parseInt(a.slice(i, i + 2), 16)), pb = [1, 3, 5].map((i) => parseInt(b.slice(i, i + 2), 16));
     return "#" + pa.map((v, i) => Math.round(v * t + pb[i] * (1 - t)).toString(16).padStart(2, "0")).join("");
@@ -1379,7 +1379,7 @@
   // retains enough width to stay findable before it is focused.
   function minorScale(z) {
     const f = z <= 10.0 ? 0.82 : z >= 12.5 ? 1 : 0.82 + 0.18 * (z - 10.0) / 2.5;
-    return { local: f, peak: Math.max(0.60, f * 0.80), shuttle: f * 0.88, dart: f * 0.78 };
+    return { local: f, peak: Math.max(0.72, f * 0.90), shuttle: f * 0.88, dart: Math.max(0.70, f * 0.88) };
   }
   function tierFor(z) { const t = BUS_TIERS[settings.busDetail]; return z >= t[2] ? 2 : z >= t[1] ? 1 : 0; }
   let lastZ = -1, labelStep = null, needsRebuild = false, builtView = null, lastFeats = [], lastSelFeats = [];
@@ -4239,7 +4239,7 @@
     };
     const one = {
       link: [P.link1, 6, "solid"], rail: [P.sounder, 5, "ties"], streetcar: [P.streetcar, 4.6, "solid"], monorail: [P.monorail, 4.6, "solid"],
-      rapid: [P.rapidride, 5.4, "dots"], frequent: [P.frequent, 5, "glass"], local: [P.local, 3.8, "glass"], peak: [P.peak, 2.4, ""],
+      rapid: [P.rapidride, 5.4, "dots"], frequent: [P.frequent, 5, "glass"], local: [P.local, 3.8, "glass"], peak: [P.peak, 3.2, "dash"],
       water: [P.ferry, 3.2, "dash"], dart: [P.dart, 3, "dash"],
     }[l.key];
     if (one) return `<svg viewBox="0 0 30 30" aria-hidden="true">${tube(one[0], one[1], 15, one[2])}</svg>`;
