@@ -5406,28 +5406,34 @@
 
   function getRouteSegmentGeometry(routeIdx, boardStop, alightStop, intermediateStopIds = []) {
     if (routeIdx == null || !boardStop || !alightStop) return [];
-    const edges = getEdgesForRoute(routeIdx);
-    if (!edges.length) {
-      const coords = [[boardStop.lon, boardStop.lat]];
-      for (const sid of intermediateStopIds) {
-        const s = stopIndex[sid];
-        if (s) coords.push([s.lon, s.lat]);
-      }
-      coords.push([alightStop.lon, alightStop.lat]);
-      return coords;
-    }
 
-    const bNear = findNearestEdgePt(edges, boardStop.lon, boardStop.lat);
-    const aNear = findNearestEdgePt(edges, alightStop.lon, alightStop.lat);
-    if (!bNear.edge || !aNear.edge) {
-      const coords = [[boardStop.lon, boardStop.lat]];
-      for (const sid of intermediateStopIds) {
-        const s = stopIndex[sid];
-        if (s) coords.push([s.lon, s.lat]);
+    const targetRoute = LINES[routeIdx];
+    const isWaterRoute = targetRoute && (targetRoute.cat === "ferry" || targetRoute.cat === "watertaxi");
+    const isRailRoute = targetRoute && (targetRoute.cat === "link" || targetRoute.cat === "sounder" || targetRoute.cat === "monorail" || targetRoute.cat === "amtrak");
+
+    const isEdgeModalMatch = (e) => {
+      if (!e || !e.l || !e.l.length) return !isWaterRoute;
+      const hasWater = e.l.some((idx) => {
+        const r = LINES[idx];
+        return r && (r.cat === "ferry" || r.cat === "watertaxi");
+      });
+      if (isWaterRoute) return hasWater;
+      if (hasWater) return false;
+
+      if (isRailRoute) {
+        return e.l.some((idx) => {
+          const r = LINES[idx];
+          return r && (r.cat === "link" || r.cat === "sounder" || r.cat === "monorail" || r.cat === "amtrak");
+        });
+      } else {
+        // Road / surface bus cannot use dedicated heavy/light rail tracks
+        const allRail = e.l.every((idx) => {
+          const r = LINES[idx];
+          return r && (r.cat === "link" || r.cat === "sounder" || r.cat === "monorail" || r.cat === "amtrak");
+        });
+        return !allRail;
       }
-      coords.push([alightStop.lon, alightStop.lat]);
-      return coords;
-    }
+    };
 
     const polyLen = (pts) => {
       let len = 0;
@@ -5438,75 +5444,127 @@
     };
 
     const qk = (c) => Math.round(c[0] * 100000) + "," + Math.round(c[1] * 100000);
-    const adj = new Map();
-    function addEdge(u, v, cost, pts) {
-      if (!adj.has(u)) adj.set(u, []);
-      adj.get(u).push({ to: v, cost, pts });
-    }
 
-    for (const e of edges) {
-      const u = qk(e.c[0]), v = qk(e.c[e.c.length - 1]);
-      const cost = polyLen(e.c);
-      addEdge(u, v, cost, e.c);
-      addEdge(v, u, cost, [...e.c].reverse());
-    }
+    function solveDijkstra(graphEdges, bNear, aNear, bStop, aStop, costFn = null) {
+      if (!graphEdges || !graphEdges.length || !bNear || !bNear.edge || !aNear || !aNear.edge) return null;
+      const adj = new Map();
+      function addEdge(u, v, cost, pts) {
+        if (!adj.has(u)) adj.set(u, []);
+        adj.get(u).push({ to: v, cost, pts });
+      }
 
-    const sNode = "START", tNode = "END";
-    const eB = bNear.edge, iB = bNear.idx;
-    const eA = aNear.edge, iA = aNear.idx;
+      for (const e of graphEdges) {
+        if (!isEdgeModalMatch(e)) continue;
+        const u = qk(e.c[0]), v = qk(e.c[e.c.length - 1]);
+        const len = polyLen(e.c);
+        const cost = costFn ? costFn(e, len) : len;
+        addEdge(u, v, cost, e.c);
+        addEdge(v, u, cost, [...e.c].reverse());
+      }
 
-    const ptsTo0 = [...eB.c.slice(0, iB + 1)].reverse();
-    const ptsToEnd = eB.c.slice(iB);
-    addEdge(sNode, qk(eB.c[0]), polyLen(ptsTo0), ptsTo0);
-    addEdge(sNode, qk(eB.c[eB.c.length - 1]), polyLen(ptsToEnd), ptsToEnd);
+      const sNode = "START", tNode = "END";
+      const eB = bNear.edge, iB = bNear.idx;
+      const eA = aNear.edge, iA = aNear.idx;
 
-    const ptsFrom0 = eA.c.slice(0, iA + 1);
-    const ptsFromEnd = [...eA.c.slice(iA)].reverse();
-    addEdge(qk(eA.c[0]), tNode, polyLen(ptsFrom0), ptsFrom0);
-    addEdge(qk(eA.c[eA.c.length - 1]), tNode, polyLen(ptsFromEnd), ptsFromEnd);
+      const ptsTo0 = [...eB.c.slice(0, iB + 1)].reverse();
+      const ptsToEnd = eB.c.slice(iB);
+      addEdge(sNode, qk(eB.c[0]), polyLen(ptsTo0), ptsTo0);
+      addEdge(sNode, qk(eB.c[eB.c.length - 1]), polyLen(ptsToEnd), ptsToEnd);
 
-    if (eB === eA) {
-      const directPts = iB <= iA ? eB.c.slice(iB, iA + 1) : [...eB.c.slice(iA, iB + 1)].reverse();
-      addEdge(sNode, tNode, polyLen(directPts), directPts);
-      addEdge(tNode, sNode, polyLen(directPts), [...directPts].reverse());
-    }
+      const ptsFrom0 = eA.c.slice(0, iA + 1);
+      const ptsFromEnd = [...eA.c.slice(iA)].reverse();
+      addEdge(qk(eA.c[0]), tNode, polyLen(ptsFrom0), ptsFrom0);
+      addEdge(qk(eA.c[eA.c.length - 1]), tNode, polyLen(ptsFromEnd), ptsFromEnd);
 
-    const dist = new Map(), prev = new Map();
-    dist.set(sNode, 0);
-    const pq = [[0, sNode]];
-    while (pq.length) {
-      pq.sort((a, b) => a[0] - b[0]);
-      const [d, u] = pq.shift();
-      if (u === tNode) break;
-      if (d > dist.get(u)) continue;
-      for (const edge of (adj.get(u) || [])) {
-        const nd = d + edge.cost;
-        if (!dist.has(edge.to) || nd < dist.get(edge.to)) {
-          dist.set(edge.to, nd);
-          prev.set(edge.to, { from: u, pts: edge.pts });
-          pq.push([nd, edge.to]);
+      if (eB === eA) {
+        const directPts = iB <= iA ? eB.c.slice(iB, iA + 1) : [...eB.c.slice(iA, iB + 1)].reverse();
+        addEdge(sNode, tNode, polyLen(directPts), directPts);
+        addEdge(tNode, sNode, polyLen(directPts), [...directPts].reverse());
+      }
+
+      const dist = new Map(), prev = new Map();
+      dist.set(sNode, 0);
+      const pq = [[0, sNode]];
+      while (pq.length) {
+        pq.sort((a, b) => a[0] - b[0]);
+        const [d, u] = pq.shift();
+        if (u === tNode) break;
+        if (d > dist.get(u)) continue;
+        for (const edge of (adj.get(u) || [])) {
+          const nd = d + edge.cost;
+          if (!dist.has(edge.to) || nd < dist.get(edge.to)) {
+            dist.set(edge.to, nd);
+            prev.set(edge.to, { from: u, pts: edge.pts });
+            pq.push([nd, edge.to]);
+          }
         }
       }
+
+      if (prev.has(tNode)) {
+        let path = [];
+        let cur = tNode;
+        while (cur !== sNode) {
+          const p = prev.get(cur);
+          path = [...p.pts, ...(path.length ? path.slice(1) : [])];
+          cur = p.from;
+        }
+        const raw = [[bStop.lon, bStop.lat], ...path, [aStop.lon, aStop.lat]];
+        const out = [];
+        for (let i = 0; i < raw.length; i++) {
+          if (!i || Math.hypot(raw[i][0] - out[out.length - 1][0], raw[i][1] - out[out.length - 1][1]) > 1e-7) {
+            out.push(raw[i]);
+          }
+        }
+        return out;
+      }
+      return null;
     }
 
-    if (prev.has(tNode)) {
-      let path = [];
-      let cur = tNode;
-      while (cur !== sNode) {
-        const p = prev.get(cur);
-        path = [...p.pts, ...(path.length ? path.slice(1) : [])];
-        cur = p.from;
+    // 1. First, search on the route's dedicated subgraph
+    const routeEdges = getEdgesForRoute(routeIdx);
+    let bNearRoute = routeEdges.length ? findNearestEdgePt(routeEdges, boardStop.lon, boardStop.lat) : null;
+    let aNearRoute = routeEdges.length ? findNearestEdgePt(routeEdges, alightStop.lon, alightStop.lat) : null;
+
+    if (bNearRoute && bNearRoute.edge && aNearRoute && aNearRoute.edge) {
+      const path = solveDijkstra(routeEdges, bNearRoute, aNearRoute, boardStop, alightStop);
+      if (path && path.length >= 2) return path;
+    }
+
+    // 2. If the route's edges have a gap, bridge across the shared transit network graph.
+    // Strongly prioritize edges carrying this route, but allow bridging along existing transit street corridors.
+    if (NET && NET.edges && NET.edges.length) {
+      const compatibleEdges = NET.edges.filter(isEdgeModalMatch);
+      const bNear = (bNearRoute && bNearRoute.edge) ? bNearRoute : findNearestEdgePt(compatibleEdges, boardStop.lon, boardStop.lat);
+      const aNear = (aNearRoute && aNearRoute.edge) ? aNearRoute : findNearestEdgePt(compatibleEdges, alightStop.lon, alightStop.lat);
+
+      if (bNear && bNear.edge && aNear && aNear.edge) {
+        const path = solveDijkstra(compatibleEdges, bNear, aNear, boardStop, alightStop, (e, len) => {
+          const hasRoute = e.l && e.l.includes(routeIdx);
+          return hasRoute ? len : (len * 5 + 50);
+        });
+        if (path && path.length >= 2) return path;
       }
-      const raw = [[boardStop.lon, boardStop.lat], ...path, [alightStop.lon, alightStop.lat]];
-      const out = [];
-      for (let i = 0; i < raw.length; i++) {
-        if (!i || Math.hypot(raw[i][0] - out[out.length - 1][0], raw[i][1] - out[out.length - 1][1]) > 1e-7) {
-          out.push(raw[i]);
+    }
+
+    // 3. If intermediate stops exist, chain consecutive stop segments
+    if (intermediateStopIds && intermediateStopIds.length) {
+      const stopsSeq = [boardStop, ...intermediateStopIds.map((sid) => stopIndex[sid]).filter(Boolean), alightStop];
+      let composite = [];
+      let ok = true;
+      for (let i = 0; i < stopsSeq.length - 1; i++) {
+        const sA = stopsSeq[i], sB = stopsSeq[i + 1];
+        const seg = getRouteSegmentGeometry(routeIdx, sA, sB, []);
+        if (seg && seg.length >= 2) {
+          composite = [...composite, ...(composite.length ? seg.slice(1) : seg)];
+        } else {
+          ok = false;
+          break;
         }
       }
-      return out;
+      if (ok && composite.length >= 2) return composite;
     }
 
+    // 4. Fallback to connecting known stops
     const coords = [[boardStop.lon, boardStop.lat]];
     for (const sid of intermediateStopIds) {
       const s = stopIndex[sid];

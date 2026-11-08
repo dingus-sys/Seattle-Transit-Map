@@ -240,4 +240,110 @@ check('F5: Timetable departure formats without live dot', () => {
   assert.equal(isLive, false);
 });
 
+// F6: Route Segment Geometry & Water-Crossing Prevention
+const netData = readJSON('site/data/network.json');
+const LINES = netData.lines.map((id) => routesById.get(id));
+const LINEIDX = {};
+LINES.forEach((r, i) => { if (r) LINEIDX[r.id] = i; });
+
+const appJsCode = fs.readFileSync(path.join(ROOT, 'web', 'app.js'), 'utf8');
+const vm = require('node:vm');
+const geomSandbox = {
+  LINES,
+  LINEIDX,
+  NET: netData,
+  STOPS: stopsData,
+  stopIndex,
+  Math,
+  Map,
+  Set,
+  Array,
+  console,
+};
+vm.createContext(geomSandbox);
+vm.runInContext(`
+  ${appJsCode.slice(appJsCode.indexOf('function distMeters'), appJsCode.indexOf('function findNearbyStops'))}
+`, geomSandbox);
+
+function maxSegmentHop(pts) {
+  let maxD = 0;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const d = geomSandbox.distMeters(pts[i][1], pts[i][0], pts[i + 1][1], pts[i + 1][0]);
+    if (d > maxD) maxD = d;
+  }
+  return maxD;
+}
+
+function hasPointsOverPugetSoundWater(pts) {
+  // Puget Sound water between Seattle (lat 47.50 to 47.65) and Tacoma (lat 47.25):
+  // I-5 and highway corridors are strictly east of lon -122.33.
+  // Straight air chords across Puget Sound enter lon < -122.35 between lat 47.30 and 47.55.
+  return pts.some((pt) => {
+    const lon = pt[0], lat = pt[1];
+    return lat >= 47.30 && lat <= 47.55 && lon < -122.35;
+  });
+}
+
+check('F6: Route 594 (Lakewood - Seattle) follows highway corridor without crossing Puget Sound water', () => {
+  const r = routesById.get('sound-transit-594');
+  assert(r, 'Route 594 missing');
+  const bStop = stopIndex['pt-1699'] || stopIndex['kcm-905']; // Stewart St & 7th / Yale
+  const aStop = stopIndex['pt-212']; // Lakewood Station - Bay 4
+  assert(bStop && aStop, 'Endpoints missing');
+
+  const p0 = r.patterns[0];
+  const intermediates = p0.stops.slice(1, -1);
+  const geom = geomSandbox.getRouteSegmentGeometry(LINEIDX[r.id], bStop, aStop, intermediates);
+
+  assert(geom.length >= 100, `Expected detailed route geometry (>= 100 pts), got ${geom.length}`);
+  const maxHop = maxSegmentHop(geom);
+  assert(maxHop < 2500, `Expected max hop < 2500m along freeway corridor, got ${Math.round(maxHop)}m`);
+  assert(!hasPointsOverPugetSoundWater(geom), 'Route 594 geometry must not cut across Puget Sound water');
+});
+
+check('F6: Route 597 (Night Bus Lakewood - Seattle) follows highway corridor without crossing Puget Sound water', () => {
+  const r = routesById.get('sound-transit-597');
+  assert(r, 'Route 597 missing');
+  const bStop = stopIndex['pt-2474'] || stopIndex['kcm-430']; // 3rd Ave & Pine St
+  const aStop = stopIndex['pt-212']; // Lakewood Station
+  assert(bStop && aStop, 'Endpoints missing');
+
+  const p0 = r.patterns[0];
+  const intermediates = p0.stops.slice(1, -1);
+  const geom = geomSandbox.getRouteSegmentGeometry(LINEIDX[r.id], bStop, aStop, intermediates);
+
+  assert(geom.length >= 100, `Expected detailed route geometry (>= 100 pts), got ${geom.length}`);
+  const maxHop = maxSegmentHop(geom);
+  assert(maxHop < 2500, `Expected max hop < 2500m along freeway corridor, got ${Math.round(maxHop)}m`);
+  assert(!hasPointsOverPugetSoundWater(geom), 'Route 597 geometry must not cut across Puget Sound water');
+});
+
+check('F6: Route 590 (Tacoma - Seattle) follows highway corridor without crossing Puget Sound water', () => {
+  const r = routesById.get('sound-transit-590');
+  assert(r, 'Route 590 missing');
+  const bStop = stopIndex['pt-1984'] || stopIndex['kcm-905']; // Stewart & Yale
+  const aStop = stopIndex['pt-1780']; // Commerce St Station
+  assert(bStop && aStop, 'Endpoints missing');
+
+  const p0 = r.patterns[0];
+  const intermediates = p0.stops.slice(1, -1);
+  const geom = geomSandbox.getRouteSegmentGeometry(LINEIDX[r.id], bStop, aStop, intermediates);
+
+  assert(geom.length >= 100, `Expected detailed route geometry (>= 100 pts), got ${geom.length}`);
+  const maxHop = maxSegmentHop(geom);
+  assert(maxHop < 2500, `Expected max hop < 2500m along freeway corridor, got ${Math.round(maxHop)}m`);
+  assert(!hasPointsOverPugetSoundWater(geom), 'Route 590 geometry must not cut across Puget Sound water');
+});
+
+check('F6: Bus routes never adopt ferry water edges or dedicated train tracks during fallback bridging', () => {
+  const r = routesById.get('sound-transit-594');
+  const edges = netData.edges.filter((e) => e.l && e.l.includes(LINEIDX[r.id]));
+  assert(edges.length > 0);
+  const hasWater = edges.some((e) => (e.l || []).some((idx) => {
+    const line = LINES[idx];
+    return line && (line.cat === 'ferry' || line.cat === 'watertaxi');
+  }));
+  assert.equal(hasWater, false, 'Bus route must not have ferry edges in its geometry');
+});
+
 console.log(`\nALL ${checks} ROUTING SPECIFICATION CHECKS PASSED`);
