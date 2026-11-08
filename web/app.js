@@ -623,9 +623,9 @@
     theatre: "sight", castle: "sight", monument: "sight", town_hall: "civic", courthouse: "civic", ferry_terminal: "ferry",
   };
   const POI_COLOR = { park: "#3f8f43", school: "#a5672a", museum: "#8a4fb5", zoo: "#2f8f6b", hospital: "#d0213b", stadium: "#3c6fb5",
-    library: "#7a5a2f", sight: "#c2571a", civic: "#5b6475", ferry: "#3c78b4", restaurant: "#c2410c", coffee: "#b45309", market: "#db2777", hotel: "#3b82f6" };
+    library: "#7a5a2f", sight: "#c2571a", civic: "#5b6475", ferry: "#0d9488", ferry_terminal: "#0d9488", pr: "#0284c7", transit_center: "#7c3aed", station: "#059669", restaurant: "#c2410c", coffee: "#b45309", market: "#db2777", hotel: "#3b82f6" };
   const POI_COLOR_D = { park: "#7fcf7f", school: "#e0a462", museum: "#c89af0", zoo: "#68d3a6", hospital: "#ff6b7f", stadium: "#7fa9ef",
-    library: "#d0ac74", sight: "#f39a5c", civic: "#aab3c4", ferry: "#7aa7d1", restaurant: "#ea580c", coffee: "#d97706", market: "#f472b6", hotel: "#60a5fa" };
+    library: "#d0ac74", sight: "#f39a5c", civic: "#aab3c4", ferry: "#2dd4bf", ferry_terminal: "#2dd4bf", pr: "#38bdf8", transit_center: "#a78bfa", station: "#34d399", restaurant: "#ea580c", coffee: "#d97706", market: "#f472b6", hotel: "#60a5fa" };
   function poiLayers(P) {
     const dark = theme === "dark", col = dark ? POI_COLOR_D : POI_COLOR;
     const kind = ["match", ["get", "subclass"], ...Object.entries(POI_KIND).flat(), ["match", ["get", "class"], ...Object.entries(POI_KIND).flat(), ""]];
@@ -671,7 +671,35 @@
     else if (kind === "hospital") { x.fillRect(-0.22, -0.8, 0.44, 1.6); x.fillRect(-0.8, -0.22, 1.6, 0.44); }
     else if (kind === "stadium") { x.lineWidth = 0.28; x.beginPath(); x.ellipse(0, 0, 0.85, 0.55, 0, 0, Math.PI * 2); x.stroke(); dot(0, 0, 0.22); }
     else if (kind === "library") { x.fillRect(-0.85, -0.65, 0.75, 1.3); x.fillRect(0.1, -0.65, 0.75, 1.3); }
-    else if (kind === "ferry") { P([[-0.9, 0.05], [0.9, 0.05], [0.6, 0.55], [-0.6, 0.55]]); x.fillRect(-0.45, -0.45, 0.8, 0.45); }
+    else if (kind === "ferry" || kind === "ferry_terminal") {
+      x.lineWidth = 0.22;
+      x.beginPath(); x.moveTo(-0.95, -0.6); x.lineTo(-0.95, 0.7); x.moveTo(0.95, -0.6); x.lineTo(0.95, 0.7); x.stroke();
+      P([[-0.75, 0.1], [0.75, 0.1], [0.55, 0.55], [-0.55, 0.55]]);
+      x.fillRect(-0.45, -0.35, 0.9, 0.45);
+      x.fillRect(-0.25, -0.7, 0.5, 0.35);
+      dot(0, -0.1, 0.12);
+      x.beginPath(); x.moveTo(-0.85, 0.8); x.quadraticCurveTo(-0.4, 0.65, 0, 0.8); x.quadraticCurveTo(0.4, 0.95, 0.85, 0.8); x.stroke();
+    }
+    else if (kind === "pr") {
+      x.lineWidth = 0.2;
+      x.beginPath(); x.moveTo(-0.9, -0.2); x.lineTo(0.9, -0.2); x.moveTo(-0.75, -0.2); x.lineTo(-0.75, 0.8); x.moveTo(0.75, -0.2); x.lineTo(0.75, 0.8); x.stroke();
+      x.fillRect(-0.35, -0.85, 0.7, 0.65);
+      P([[-0.55, 0.45], [0.55, 0.45], [0.4, 0.15], [-0.4, 0.15]]);
+      dot(-0.35, 0.65, 0.15); dot(0.35, 0.65, 0.15);
+    }
+    else if (kind === "transit_center") {
+      x.lineWidth = 0.22;
+      x.beginPath(); x.arc(0, -0.05, 0.7, Math.PI, 0); x.stroke();
+      dot(0, -0.75, 0.15);
+      x.beginPath(); x.moveTo(-0.8, 0.45); x.lineTo(0.3, 0.45); x.arc(0.3, 0.65, 0.2, -Math.PI / 2, Math.PI / 2); x.lineTo(-0.2, 0.85); x.stroke();
+    }
+    else if (kind === "station") {
+      P([[-0.6, -0.6], [0.6, -0.6], [0.55, 0.45], [-0.55, 0.45]]);
+      x.clearRect(-0.4, -0.4, 0.8, 0.35);
+      dot(-0.3, 0.2, 0.12); dot(0.3, 0.2, 0.12);
+      x.lineWidth = 0.2;
+      x.beginPath(); x.moveTo(-0.8, 0.75); x.lineTo(0.8, 0.75); x.stroke();
+    }
     else if (kind === "civic") { P([[0, -0.9], [0.9, -0.35], [-0.9, -0.35]]); x.fillRect(-0.7, -0.25, 1.4, 0.9); }
     else if (kind === "restaurant") {
       for (const a of [-0.65, -0.48, -0.31]) x.fillRect(a, -0.85, 0.12, 0.45);
@@ -736,7 +764,14 @@
       zoo: '<g fill="currentColor" stroke="none"><path d="M12 13.5c-2.4 0-4 1.5-4 3.2 0 1.6 1.4 2.8 4 2.8s4-1.2 4-2.8c0-1.7-1.6-3.2-4-3.2z"/><circle cx="6.8" cy="10.8" r="1.6"/><circle cx="10.2" cy="7.2" r="1.6"/><circle cx="13.8" cy="7.2" r="1.6"/><circle cx="17.2" cy="10.8" r="1.6"/></g>',
       museum: '<g fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8.5 12 3.5l10 5H2z"/><path d="M2 8.5h20v1.5H2zM2 19h20v2H2z"/><path d="M5 10v9m4.7-9v9m4.6-9v9m4.7-9v9"/></g>',
       library: '<g fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5z"/><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M8 6h8M8 10h6"/></g>',
-      ferry: '<g fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 14h17l-2.2 4.5H5.7L3.5 14z"/><path d="M6 9.5h12V14H6V9.5z"/><path d="M9 5.5h6v4H9V5.5z"/><path d="M8.5 11.5h1.5M14 11.5h1.5"/><path d="M2 20.5c2.5-1.2 5.5-1.2 8 0s5.5 1.2 8 0 3-.8 4-.8"/></g>',
+      ferry: '<g fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 7.5v12M2.5 11h3M21.5 7.5v12M18.5 11h3M2.5 8h3M18.5 8h3"/><path d="M4.5 14h15l-2.2 4.2H6.7L4.5 14z"/><path d="M7 10h10v4H7z"/><path d="M10 6.5h4v3.5h-4zM12 4v2.5"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/><path d="M2 21c2.8-1 5.6-1 8.4 0s5.6 1 8.4 0 2.6-.6 3.2-.6"/></g>',
+      ferry_terminal: '<g fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 7.5v12M2.5 11h3M21.5 7.5v12M18.5 11h3M2.5 8h3M18.5 8h3"/><path d="M4.5 14h15l-2.2 4.2H6.7L4.5 14z"/><path d="M7 10h10v4H7z"/><path d="M10 6.5h4v3.5h-4zM12 4v2.5"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/><path d="M2 21c2.8-1 5.6-1 8.4 0s5.6 1 8.4 0 2.6-.6 3.2-.6"/></g>',
+      pr: '<g fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 8.5h19"/><path d="M4.5 8.5v11M19.5 8.5v11"/><rect x="9" y="2.5" width="6" height="6" rx="1.8" fill="currentColor" fill-opacity="0.18"/><path d="M11 6.8V4.2h1.8a1.3 1.3 0 0 1 0 2.6H11"/><path d="M6.8 16.5h10.4a1.8 1.8 0 0 0 1.8-1.8v-1.5a2 2 0 0 0-1.2-1.8l-1.5-1.1a2 2 0 0 0-1.1-.3H8.8a2 2 0 0 0-1.1.3L6.2 11.4A2 2 0 0 0 5 13.2v1.5a1.8 1.8 0 0 0 1.8 1.8z"/><path d="M7.8 12.2l1-1.4h6.4l1 1.4"/><circle cx="7.8" cy="14.8" r="0.9" fill="currentColor"/><circle cx="16.2" cy="14.8" r="0.9" fill="currentColor"/><path d="M6.8 16.5v2M17.2 16.5v2"/></g>',
+      park_and_ride: '<g fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 8.5h19"/><path d="M4.5 8.5v11M19.5 8.5v11"/><rect x="9" y="2.5" width="6" height="6" rx="1.8" fill="currentColor" fill-opacity="0.18"/><path d="M11 6.8V4.2h1.8a1.3 1.3 0 0 1 0 2.6H11"/><path d="M6.8 16.5h10.4a1.8 1.8 0 0 0 1.8-1.8v-1.5a2 2 0 0 0-1.2-1.8l-1.5-1.1a2 2 0 0 0-1.1-.3H8.8a2 2 0 0 0-1.1.3L6.2 11.4A2 2 0 0 0 5 13.2v1.5a1.8 1.8 0 0 0 1.8 1.8z"/><path d="M7.8 12.2l1-1.4h6.4l1 1.4"/><circle cx="7.8" cy="14.8" r="0.9" fill="currentColor"/><circle cx="16.2" cy="14.8" r="0.9" fill="currentColor"/><path d="M6.8 16.5v2M17.2 16.5v2"/></g>',
+      transit_center: '<g fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 11c0-4.1 3.4-7.5 7.5-7.5s7.5 3.4 7.5 7.5"/><path d="M7.8 11c0-2.3 1.9-4.2 4.2-4.2s4.2 1.9 4.2 4.2"/><circle cx="12" cy="4.5" r="1.1" fill="currentColor"/><path d="M12 11v3.5"/><path d="M4 16h11a3 3 0 0 1 3 3m-2.5-2.5l2.5 2.5 2.5-2.5"/><path d="M20 18.5H9a3 3 0 0 1-3-3m2.5 2.5L6 15.5l-2.5 2.5"/></g>',
+      transfer_station: '<g fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 11c0-4.1 3.4-7.5 7.5-7.5s7.5 3.4 7.5 7.5"/><path d="M7.8 11c0-2.3 1.9-4.2 4.2-4.2s4.2 1.9 4.2 4.2"/><circle cx="12" cy="4.5" r="1.1" fill="currentColor"/><path d="M12 11v3.5"/><path d="M4 16h11a3 3 0 0 1 3 3m-2.5-2.5l2.5 2.5 2.5-2.5"/><path d="M20 18.5H9a3 3 0 0 1-3-3m2.5 2.5L6 15.5l-2.5 2.5"/></g>',
+      station: '<g fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="13.5" rx="3.5"/><path d="M7.5 7.5h9v3.8h-9z"/><path d="M9.5 4L12 1.8l2.5 2.2"/><circle cx="8" cy="14.5" r="1" fill="currentColor"/><circle cx="16" cy="14.5" r="1" fill="currentColor"/><path d="M11 14.5h2"/><path d="M3.5 21h17"/><path d="M7 17.5l-2 3.5M17 17.5l2 3.5"/></g>',
+      rail_station: '<g fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="13.5" rx="3.5"/><path d="M7.5 7.5h9v3.8h-9z"/><path d="M9.5 4L12 1.8l2.5 2.2"/><circle cx="8" cy="14.5" r="1" fill="currentColor"/><circle cx="16" cy="14.5" r="1" fill="currentColor"/><path d="M11 14.5h2"/><path d="M3.5 21h17"/><path d="M7 17.5l-2 3.5M17 17.5l2 3.5"/></g>',
       civic: '<g fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v3m-3.5 5a3.5 3.5 0 0 1 7 0v2h-7v-2z"/><path d="M3 12h18v9H3v-9z"/><path d="M7 16v5m10-5v5m-5-5v5"/><path d="M12 2l3 1.5-3 1.5"/></g>',
       airplane: '<g fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16 13 13 9.5 5 7.5 6 9 13l-5 2v2l6-.5 2.5 3.5 2-1.5-1.5-2.5 7 1z"/></g>',
       marina: '<g fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 17h17l-2.5 4H6L3.5 17z"/><path d="M12 4v13M12 4l7 9.5h-7V4zM10.5 6.5 5.5 14h5V6.5z"/></g>',
@@ -758,7 +793,7 @@
       worship: '<g fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4m-2-2h4"/><path d="M12 6 7 10.5V21h10V10.5L12 6z"/><path d="M10 21v-4a2 2 0 0 1 4 0v4"/><circle cx="12" cy="12" r="1.5"/></g>',
       pharmacy: '<g fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 3.5h5v5h5v5h-5v5h-5v-5h-5v-5h5v-5z"/></g>',
       bank: '<g fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5 12 4l9 4.5H3z"/><path d="M2 20h20v1.5H2z"/><path d="M5 8.5v11.5m4.7-11.5v11.5m4.6-11.5v11.5m4.7-11.5v11.5"/></g>',
-      train: '<g fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3.5" width="14" height="14" rx="3.5"/><path d="M7.5 7h9v4h-9z"/><circle cx="8.5" cy="14.5" r="1" fill="currentColor" stroke="none"/><circle cx="15.5" cy="14.5" r="1" fill="currentColor" stroke="none"/><path d="M4 21h16M7 17.5l-2 3.5M17 17.5l2 3.5M10 3.5 12 1.5l2 2"/></g>',
+      train: '<g fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="13.5" rx="3.5"/><path d="M7.5 7.5h9v3.8h-9z"/><path d="M9.5 4L12 1.8l2.5 2.2"/><circle cx="8" cy="14.5" r="1" fill="currentColor"/><circle cx="16" cy="14.5" r="1" fill="currentColor"/><path d="M11 14.5h2"/><path d="M3.5 21h17"/><path d="M7 17.5l-2 3.5M17 17.5l2 3.5"/></g>',
       streetcar: '<g fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4.5" width="14" height="13" rx="2.5"/><path d="M7 8h10v3.5H7z"/><circle cx="12" cy="14.5" r="1.2" fill="currentColor" stroke="none"/><path d="M12 4.5V2m-3 0h6M4 20.5h16M7 17.5l-1.5 3M17 17.5l1.5 3"/></g>',
       bus: '<g fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="3.5" width="15" height="14.5" rx="3"/><rect x="7" y="5.5" width="10" height="2" rx="0.5"/><path d="M6.5 9.5h11v4h-11z"/><circle cx="7.8" cy="15.5" r="1" fill="currentColor" stroke="none"/><circle cx="16.2" cy="15.5" r="1" fill="currentColor" stroke="none"/><path d="M6 18v2.5M18 18v2.5"/></g>',
       parking: '<g fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3.5" width="16" height="17" rx="3.5"/><path d="M9.5 16V8h3.8a2.8 2.8 0 0 1 0 5.6H9.5"/></g>',
@@ -791,11 +826,15 @@
   function poiKindFromBadge(badge) {
     if (badge?.iconKind) return badge.iconKind;
     const text = `${badge?.label || ""}`.toLowerCase();
+    if (/park\s*(&|and)\s*ride|p&r|station garage|transit garage/.test(text)) return "pr";
+    if (/ferry|water taxi|dock|slip/.test(text)) return "ferry_terminal";
+    if (/transit center|transfer/.test(text)) return "transit_center";
+    if (/light rail|sounder|amtrak|station/.test(text)) return "station";
     if (/restaurant|dining|food|eatery|bakery|bar|pub/.test(text)) return "restaurant";
     if (/coffee|café|cafe/.test(text)) return "coffee";
     if (/market|shopping|store|grocery/.test(text)) return "market";
     if (/hotel|lodging|motel/.test(text)) return "hotel";
-    if (/ferry|marina/.test(text)) return "ferry";
+    if (/marina/.test(text)) return "marina";
     if (/hospital|medical|pharmacy/.test(text)) return "hospital";
     if (/university|school/.test(text)) return "school";
     if (/stadium|arena/.test(text)) return "stadium";
@@ -807,8 +846,10 @@
 
   const poiKindTitle = (kind) => ({
     school: "College / University", hospital: "Hospital / Medical Center", stadium: "Stadium / Arena", sight: "Major Point of Interest",
-    park: "Park / Recreation", zoo: "Zoo / Aquarium", museum: "Museum / Culture", library: "Public Library", ferry: "Ferry Terminal", civic: "Civic Landmark",
-    restaurant: "Restaurant / Dining", coffee: "Coffee / Cafe", market: "Market / Shopping", hotel: "Hotel / Lodging"
+    park: "Park / Recreation", zoo: "Zoo / Aquarium", museum: "Museum / Culture", library: "Public Library", ferry: "Ferry Terminal", ferry_terminal: "Ferry Terminal", civic: "Civic Landmark",
+    restaurant: "Restaurant / Dining", coffee: "Coffee / Cafe", market: "Market / Shopping", hotel: "Hotel / Lodging",
+    pr: "Park & Ride", park_and_ride: "Park & Ride", transit_center: "Transit Center / Transfer Station", transfer_station: "Transfer Station",
+    station: "Rail Station", rail_station: "Rail Station"
   })[kind] || "Point of Interest";
 
   const poiColor = (kind) => (theme === "dark" ? POI_COLOR_D : POI_COLOR)[kind] || "#3b82f6";
@@ -830,8 +871,8 @@
     { id: "dest-virginia-mason", name: "Virginia Mason Medical Center", short: "Virginia Mason", kind: "hospital", desc: "Major multi-specialty medical center on First Hill.", coords: [-122.3298, 47.6095], transit: "RapidRide G Line, Routes 2, 3, 4, 12" },
     { id: "dest-childrens", name: "Seattle Children's Hospital", short: "Children's Hospital", kind: "hospital", desc: "Premier pediatric referral hospital for the Pacific Northwest.", coords: [-122.2825, 47.6625], transit: "Routes 65, 75" },
     { id: "dest-uw-medical", name: "UW Medical Center - Montlake", short: "UW Medical Center", kind: "hospital", desc: "World-renowned academic medical center adjacent to Husky Stadium.", coords: [-122.3090, 47.6495], transit: "Univ of Washington Link Station (1 Line), Routes 44, 45, 65, 75, 255" },
-    { id: "dest-colman-dock", name: "Colman Dock (Pier 52 WSF)", short: "Colman Dock (WSF)", kind: "ferry", desc: "Washington State Ferries terminal for Bainbridge Island and Bremerton.", coords: [-122.3385, 47.6015], transit: "WSF Bainbridge & Bremerton Ferries, Pioneer Square Link Station, Routes 1, 2, 3, 4, 24, 33" },
-    { id: "dest-pier-50", name: "Pier 50 Passenger Ferry Terminal", short: "Pier 50 Ferry Terminal", kind: "ferry", desc: "Passenger-only fast ferries to West Seattle, Vashon, Bremerton, and Kingston.", coords: [-122.3375, 47.6005], transit: "King County Water Taxi, Kitsap Fast Ferries, Pioneer Square Link Station" },
+    { id: "dest-colman-dock", name: "Colman Dock (Pier 52 WSF)", short: "Colman Dock (WSF)", kind: "ferry_terminal", desc: "Washington State Ferries terminal for Bainbridge Island and Bremerton.", coords: [-122.3385, 47.6015], transit: "WSF Bainbridge & Bremerton Ferries, Pioneer Square Link Station, Routes 1, 2, 3, 4, 24, 33" },
+    { id: "dest-pier-50", name: "Pier 50 Passenger Ferry Terminal", short: "Pier 50 Ferry Terminal", kind: "ferry_terminal", desc: "Passenger-only fast ferries to West Seattle, Vashon, Bremerton, and Kingston.", coords: [-122.3375, 47.6005], transit: "King County Water Taxi, Kitsap Fast Ferries, Pioneer Square Link Station" },
     { id: "dest-woodland-zoo", name: "Woodland Park Zoo", short: "Woodland Park Zoo", kind: "zoo", desc: "Award-winning 92-acre zoological garden in Phinney Ridge.", coords: [-122.3540, 47.6685], transit: "RapidRide E Line, Route 5" },
     { id: "dest-museum-flight", name: "Museum of Flight", short: "Museum of Flight", kind: "museum", desc: "Largest independent non-profit air and space museum in the world at Boeing Field.", coords: [-122.2980, 47.5185], transit: "Route 124" },
     { id: "dest-mopop", name: "Museum of Pop Culture (MoPOP)", short: "MoPOP", kind: "museum", desc: "Iconic Frank Gehry building dedicated to music, sci-fi, and pop culture.", coords: [-122.3482, 47.6215], transit: "Seattle Center Monorail, Routes 1, 2, 3, 4, 13, 24, 33, RapidRide D" },
@@ -4110,9 +4151,10 @@
             <div class="legend-row"><span class="legend-inline-icon">${poiIconSVG("stadium", 18)}</span> <div><strong>Stadium / Arena</strong> · Lumen Field, T-Mobile Park, Climate Pledge</div></div>
             <div class="legend-row"><span class="legend-inline-icon">${poiIconSVG("library", 18)}</span> <div><strong>Public Library</strong> · Seattle Central Library & regional branches</div></div>
             <div class="legend-row"><span class="legend-inline-icon">${poiIconSVG("park", 18)}</span> <div><strong>Park / Green Space</strong> · Discovery Park, Green Lake, Seward Park</div></div>
-            <div class="legend-row"><span class="legend-inline-icon">${poiIconSVG("ferry", 18)}</span> <div><strong>Ferry Terminal</strong> · Colman Dock Pier 52, Pier 50 Fast Ferry</div></div>
-            <div class="legend-row"><span class="legend-inline-icon">${poiIconSVG("train", 18)}</span> <div><strong>Amtrak & Sounder Train Hub</strong> · King Street Station, Tacoma Dome</div></div>
-            <div class="legend-row"><span class="legend-inline-icon">${poiIconSVG("parking", 18)}</span> <div><strong>Park & Ride</strong> · Major regional transit lots & garages</div></div>
+            <div class="legend-row"><span class="legend-inline-icon">${poiIconSVG("ferry_terminal", 18)}</span> <div><strong>Ferry Terminal</strong> · Colman Dock Pier 52, Bainbridge, Bremerton, Kingston, Pier 50</div></div>
+            <div class="legend-row"><span class="legend-inline-icon">${poiIconSVG("transit_center", 18)}</span> <div><strong>Transit Center & Transfer Hub</strong> · Bellevue TC, Mountlake Terrace, Federal Way</div></div>
+            <div class="legend-row"><span class="legend-inline-icon">${poiIconSVG("station", 18)}</span> <div><strong>Rail Station</strong> · Link Light Rail 1 & 2 Lines, Sounder & Amtrak</div></div>
+            <div class="legend-row"><span class="legend-inline-icon">${poiIconSVG("pr", 18)}</span> <div><strong>Park & Ride</strong> · Commuter parking garages & lots (Northgate, Eastgate)</div></div>
             <div class="legend-row"><span class="legend-inline-icon">${poiIconSVG("bike", 18)}</span> <div><strong>Bicycle Facilities</strong> · Protected bike lanes, greenways & multi-use trails</div></div>
           </div>
         </div>
@@ -4781,14 +4823,16 @@
   }
   function showStop(s) {
     const rs = s.routes.map((id) => RBY[id]).filter(Boolean).sort(tagOrder);
-    const kind = s.kind === "stop" ? (s.code ? `Bus stop #${s.code}` : "Bus stop") : s.kind === "ferry" ? "Ferry terminal" : "Station";
+    const isFerry = s.kind === "ferry" || s.id.includes("wsf") || s.id.includes("ferry") || /ferry|water taxi|colman dock|pier 50|pier 52/i.test(s.name);
+    const isTc = /transit center|transfer center|transfer station/i.test(s.name);
+    const isRail = s.kind === "station" || rs.some((r) => ["link", "sounder", "amtrak"].includes(r.cat));
+    const kind = isFerry ? "Ferry terminal" : isTc ? "Transit Center / Transfer Hub" : isRail ? "Rail Station" : (s.code ? `Bus stop #${s.code}` : "Bus stop");
     const fav = isFav("stop", s.id);
     const keys = [...new Set([s.key, ...((s.stops || []).map((sid) => stopIndex[sid] && stopIndex[sid].key).filter(Boolean))])];
     const stopIds = stopIdsOf(s);
     const bayMatch = s.name.match(/\bBay\s+([A-Z0-9]+)\b/i);
     const bayBadge = bayMatch ? `<span class="bay-pill">Bay ${esc(bayMatch[1])}</span>` : "";
     const cleanName = s.name.replace(/\s*-\s*Bay\s+[A-Z0-9]+/i, "").trim();
-    const isRail = s.kind === "station" || rs.some((r) => ["link", "sounder"].includes(r.cat));
     const elevatorHTML = isRail ? `<a class="elevator-link press" href="https://www.soundtransit.org/ride-with-us/service-alerts" target="_blank" rel="noopener">Live Station Elevators & Escalators Status ${poiIconSVG("external", 12)}</a>` : "";
     const isSusp = stopIsSuspended(s.id);
     const suspBanner = isSusp ? `
@@ -4799,7 +4843,15 @@
           <p>Buses are currently bypassing or not serving this stop due to an active service disruption or detour.</p>
         </div>
       </div>` : "";
-    let html = `${backBtn}<div class="hero stop-hero press" data-stop="${esc(s.id)}" role="button" tabindex="0" title="Highlight stop on map"><span class="stop-glyph${s.kind === "stop" ? "" : " big"}" aria-hidden="true"></span><div><h2>${esc(cleanName)}${bayBadge}</h2><p>${esc(kind)}</p>${elevatorHTML}</div></div>
+    let glyphHtml = `<span class="stop-glyph${s.kind === "stop" ? "" : " big"}" aria-hidden="true"></span>`;
+    if (isFerry) {
+      glyphHtml = `<span class="hero-icon-badge" style="background:#0d9488;color:#fff" aria-hidden="true">${poiIconSVG("ferry_terminal", 22)}</span>`;
+    } else if (isTc) {
+      glyphHtml = `<span class="hero-icon-badge" style="background:#7c3aed;color:#fff" aria-hidden="true">${poiIconSVG("transit_center", 22)}</span>`;
+    } else if (isRail) {
+      glyphHtml = `<span class="hero-icon-badge" style="background:#059669;color:#fff" aria-hidden="true">${poiIconSVG("station", 22)}</span>`;
+    }
+    let html = `${backBtn}<div class="hero stop-hero press" data-stop="${esc(s.id)}" role="button" tabindex="0" title="Highlight stop on map">${glyphHtml}<div><h2>${esc(cleanName)}${bayBadge}</h2><p>${esc(kind)}</p>${elevatorHTML}</div></div>
       ${logoChips(rs) ? `<div class="chips">${logoChips(rs)}</div>` : ""}
       <div class="card-actions">
         <button type="button" class="action-btn fav-btn press${fav ? " is-fav" : ""}" id="stopFavBtn" data-fav-stop="${esc(s.id)}" aria-label="${fav ? "Remove from favorites" : "Save to favorites"}">
@@ -5008,7 +5060,7 @@
     if (!pr) return;
     map.flyTo({ center: [pr.lon, pr.lat], zoom: 16, padding: fitPadding(), duration: 800 });
     const html = `<div class="pop">
-      <h3>${poiIconSVG("parking", 17)} ${esc(pr.name)}</h3>
+      <h3>${poiIconSVG("pr", 18)} ${esc(pr.name)}</h3>
       <p class="trail-meta"><strong>${pr.stalls} Parking Stalls</strong> · ${esc(pr.agency)}</p>
       <p>${poiIconSVG("bike", 14)} <strong>Bicycle Parking:</strong> ${esc(pr.bikes)}</p>
       <p>${poiIconSVG("bus", 14)} <strong>Transit Connections:</strong> ${esc(pr.transit)}</p>
@@ -5048,7 +5100,7 @@
     }
     // 2. Ferry Terminals & Marine Docks
     if (v === "ferry_terminal" || k === "ferry" || /\b(ferry|colman dock|water taxi|pier 50|pier 52|fauntleroy|bainbridge ferry|bremerton ferry|kingston ferry|edmonds ferry|mukilteo ferry)\b/i.test(str)) {
-      return { iconKind: "ferry", bg: "#0369a1", label: "Ferry Terminal" };
+      return { iconKind: "ferry_terminal", bg: "#0d9488", label: "Ferry Terminal" };
     }
     // 3. Marinas & Boat Launches
     if (v === "marina" || /\b(marina|boat launch|yacht club|boat ramp)\b/i.test(str)) {
@@ -5165,14 +5217,17 @@
       return { iconKind: "bank", bg: "#047857", label: "Bank" };
     }
     // 30. Stations & Transit
+    if (/\b(transit center|transfer center|transfer station|multimodal hub|transit hub)\b/i.test(str) || (p.kind === "station" && /transit center/i.test(p.name || ""))) {
+      return { iconKind: "transit_center", bg: "#7c3aed", label: "Transit Center" };
+    }
     if (p.kind === "station" || v === "station" || /\b(station|link light rail|sounder|amtrak)\b/i.test(str)) {
-      return { iconKind: "train", bg: "#059669", label: "Transit Station" };
+      return { iconKind: "station", bg: "#059669", label: "Rail Station" };
     }
     if (p.kind === "stop") {
       return { iconKind: "bus", bg: "#2563eb", label: "Bus Stop" };
     }
-    if (p.kind === "pr") {
-      return { iconKind: "parking", bg: "#0284c7", label: "Park & Ride" };
+    if (p.kind === "pr" || /\b(park and ride|park & ride|p&r|station garage|transit garage)\b/i.test(str)) {
+      return { iconKind: "pr", bg: "#0284c7", label: "Park & Ride" };
     }
     if (p.kind === "trail") {
       return { iconKind: "bike", bg: "#059669", label: "Trail / Bike" };
@@ -5311,7 +5366,7 @@
         }
         if (it.kind === "pr") {
           const pr = it.pr;
-          return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true" style="background:#007aff;color:#fff">${poiIconSVG("parking", 17)}</span><span class="txt"><span class="name">${esc(pr.name)}</span><span class="desc">${pr.stalls} stalls · ${esc(pr.bikes)}</span></span></button>`;
+          return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true" style="background:#0284c7;color:#fff">${poiIconSVG("pr", 18)}</span><span class="txt"><span class="name">${esc(pr.name)}</span><span class="desc">${pr.stalls} stalls · ${esc(pr.bikes)}</span></span></button>`;
         }
         if (it.kind === "hill") {
           const h = it.hill;
@@ -5322,8 +5377,22 @@
           const badge = p.badge || getPlaceBadge(p);
           return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="trail-glyph poi-search-glyph" aria-hidden="true" style="background:${badge.bg};color:#fff">${poiIconSVG(badge.iconKind || poiKindFromBadge(badge), 17)}</span><span class="txt"><span class="name">${esc(p.name)}</span><span class="desc">${esc(p.desc)} · ${esc(badge.label)}</span></span></button>`;
         }
-        const sub = it.kind === "station" ? "Station" : `Bus stop${it.s.code ? " #" + it.s.code : ""}`;
-        return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="stop-glyph${it.kind === "station" ? " big" : ""}" aria-hidden="true"></span><span class="txt"><span class="name">${esc(it.s.name)}</span><span class="desc">${esc(sub)}</span></span></button>`;
+        if (it.kind === "station") {
+          const isFerry = it.s.kind === "ferry" || it.s.id.includes("wsf") || it.s.id.includes("ferry") || /ferry|water taxi|dock|pier 50|pier 52/i.test(it.s.name);
+          const isTc = /transit center|transfer center|transfer station/i.test(it.s.name);
+          const iconKind = isFerry ? "ferry_terminal" : isTc ? "transit_center" : "station";
+          const bg = isFerry ? "#0d9488" : isTc ? "#7c3aed" : "#059669";
+          const sub = isFerry ? "Ferry terminal" : isTc ? "Transit Center" : "Station";
+          return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true" style="background:${bg};color:#fff">${poiIconSVG(iconKind, 18)}</span><span class="txt"><span class="name">${esc(it.s.name)}</span><span class="desc">${esc(sub)}</span></span></button>`;
+        }
+        if (it.kind === "stop") {
+          const isTc = /transit center|transfer center/i.test(it.s.name);
+          if (isTc) {
+            return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true" style="background:#7c3aed;color:#fff">${poiIconSVG("transit_center", 18)}</span><span class="txt"><span class="name">${esc(it.s.name)}</span><span class="desc">Transit Center Bay</span></span></button>`;
+          }
+          const sub = `Bus stop${it.s.code ? " #" + it.s.code : ""}`;
+          return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="stop-glyph" aria-hidden="true"></span><span class="txt"><span class="name">${esc(it.s.name)}</span><span class="desc">${esc(sub)}</span></span></button>`;
+        }
       }).join("");
       box.hidden = false;
     };
@@ -7827,10 +7896,14 @@
     const results = [];
     for (const it of items) {
       if (it.kind === "station") {
-        const isFerry = it.s.kind === "ferry" || it.s.id.includes("wsf") || it.s.id.includes("ferry");
-        results.push({ kind: "station", name: it.s.name, desc: isFerry ? "Ferry terminal" : "Light rail / rail station", lat: it.s.lat, lon: it.s.lon });
+        const isFerry = it.s.kind === "ferry" || it.s.id.includes("wsf") || it.s.id.includes("ferry") || /ferry|water taxi|dock|pier 50|pier 52/i.test(it.s.name);
+        const isTc = /transit center|transfer/i.test(it.s.name);
+        const desc = isFerry ? "Ferry terminal" : isTc ? "Transit Center" : "Light rail / rail station";
+        results.push({ kind: "station", name: it.s.name, desc, lat: it.s.lat, lon: it.s.lon, isFerry, isTc });
       } else if (it.kind === "stop") {
-        results.push({ kind: "stop", name: it.s.name, desc: `Bus stop ${it.s.code ? "#" + it.s.code : ""}`, lat: it.s.lat, lon: it.s.lon });
+        const isTc = /transit center|transfer center/i.test(it.s.name);
+        const desc = isTc ? "Transit Center Bay" : `Bus stop ${it.s.code ? "#" + it.s.code : ""}`;
+        results.push({ kind: "stop", name: it.s.name, desc, lat: it.s.lat, lon: it.s.lon, isTc });
       } else if (it.kind === "pr") {
         results.push({ kind: "pr", name: it.pr.name, desc: `Park & Ride (${it.pr.stalls} stalls)`, lat: it.pr.lat, lon: it.pr.lon });
       } else if (it.kind === "dest") {
@@ -7875,9 +7948,22 @@
       if (it.kind === "favtrip") { glyph = poiIconSVG("star", 16); bg = "#f59e0b"; }
       else if (it.kind === "currloc") { glyph = poiIconSVG("place", 16); bg = "#2563eb"; }
       else if (it.kind === "mapchoice") { glyph = poiIconSVG("map", 16); bg = "#0891b2"; }
-      else if (it.kind === "station") { glyph = poiIconSVG("train", 16); bg = "#059669"; }
-      else if (it.kind === "stop") { glyph = poiIconSVG("bus", 16); bg = "#2563eb"; }
-      else if (it.kind === "pr") { glyph = poiIconSVG("parking", 16); bg = "#0284c7"; }
+      else if (it.kind === "station") {
+        const isFerry = it.isFerry || it.desc === "Ferry terminal";
+        const isTc = it.isTc || it.desc === "Transit Center";
+        glyph = poiIconSVG(isFerry ? "ferry_terminal" : isTc ? "transit_center" : "station", 16);
+        bg = isFerry ? "#0d9488" : isTc ? "#7c3aed" : "#059669";
+      }
+      else if (it.kind === "stop") {
+        if (it.isTc || /transit center/i.test(it.name || "")) {
+          glyph = poiIconSVG("transit_center", 16);
+          bg = "#7c3aed";
+        } else {
+          glyph = poiIconSVG("bus", 16);
+          bg = "#2563eb";
+        }
+      }
+      else if (it.kind === "pr") { glyph = poiIconSVG("pr", 16); bg = "#0284c7"; }
       else if (it.kind === "trail") { glyph = poiIconSVG("bike", 16); bg = "#059669"; }
       else {
         const badge = it.badge || getPlaceBadge(it);
