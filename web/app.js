@@ -8316,7 +8316,6 @@
     const preview = () => {
       const r = RBY[b.dataset.route];
       if (!r) return;
-      setNetDim(0.20);
       focusRoute(r);
     };
     const revert = () => {
@@ -8492,7 +8491,6 @@
           if (tg.item.r != null) {
             const r = LINES[tg.item.r];
             cur = { kind: "tag", id: tg.item.r };
-            setNetDim(0.20);
             focusRoute(r);
             if (panelView === "corridor") {
               document.querySelectorAll(".route-row.is-hovered").forEach((el) => {
@@ -8510,7 +8508,6 @@
           } else {
             cur = { kind: "tag", id: "more" };
             if (tg.item.more?.length) {
-              setNetDim(0.20);
               focusRoutes(tg.item.more.map((i) => LINES[i]));
             } else {
               setHover(null);
@@ -8571,7 +8568,6 @@
           map.getCanvas().style.cursor = "pointer";
           const strandRoute = ln.r >= 0 ? LINES[ln.r] : (ln.routes && ln.routes[0]);
           if (strandRoute) {
-            setNetDim(0.20);
             focusRoute(strandRoute);
             if (panelView === "corridor") {
               document.querySelectorAll(".route-row.is-hovered").forEach((el) => {
