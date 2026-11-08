@@ -338,6 +338,31 @@ test('2.3 Cross-water trips can use a ferry plus a local shuttle', () => {
   totalAssertions += 6 + (ferryPlan.legs.length - 1) * 2;
 });
 
+test('2.4 Regional multi-leg trips: Seattle to outer South Sound destinations (Lakewood, Tacoma Mall)', () => {
+  // Test trip from Capitol Hill to Manic Meatballs in Lakewood (requires multi-leg regional routing)
+  const manicMeatballs = { lat: 47.1228, lon: -122.5513 };
+  const capitolHill = { lat: 47.6163, lon: -122.3195 };
+  const planLakewood = planTransitTrip(capitolHill, manicMeatballs);
+  assert(planLakewood && planLakewood.multi.length > 0, 'Expected multi-leg itineraries from Capitol Hill to Lakewood');
+  for (const it of planLakewood.multi) {
+    assert(it.legs.length >= 3, `Expected at least 3 legs for Seattle -> Lakewood, got ${it.legs.length}`);
+    for (const leg of it.legs.slice(1)) {
+      assert(leg.transferWalkDist <= 360, 'Multi-leg transfer walk must stay within 360m');
+      assert(leg.waitTime >= 2, 'Multi-leg connection must keep at least a 2-minute buffer');
+    }
+  }
+
+  // Test trip from Ballard to Tacoma Mall
+  const ballard = { lat: 47.6685, lon: -122.3845 };
+  const tacomaMall = { lat: 47.2185, lon: -122.4675 };
+  const planTacoma = planTransitTrip(ballard, tacomaMall);
+  assert(planTacoma && planTacoma.multi.length > 0, 'Expected multi-leg itineraries from Ballard to Tacoma Mall');
+  for (const it of planTacoma.multi) {
+    assert(it.legs.length >= 3, `Expected at least 3 legs for Ballard -> Tacoma Mall, got ${it.legs.length}`);
+  }
+  totalAssertions += 4 + planLakewood.multi.length * 3 + planTacoma.multi.length;
+});
+
 // -----------------------------------------------------------------------------
 // SECTION 3: INVARIANT — Walking Legs (80 m/min, Added Before Departure Query)
 // -----------------------------------------------------------------------------

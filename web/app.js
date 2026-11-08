@@ -5723,25 +5723,84 @@
   // still found and rendered as complete itineraries.
   function planMultiLegTrips(origStops, destStops, origStopMap, destStopMap, nowSecs, day, prev, planningTime) {
     const MAX_LEGS = 4;
-    const MAX_STATES = 520;
+    const MAX_STATES = 1800;
     const destRoutes = new Set();
     for (const item of destStops) for (const routeId of (item.stop.routes || [])) destRoutes.add(routeId);
     if (!destRoutes.size) return [];
 
     const hops = routeHopsTo(destRoutes, MAX_LEGS - 1);
-    const queue = [];
+
+    const stateScore = (s) => {
+      const prior = s.legs[s.legs.length - 1];
+      const remainingHops = prior ? (hops.get(prior.route.id) ?? 3) : 3;
+      return s.arrSec + remainingHops * 600;
+    };
+
+    // Filter origin stops: pick the closest stop per unique route to minimize redundant queue states
+    const bestOrigPerRoute = new Map();
     for (const item of origStops) {
       const stop = item.stop;
-      if (!boardEntriesFor(stop).some((entry) => hops.has(entry.route.id))) continue;
-      queue.push({ atStop: stop, arrSec: nowSecs + Math.round(item.dist / 80) * 60, totalDuration: Math.round(item.dist / 80), walk1Dist: item.dist, walk1Time: Math.round(item.dist / 80), legs: [], schedVerified: true });
+      for (const entry of boardEntriesFor(stop)) {
+        if (!hops.has(entry.route.id)) continue;
+        if (!bestOrigPerRoute.has(entry.route.id) || bestOrigPerRoute.get(entry.route.id).dist > item.dist) {
+          bestOrigPerRoute.set(entry.route.id, { item, entry });
+        }
+      }
+    }
+
+    const heap = [];
+    const pushHeap = (item) => {
+      heap.push(item);
+      let i = heap.length - 1;
+      while (i > 0) {
+        const p = (i - 1) >> 1;
+        if (stateScore(heap[i]) < stateScore(heap[p])) {
+          const tmp = heap[i]; heap[i] = heap[p]; heap[p] = tmp;
+          i = p;
+        } else break;
+      }
+    };
+    const popHeap = () => {
+      if (heap.length === 0) return null;
+      const top = heap[0];
+      const bottom = heap.pop();
+      if (heap.length > 0) {
+        heap[0] = bottom;
+        let i = 0, len = heap.length;
+        while (true) {
+          let best = i;
+          const l = (i << 1) + 1, r = l + 1;
+          if (l < len && stateScore(heap[l]) < stateScore(heap[best])) best = l;
+          if (r < len && stateScore(heap[r]) < stateScore(heap[best])) best = r;
+          if (best !== i) {
+            const tmp = heap[i]; heap[i] = heap[best]; heap[best] = tmp;
+            i = best;
+          } else break;
+        }
+      }
+      return top;
+    };
+
+    const seenOrigStops = new Set();
+    for (const { item } of bestOrigPerRoute.values()) {
+      if (seenOrigStops.has(item.stop.id)) continue;
+      seenOrigStops.add(item.stop.id);
+      pushHeap({
+        atStop: item.stop,
+        arrSec: nowSecs + Math.round(item.dist / 80) * 60,
+        totalDuration: Math.round(item.dist / 80),
+        walk1Dist: item.dist,
+        walk1Time: Math.round(item.dist / 80),
+        legs: [],
+        schedVerified: true,
+      });
     }
 
     const bestAt = new Map();
     const found = [];
     let explored = 0;
-    while (queue.length && explored++ < MAX_STATES) {
-      queue.sort((a, b) => a.arrSec - b.arrSec);
-      const state = queue.shift();
+    while (heap.length && explored++ < MAX_STATES) {
+      const state = popHeap();
       const prior = state.legs[state.legs.length - 1];
       const boardOptions = prior ? transferBoardsFrom(state.atStop) : [{ stop: state.atStop, dist: 0 }];
 
@@ -5819,7 +5878,7 @@
             const key = `${target.alightStop.id}|${route.id}|${legs.length}`;
             if (bestAt.has(key) && bestAt.get(key) <= arrSec) continue;
             bestAt.set(key, arrSec);
-            queue.push({ atStop: target.alightStop, arrSec, totalDuration, walk1Dist: state.walk1Dist, walk1Time: state.walk1Time, legs, schedVerified });
+            pushHeap({ atStop: target.alightStop, arrSec, totalDuration, walk1Dist: state.walk1Dist, walk1Time: state.walk1Time, legs, schedVerified });
           }
         }
       }
@@ -5841,9 +5900,11 @@
 
     let origStops = findNearbyStops(orig.lat, orig.lon, 950, 1500);
     if (origStops.length < 3) origStops = findNearbyStops(orig.lat, orig.lon, 1800, 2200);
+    if (origStops.length === 0) origStops = findNearbyStops(orig.lat, orig.lon, 3200, 3600);
 
     let destStops = findNearbyStops(dest.lat, dest.lon, 950, 1500);
     if (destStops.length < 3) destStops = findNearbyStops(dest.lat, dest.lon, 1800, 2200);
+    if (destStops.length === 0) destStops = findNearbyStops(dest.lat, dest.lon, 3200, 3600);
 
     const origStopMap = new Map();
     for (const o of origStops) {
