@@ -3272,6 +3272,7 @@
     if (fly) map.flyTo({ center: [s.lon, s.lat], zoom: Math.max(map.getZoom(), s.kind === "stop" ? 16 : 14.5), padding: fitPadding(), duration: 800 });
   }
   function clearSelection({ push = false } = {}) {
+    if (panelView === "directions") return;
     selected = null;
     panelView = "home";
     corridorRoutes = [];
@@ -4768,7 +4769,12 @@
       if (LINEIDX[r.id] == null) continue;
       searchIndex.push({ kind: "route", id: r.id, key: [r.label, r.short, routeTitle(r), r.name].join(" ").toLowerCase(), label: r.label.toLowerCase(), r });
     }
-    for (const s of STOPS.stations) searchIndex.push({ kind: "station", id: s.id, key: s.name.toLowerCase(), s });
+    for (const s of STOPS.stations) {
+      const isFerry = s.kind === "ferry" || s.id.includes("wsf") || s.id.includes("ferry");
+      const extraWords = [s.name, s.kind || "", ...(s.routes || []).map((rid) => RBY[rid]?.short || RBY[rid]?.name || rid)];
+      if (isFerry) extraWords.push("ferry", "terminal", "dock", "boat", "wsf", "water taxi", "colman");
+      searchIndex.push({ kind: "station", id: s.id, key: extraWords.join(" ").toLowerCase(), s });
+    }
     for (const s of STOPS.stops) searchIndex.push({ kind: "stop", id: s.id, key: (s.name + " " + (s.code || "")).toLowerCase(), s });
     if (AREAS && AREAS.trails && AREAS.trails.features) {
       for (const f of AREAS.trails.features) {
@@ -6038,8 +6044,12 @@
     if (net.transferCache.has(source.id)) return net.transferCache.get(source.id);
 
     const result = new Map();
+    const isSourceFerryOrHub = source.kind === "ferry" || source.kind === "rail" || source.isStation || (source.id && (source.id.includes("wsf") || source.id.includes("ferry")));
+    const reach = isSourceFerryOrHub ? 3 : 2;
     const add = (candidate, dist) => {
-      if (!candidate || !candidate.id || !Number.isFinite(dist) || dist > 360) return;
+      const isCandFerryOrHub = candidate && (candidate.kind === "ferry" || candidate.kind === "rail" || candidate.isStation || (candidate.id && (candidate.id.includes("wsf") || candidate.id.includes("ferry"))));
+      const limit = (isSourceFerryOrHub || isCandFerryOrHub) ? 650 : 360;
+      if (!candidate || !candidate.id || !Number.isFinite(dist) || dist > limit) return;
       const old = result.get(candidate.id);
       if (!old || dist < old.dist) result.set(candidate.id, { stop: candidate, dist });
     };
@@ -6051,8 +6061,8 @@
     }
 
     const cx = Math.floor(source.lat / net.cellSize), cy = Math.floor(source.lon / net.cellSize);
-    for (let dx = -2; dx <= 2; dx++) {
-      for (let dy = -2; dy <= 2; dy++) {
+    for (let dx = -reach; dx <= reach; dx++) {
+      for (let dy = -reach; dy <= reach; dy++) {
         for (const candidate of net.cells.get(`${cx + dx},${cy + dy}`) || []) {
           add(candidate, distMeters(source.lat, source.lon, candidate.lat, candidate.lon));
         }
@@ -6134,20 +6144,23 @@
 
     const hops = routeHopsTo(destRoutes, MAX_LEGS - 1);
 
+    const destPt = destStops[0]?.stop || { lat: 47.6, lon: -122.3 };
     const stateScore = (s) => {
       const prior = s.legs[s.legs.length - 1];
       const remainingHops = prior ? (hops.get(prior.route.id) ?? 3) : 3;
-      return s.arrSec + remainingHops * 600;
+      const remDist = distMeters(s.atStop.lat, s.atStop.lon, destPt.lat, destPt.lon);
+      return s.arrSec + Math.round(remDist / 15) + remainingHops * 300;
     };
 
-    // Filter origin stops: pick the closest stop per unique route to minimize redundant queue states
-    const bestOrigPerRoute = new Map();
+    // Filter origin stops: pick the closest stop per unique route pattern / direction
+    const bestOrigPerPattern = new Map();
     for (const item of origStops) {
       const stop = item.stop;
       for (const entry of boardEntriesFor(stop)) {
         if (!hops.has(entry.route.id)) continue;
-        if (!bestOrigPerRoute.has(entry.route.id) || bestOrigPerRoute.get(entry.route.id).dist > item.dist) {
-          bestOrigPerRoute.set(entry.route.id, { item, entry });
+        const pKey = `${entry.route.id}|${entry.pattern.dir || 0}`;
+        if (!bestOrigPerPattern.has(pKey) || bestOrigPerPattern.get(pKey).dist > item.dist) {
+          bestOrigPerPattern.set(pKey, { item, entry });
         }
       }
     }
@@ -6186,7 +6199,7 @@
     };
 
     const seenOrigStops = new Set();
-    for (const { item } of bestOrigPerRoute.values()) {
+    for (const { item } of bestOrigPerPattern.values()) {
       if (seenOrigStops.has(item.stop.id)) continue;
       seenOrigStops.add(item.stop.id);
       pushHeap({
@@ -6228,23 +6241,25 @@
               targets.push({ to, alightStop, destination });
               continue;
             }
-            if (legCount >= MAX_LEGS || routeHops <= 0) continue;
+            if (legCount >= MAX_LEGS) continue;
+            const maxRemaining = MAX_LEGS - legCount;
             const canContinue = transferBoardsFrom(alightStop).some((option) =>
-              boardEntriesFor(option.stop).some((next) => next.route.id !== route.id && (hops.get(next.route.id) ?? Infinity) < routeHops)
+              boardEntriesFor(option.stop).some((next) => next.route.id !== route.id && (hops.get(next.route.id) ?? Infinity) <= maxRemaining - 1)
             );
             if (canContinue) targets.push({ to, alightStop, destination: null });
           }
 
           // A pattern can pass many equivalent transfer bays.  Keeping the
-          // first dozen preserves meaningful alternatives without flooding the
-          // bounded search with the same connection over and over.
-          for (const target of targets.slice(0, 12)) {
+          // first 32 preserves meaningful alternatives on regional routes without
+          // flooding the bounded search.
+          for (const target of targets.slice(0, 32)) {
             const numStops = target.to - from;
             const scheduled = timetableTripTimes(route, boardStop, target.alightStop, earliestSec, day, prev, planningTime);
             let waitTime, rideTime, arrSec, schedVerified = state.schedVerified;
             if (scheduled) {
               waitTime = prior ? Math.max(2, Math.round((scheduled.depSec - state.arrSec - boardOption.dist / 80 * 60) / 60)) : scheduled.waitMin;
               if (prior && (waitTime < 2 || waitTime > 60)) continue;
+              if (!prior && waitTime > 90) continue;
               rideTime = scheduled.rideMin;
               arrSec = scheduled.arrSec;
             } else {
@@ -6389,6 +6404,7 @@
           let waitTime, rideTime, totalDuration, schedVerified = false;
           if (schedTrip) {
             waitTime = schedTrip.waitMin;
+            if (waitTime > 180) continue;
             rideTime = schedTrip.rideMin;
             totalDuration = walk1Time + waitTime + rideTime + walk2Time;
             schedVerified = true;
@@ -6448,14 +6464,14 @@
       for (const rid of (d.stop.routes || [])) destRoutes.add(rid);
     }
 
-    function transferDistance(s1Id, s2Id) {
+    function transferDistance(s1Id, s2Id, maxDist = 360) {
       if (s1Id === s2Id) return 0;
       const st1 = stopToSt.get(s1Id), st2 = stopToSt.get(s2Id);
       if (st1 && st2 && st1 === st2) return 50;
       const s1 = stopIndex[s1Id], s2 = stopIndex[s2Id];
       if (!s1 || !s2) return Infinity;
       const d = distMeters(s1.lat, s1.lon, s2.lat, s2.lon);
-      return d <= 360 ? d : Infinity;
+      return d <= maxDist ? d : Infinity;
     }
 
     const transferItineraries = [];
@@ -6484,10 +6500,12 @@
               const sid1 = p1.stops[i];
               for (let j = 0; j < lastDest; j++) {
                 const sid2 = p2.stops[j];
-                const tDist = transferDistance(sid1, sid2);
-                if (tDist <= 360) {
-                  const s1 = stopIndex[sid1], s2 = stopIndex[sid2];
-                  if (!s1 || !s2) continue;
+                const s1 = stopIndex[sid1], s2 = stopIndex[sid2];
+                if (!s1 || !s2) continue;
+                const isFerryOrHub = r1.cat === "ferry" || r2.cat === "ferry" || r1.cat === "link" || r2.cat === "sounder" || s1.isStation || s2.isStation || s1.kind === "station" || s2.kind === "station" || s1.kind === "ferry" || s2.kind === "ferry";
+                const maxTDist = isFerryOrHub ? 650 : 360;
+                const tDist = transferDistance(sid1, sid2, maxTDist);
+                if (tDist <= maxTDist) {
                   const origSid = p1.stops[firstOrig], destSid = p2.stops[lastDest];
                   const boardStop = stopIndex[origSid] || origStopMap.get(origSid)?.stop;
                   const alightStop = stopIndex[destSid] || destStopMap.get(destSid)?.stop;
@@ -6523,6 +6541,7 @@
 
                   if (leg1) {
                     wait1 = leg1.waitMin;
+                    if (wait1 > 90) continue;
                     ride1Time = leg1.rideMin;
                     const earliestSec2 = leg1.arrSec + transferWalkTime * 60 + 120;
                     leg2 = timetableTripTimes(r2, s2, alightStop, earliestSec2, day, prev, planningTime);
@@ -7055,7 +7074,7 @@
               <button class="planner-reverse-btn press" id="planRevBtn" type="button">Reverse ⇄</button>
             </div>
           </div>
-          <p class="planner-sub">No direct or 1-transfer transit connection was found between these points. Try selecting a nearby arterial stop or increasing walk distance.</p>
+          <p class="planner-sub">No transit connection was found between these points for the selected time. Try choosing a different departure time or selecting a nearby arterial transit hub.</p>
         </div>
       </div>`;
       setView(html);
@@ -7621,7 +7640,8 @@
     const results = [];
     for (const it of items) {
       if (it.kind === "station") {
-        results.push({ kind: "station", name: it.s.name, desc: "Light rail / rail station", lat: it.s.lat, lon: it.s.lon });
+        const isFerry = it.s.kind === "ferry" || it.s.id.includes("wsf") || it.s.id.includes("ferry");
+        results.push({ kind: "station", name: it.s.name, desc: isFerry ? "Ferry terminal" : "Light rail / rail station", lat: it.s.lat, lon: it.s.lon });
       } else if (it.kind === "stop") {
         results.push({ kind: "stop", name: it.s.name, desc: `Bus stop ${it.s.code ? "#" + it.s.code : ""}`, lat: it.s.lat, lon: it.s.lon });
       } else if (it.kind === "pr") {
@@ -8565,6 +8585,10 @@
           ? `<div class="pop"><h3>Dial-a-Ride area · route ${esc(f.properties.route)}</h3><p>Inside this area the DART bus can leave its regular path to pick you up or drop you off. Ask King County Metro to arrange an off-route trip.</p>${f.properties.slug && RBY[f.properties.slug] ? routeRows([RBY[f.properties.slug]]) : ""}</div>`
           : `<div class="pop"><h3>Access paratransit (approximate)</h3><p>Access serves riders with disabilities who can't use fixed-route buses, within ¾ mile of Metro's regular routes while they run. Riders apply for eligibility and book trips ahead. This shading uses the ¾-mile rule around all-day routes.</p></div>`;
         openPopup(e.lngLat, html, "290px");
+        return;
+      }
+      if (panelView === "directions") {
+        if (popup) closePopup();
         return;
       }
       if (panelView === "corridor") {
