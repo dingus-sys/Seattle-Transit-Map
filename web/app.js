@@ -51,6 +51,7 @@
   const VKEY = (cat) => (cat === "amtrak" ? "sounder" : cat); // Amtrak shares Sounder's tracks and line
   // a route's line on the map: its service type, except that each Link line has its own color
   const dkey = (r) => (r.cat === "link" ? (r.label === "1" ? "link1" : r.label === "T" ? "linkT" : "link2") : VKEY(r.cat));
+  const isRailRoute = (r) => !!(r && (CAT[dkey(r)]?.group === "rail" || r.cat === "link" || r.cat === "sounder" || r.cat === "amtrak" || r.cat === "streetcar" || r.cat === "monorail"));
   const CAT_NAME = {
     link: "Link light rail", sounder: "Sounder train", amtrak: "Amtrak Cascades", streetcar: "Streetcar",
     monorail: "Monorail", rapidride: "RapidRide", swift: "Swift BRT", frequent: "Frequent bus",
@@ -2343,11 +2344,34 @@
               // Backward GPS drift while stopped/slowing: don't glide backwards
               if (revDiff > 100 && d < 40) isBackward = true;
             }
-            const from = (snap || isBackward) ? (isBackward ? (prev.to || to) : to) : rawFrom;
-            const targetTo = isBackward ? from : to;
+            const isRail = isRailRoute(r);
+            let from = (snap || isBackward) ? (isBackward ? (prev.to || to) : to) : rawFrom;
+            let targetTo = isBackward ? from : to;
             let b = prev.b;
-            if (v.bearing != null && v.bearing > 0) {
+            if (v.bearing != null && v.bearing >= 0) {
               b = v.bearing;
+            } else if (isRail && !snap) {
+              // For rail vehicles, track movement along the track geometry to prevent perpendicular GPS drift
+              const sFrom = onLine(r, from, -1);
+              const sTo = onLine(r, targetTo, -1);
+              if (sFrom && sTo) {
+                const trackD = geoDist(sFrom[0], sTo[0]);
+                if (trackD < 10) {
+                  // Stationary at a station or signal: keep previous heading and don't glide sideways
+                  from = targetTo = sTo[0];
+                } else {
+                  from = sFrom[0];
+                  targetTo = sTo[0];
+                  const moveB = geoBearing(from, targetTo);
+                  const sMove = onLine(r, targetTo, moveB);
+                  b = sMove && sMove[1] >= 0 ? sMove[1] : moveB;
+                }
+              } else if (d > 12 && !isBackward) {
+                const moveB = geoBearing(from, targetTo);
+                if (prev.b == null || prev.b < 0 || Math.abs(((moveB - prev.b + 540) % 360) - 180) <= 100) {
+                  b = moveB;
+                }
+              }
             } else if (d > 12 && !isBackward) {
               const moveB = geoBearing(from, targetTo);
               if (prev.b == null || prev.b < 0 || Math.abs(((moveB - prev.b + 540) % 360) - 180) <= 100) {
@@ -2360,7 +2384,8 @@
             Object.assign(prev, { from, to: targetTo, t0: now, dur, r, b0, b, ts: v.ts, label: v.label || prev.label, vid: v.id, name, head: v.head || prev.head,
               occ: occ != null ? occ : prev.occ, occPct: v.occPct != null ? v.occPct : prev.occPct, snap: false });
           } else {
-            live.vehicles.set(id, { id, agency: a, from: to, to, t0: now, dur: POLL_MS, r, b0: v.bearing > 0 ? v.bearing : -1, b: v.bearing > 0 ? v.bearing : -1, ts: v.ts, label: v.label, vid: v.id, name, head: v.head,
+            const bInit = v.bearing != null && v.bearing >= 0 ? v.bearing : -1;
+            live.vehicles.set(id, { id, agency: a, from: to, to, t0: now, dur: POLL_MS, r, b0: bInit, b: bInit, ts: v.ts, label: v.label, vid: v.id, name, head: v.head,
               occ: occCode(v.occ), occPct: v.occPct, snap: false });
           }
         } catch (e) { /* one odd report doesn't stop the rest */ }
@@ -2511,6 +2536,7 @@
   function onLine(r, pos, b) {
     const i = LINEIDX[r.id], key = dkey(r);
     const isWater = CAT[key]?.group === "water";
+    const isRail = isRailRoute(r);
     const sel = selected && selected.type === "route" && selected.id === r.id;
     const ix = sel ? (vehIxSel = vehIxSel || segIndex(lastSelFeats)) : (vehIx = vehIx || segIndex(lastFeats));
     if (!ix) return isWater ? [pos, b] : null;
@@ -2528,9 +2554,11 @@
       const diff = Math.abs(((hb - b + 540) % 360) - 180);
       const streetAngle = diff > 90 ? (hb + 180) % 360 : hb;
       const alignDiff = Math.abs(((streetAngle - b + 540) % 360) - 180);
-      // Snap pin to street angle when corridor is aligned with vehicle's travel direction (<= 45°).
-      // When turning corners or at intersections, keep the vehicle's smoothed heading so the pin rotates cleanly without flipping 180°.
-      finalB = alignDiff <= 45 ? streetAngle : b;
+      // Rail vehicles (trains, streetcars, monorail) must always follow the track geometry —
+      // they cannot travel or point perpendicularly across their rails even if raw GPS drifts.
+      // For road vehicles (buses), snap when corridor is aligned (<= 45°), but preserve smoothed
+      // rotation through intersection turns.
+      finalB = isRail ? streetAngle : (alignDiff <= 45 ? streetAngle : b);
     }
     return [toLonLat(hit.q), finalB];
   }

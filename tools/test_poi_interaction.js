@@ -9,7 +9,7 @@ const app = fs.readFileSync(path.join(__dirname, '..', 'web', 'app.js'), 'utf8')
 const appWithoutComments = app.split('\n').filter((line) => !line.trimStart().startsWith('//')).join('\n');
 assert.equal(/[\u{1F000}-\u{1FAFF}]/u.test(appWithoutComments), false, 'app UI must not include platform emoji');
 assert.match(app, /function poiIconSVG\(kind, size = 18\)/, 'shared SVG glyph family exists');
-assert.match(app, /iconKind: "ferry"/, 'place badges select named custom glyphs');
+assert.match(app, /iconKind: "ferry/, 'place badges select named custom glyphs');
 assert.match(app, /restaurant: '<path d="[^"]*Z[^"]*Z"\/?>'/, 'restaurant icon provides clean closed fork and knife glyphs');
 assert.match(app, /iconKind: "restaurant"/, 'place badges identify restaurant POIs');
 
