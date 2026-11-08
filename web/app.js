@@ -4501,6 +4501,12 @@
     return { ...tr, partners };
   }
 
+  function isThroughRoutedPair(r1, r2) {
+    if (!r1 || !r2) return false;
+    const info = getThroughRouteInfo(r1);
+    return !!(info && info.partners.some((p) => p.id === r2.id || p.short === r2.short));
+  }
+
   function showRoute(r) {
     const w = r.sched.weekday;
     const freq = w && w.mid_n >= 3 ? `${w.mid}<small> min</small>` : w && (w.am_n || w.pm_n) ? "Rush hour" : w ? `${w.trips}<small> trips</small>` : "Weekends";
@@ -4633,6 +4639,8 @@
     if (routes) corridorRoutes = [...new Set(routes.map((r) => r.id))];
     if (quiet && body().querySelector(".corridor-picker")) return;
     panelView = "corridor";
+    setNetDim(0.38);
+    focusRoutes(corridorRoutes.map((id) => RBY[id]), false, { glow: false, widthScale: 1.35 });
     const query = routes ? "" : $("#corridorQuery")?.value || "";
     const rs = corridorRoutes.map((id) => RBY[id]).filter(Boolean).sort((a, b) =>
       a.label.localeCompare(b.label, undefined, { numeric: true }) || tagOrder(a, b));
@@ -4651,7 +4659,7 @@
       }
     };
     input.addEventListener("input", () => { focusOff(); render(); }); render();
-    $("#back").addEventListener("click", () => { panelView = "home"; corridorRoutes = []; focusOff(); showHome(); openSheet("peek"); });
+    $("#back").addEventListener("click", () => { panelView = "home"; corridorRoutes = []; focusOff(); setNetDim(1); showHome(); openSheet("peek"); });
     if (!quiet) openSheet("half");
   }
   function showStop(s) {
@@ -5854,7 +5862,7 @@
       const bNear = (bNearRoute && bNearRoute.edge) ? bNearRoute : findNearestEdgePt(compatibleEdges, boardStop.lon, boardStop.lat);
       const aNear = (aNearRoute && aNearRoute.edge) ? aNearRoute : findNearestEdgePt(compatibleEdges, alightStop.lon, alightStop.lat);
 
-      if (bNear && bNear.edge && aNear && aNear.edge) {
+      if (bNear && bNear.edge && aNear && aNear.edge && bNear.dist < 3500 && aNear.dist < 3500) {
         const path = solveDijkstra(compatibleEdges, bNear, aNear, boardStop, alightStop, (e, len) => {
           const hasRoute = e.l && e.l.includes(routeIdx);
           return hasRoute ? len : (len * 5 + 50);
@@ -5863,22 +5871,43 @@
       }
     }
 
+    // 2.5. Slice from GTFS timetable pattern geometry if available
+    if (SCHED && SCHED.patterns) {
+      const bMatches = (sid) => sid === boardStop.id || sid === boardStop.key || (boardStop.stops && boardStop.stops.includes(sid));
+      const aMatches = (sid) => sid === alightStop.id || sid === alightStop.key || (alightStop.stops && alightStop.stops.includes(sid));
+      for (const p of SCHED.patterns) {
+        if (p.r === routeIdx && p.c && p.c.length >= 2 && p.s && p.f) {
+          const iA = p.s.findIndex(bMatches);
+          const iB = p.s.findIndex(aMatches);
+          if (iA >= 0 && iB >= 0 && iA !== iB) {
+            const from = Math.min(iA, iB), to = Math.max(iA, iB);
+            const frac0 = p.f[from], frac1 = p.f[to];
+            const startIdx = Math.max(0, Math.floor(frac0 * (p.c.length - 1)));
+            const endIdx = Math.min(p.c.length, Math.ceil(frac1 * (p.c.length - 1)) + 1);
+            let sliced = p.c.slice(startIdx, endIdx);
+            if (iA > iB) sliced = [...sliced].reverse();
+            if (sliced.length >= 2) {
+              return [[boardStop.lon, boardStop.lat], ...sliced, [alightStop.lon, alightStop.lat]];
+            }
+          }
+        }
+      }
+    }
+
     // 3. If intermediate stops exist, chain consecutive stop segments
     if (intermediateStopIds && intermediateStopIds.length) {
       const stopsSeq = [boardStop, ...intermediateStopIds.map((sid) => stopIndex[sid]).filter(Boolean), alightStop];
       let composite = [];
-      let ok = true;
       for (let i = 0; i < stopsSeq.length - 1; i++) {
         const sA = stopsSeq[i], sB = stopsSeq[i + 1];
         const seg = getRouteSegmentGeometry(routeIdx, sA, sB, []);
         if (seg && seg.length >= 2) {
           composite = [...composite, ...(composite.length ? seg.slice(1) : seg)];
         } else {
-          ok = false;
-          break;
+          composite.push([sA.lon, sA.lat], [sB.lon, sB.lat]);
         }
       }
-      if (ok && composite.length >= 2) return composite;
+      if (composite.length >= 2) return composite;
     }
 
     // 4. Fallback to connecting known stops
@@ -7057,7 +7086,10 @@
         const t1 = it.transferStop1 || it.transferStop;
         const t2 = it.transferStop2 || it.transferStop;
         const tName = (t1 && t2 && t1.id !== t2.id && t1.name !== t2.name) ? `${esc(t1.name)} / ${esc(t2.name)}` : esc(t1.name);
-        descHtml = `Transfer at <b>${tName}</b> · ${it.numStops1 + it.numStops2} total stops`;
+        const isThrough = isThroughRoutedPair(it.r1, it.r2);
+        descHtml = isThrough
+          ? `<span class="tr-stay-on-pill">${poiIconSVG("transfer", 13)} Stay on board</span> at <b>${tName}</b> · continues as Route ${esc(it.r2.short || it.r2.label)} · ${it.numStops1 + it.numStops2} total stops`
+          : `Transfer at <b>${tName}</b> · ${it.numStops1 + it.numStops2} total stops`;
       } else if (it.type === "multi") {
         badgeHtml = it.legs.map((leg) => badgeHTML(leg.route)).join(' <span class="trip-arrow">➔</span> ');
         const modes = [...new Set(it.legs.map((leg) => currentVehWord(leg.route)))];
@@ -7198,15 +7230,15 @@
           <span class="step-line"></span>
           <span class="step-icon">${poiIconSVG("transfer", 16)}</span>
           <div class="step-content">
-            <div class="step-main">${cur.transferStop1 && cur.transferStop2 && cur.transferStop1.id !== cur.transferStop2.id && cur.transferStop1.name !== cur.transferStop2.name ? `Transfer: Walk ${cur.transferWalkTime || 1} min from ${esc(cur.transferStop1.name)} to ${esc(cur.transferStop2.name)}` : `Transfer at ${esc((cur.transferStop1 || cur.transferStop).name)}`}</div>
-            <div class="step-meta">Connection buffer ~${cur.wait2} min</div>
+            <div class="step-main">${isThroughRoutedPair(cur.r1, cur.r2) ? `<span style="color:#059669;font-weight:700">Stay on the bus:</span> bus continues through Downtown as ${esc(routeTitle(cur.r2))}` : cur.transferStop1 && cur.transferStop2 && cur.transferStop1.id !== cur.transferStop2.id && cur.transferStop1.name !== cur.transferStop2.name ? `Transfer: Walk ${cur.transferWalkTime || 1} min from ${esc(cur.transferStop1.name)} to ${esc(cur.transferStop2.name)}` : `Transfer at ${esc((cur.transferStop1 || cur.transferStop).name)}`}</div>
+            <div class="step-meta">${isThroughRoutedPair(cur.r1, cur.r2) ? "Through-route transition · No transfer needed" : `Connection buffer ~${cur.wait2} min`}</div>
           </div>
         </div>
         <div class="step-row">
           <span class="step-line"></span>
           <span class="step-icon transit">${modeIcon(cur.r2)}</span>
           <div class="step-content">
-            <div class="step-main">Board ${badgeHTML(cur.r2)} towards ${esc(cur.p2.headsign || "Destination")}</div>
+            <div class="step-main">${isThroughRoutedPair(cur.r1, cur.r2) ? `Continue on ${badgeHTML(cur.r2)} towards ${esc(cur.p2.headsign || "Destination")}` : `Board ${badgeHTML(cur.r2)} towards ${esc(cur.p2.headsign || "Destination")}`}</div>
             <div class="step-meta">${cur.ride2} min · ${cur.numStops2} stops</div>
           </div>
         </div>
@@ -7234,10 +7266,14 @@
         rows.push(`<div class="step-row"><span class="step-line"></span><span class="step-icon transit">${modeIcon(leg.route)}</span><div class="step-content"><div class="step-main">Board ${badgeHTML(leg.route)} towards ${esc(leg.pattern.headsign || "Destination")}</div><div class="step-meta">${firstDeparture}${leg.rideTime} min · ${leg.numStops} stop${leg.numStops === 1 ? "" : "s"}</div></div></div>`);
         if (index < cur.legs.length - 1) {
           const next = cur.legs[index + 1];
-          const transferName = leg.alightStop.id !== next.boardStop.id && leg.alightStop.name !== next.boardStop.name
-            ? `Walk ${next.transferWalkTime} min from ${esc(leg.alightStop.name)} to ${esc(next.boardStop.name)}`
-            : `Transfer at ${esc(leg.alightStop.name)}`;
-          rows.push(`<div class="step-row"><span class="step-line"></span><span class="step-icon">${poiIconSVG("transfer", 16)}</span><div class="step-content"><div class="step-main">${transferName}</div><div class="step-meta">Connection buffer ~${next.waitTime} min</div></div></div>`);
+          const isThrough = isThroughRoutedPair(leg.route, next.route);
+          const transferName = isThrough
+            ? `<span style="color:#059669;font-weight:700">Stay on the bus:</span> bus continues through Downtown as ${esc(routeTitle(next.route))}`
+            : leg.alightStop.id !== next.boardStop.id && leg.alightStop.name !== next.boardStop.name
+              ? `Walk ${next.transferWalkTime} min from ${esc(leg.alightStop.name)} to ${esc(next.boardStop.name)}`
+              : `Transfer at ${esc(leg.alightStop.name)}`;
+          const bufferText = isThrough ? "Through-route transition · No transfer needed" : `Connection buffer ~${next.waitTime} min`;
+          rows.push(`<div class="step-row"><span class="step-line"></span><span class="step-icon">${poiIconSVG("transfer", 16)}</span><div class="step-content"><div class="step-main">${transferName}</div><div class="step-meta">${bufferText}</div></div></div>`);
         }
       });
       rows.push(`<div class="step-row"><span class="step-line"></span><span class="step-icon">${poiIconSVG("walk", 16)}</span><div class="step-content"><div class="step-main">Alight at ${esc(cur.alightStop.name)}</div><div class="step-meta">Walk ${cur.walk2Time} min · ${Math.round(cur.walk2Dist)} m to destination</div></div></div>`);
@@ -8076,12 +8112,22 @@
   function closePopup() { if (popup) { popup.remove(); popup = null; } }
   // pointing at a route in a list shows it on the map
   function previewOnHover(b) {
-    const preview = () => { if (!(selected && selected.type === "route")) focusRoute(RBY[b.dataset.route]); };
+    const preview = () => {
+      const r = RBY[b.dataset.route];
+      if (!r) return;
+      setNetDim(0.20);
+      focusRoute(r);
+    };
     const revert = () => {
       if (panelView === "corridor" && corridorRoutes.length) {
-        focusRoutes(corridorRoutes.map((id) => RBY[id]));
+        setNetDim(0.38);
+        focusRoutes(corridorRoutes.map((id) => RBY[id]), false, { glow: false, widthScale: 1.35 });
+      } else if (selected && selected.type === "route") {
+        setNetDim(0.38);
+        focusOff();
       } else {
-        setHover(null);
+        setNetDim(1);
+        focusOff();
       }
     };
     b.addEventListener("mouseenter", preview); b.addEventListener("focus", preview);
@@ -8245,7 +8291,15 @@
           if (tg.item.r != null) {
             const r = LINES[tg.item.r];
             cur = { kind: "tag", id: tg.item.r };
-            if (!(selected && selected.type === "route")) focusRoute(r);
+            setNetDim(0.20);
+            focusRoute(r);
+            if (panelView === "corridor") {
+              document.querySelectorAll(".route-row.is-hovered").forEach((el) => {
+                if (el.dataset.route !== r.id) el.classList.remove("is-hovered");
+              });
+              const row = document.querySelector(`.corridor-picker .route-row[data-route="${r.id}"]`);
+              if (row && !row.classList.contains("is-hovered")) row.classList.add("is-hovered");
+            }
             const schedInfo = routeServiceDesc(r);
             const tr = getThroughRouteInfo(r);
             const trInfo = tr && tr.partners.length
@@ -8254,7 +8308,8 @@
             tipShow("tag:" + tg.item.r, `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}${schedInfo}${trInfo}</span>`, "", ev(e, 14));
           } else {
             cur = { kind: "tag", id: "more" };
-            if (!(selected && selected.type === "route") && tg.item.more?.length) {
+            if (tg.item.more?.length) {
+              setNetDim(0.20);
               focusRoutes(tg.item.more.map((i) => LINES[i]));
             } else {
               setHover(null);
@@ -8313,22 +8368,30 @@
         if (ln) {
           cur = { kind: "line", id: ln.r, cat: ln.f.properties.cat };
           map.getCanvas().style.cursor = "pointer";
-          if (!(selected && selected.type === "route")) {
-            if (ln.routes && ln.routes.length) focusRoutes(ln.routes);
-            else if (ln.f) focusCorridor(ln.f);
+          const strandRoute = ln.r >= 0 ? LINES[ln.r] : (ln.routes && ln.routes[0]);
+          if (strandRoute) {
+            setNetDim(0.20);
+            focusRoute(strandRoute);
+            if (panelView === "corridor") {
+              document.querySelectorAll(".route-row.is-hovered").forEach((el) => {
+                if (el.dataset.route !== strandRoute.id) el.classList.remove("is-hovered");
+              });
+              const row = document.querySelector(`.corridor-picker .route-row[data-route="${strandRoute.id}"]`);
+              if (row && !row.classList.contains("is-hovered")) row.classList.add("is-hovered");
+            }
+          } else if (ln.f) {
+            focusCorridor(ln.f);
           }
-          const rs = ln.routes, r = rs[0];
-          const nal = rs.length === 1 ? routeAlerts(rs[0].id) : [];
-          const more = (ln.n > 1 ? `<span class="tt-more">${ln.n} routes share this street</span>` : "")
+          const rs = ln.routes, r = strandRoute || rs[0];
+          const nal = r ? routeAlerts(r.id) : [];
+          const more = (ln.n > 1 ? `<span class="tt-more">${ln.n} routes share this street · Hovering ${esc(routeTitle(r))}</span>` : "")
             + (nal.length ? `<span class="tt-alert al-${LEVEL[nal[0].level][0]}">${alertIcon(nal[0].level)}${nal.length === 1 ? esc(LEVEL[nal[0].level][1]) : `${nal.length} alerts`}</span>` : "");
           const schedInfo = routeServiceDesc(r);
           const tr = getThroughRouteInfo(r);
           const trInfo = tr && tr.partners.length
             ? `<span class="tt-tr">${poiIconSVG("transfer", 14)} Stay on bus: continues as ${tr.partners.map((p) => routeTitle(p)).join("/")} through Downtown</span>`
             : "";
-          tipShow("line:" + rs.map((x) => x.id).join(","), rs.length === 1
-            ? `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}${schedInfo}${trInfo}${more}</span>`
-            : `<span class="tip-badges">${rs.slice(0, 6).map((x) => badgeHTML(x)).join("")}</span><span class="tt">${rs.length} routes here · Tap to choose</span>`, "", ev(e));
+          tipShow("line:" + (r ? r.id : "") + ":" + rs.map((x) => x.id).join(","), `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}${schedInfo}${trInfo}${more}</span>`, "", ev(e));
           return;
         }
         const trailHover = map.queryRenderedFeatures([[e.point.x - 6, e.point.y - 6], [e.point.x + 6, e.point.y + 6]], {
@@ -8566,12 +8629,19 @@
     hoverKey = "";
     hoverRoutes = [];
     hovStopsKey = "";
+    document.querySelectorAll(".route-row.is-hovered").forEach((el) => el.classList.remove("is-hovered"));
     if (!map || !map.getSource("hover")) return;
     hoverFade(hSlot, 0, 190);
     popOut("hov", () => { if (!hoverKey) map.getSource("hoverstops").setData(fc([])); });
-    if (selected && selected.type === "route" && RBY[selected.id]?.cat === "dart") {
-      highlightDartArea(selected.id);
+    if (selected && selected.type === "route") {
+      setNetDim(0.38);
+      if (RBY[selected.id]?.cat === "dart") highlightDartArea(selected.id);
+      else highlightDartArea(null);
+    } else if (panelView === "corridor" && corridorRoutes.length) {
+      setNetDim(0.38);
+      focusRoutes(corridorRoutes.map((id) => RBY[id]), false, { glow: false, widthScale: 1.35 });
     } else {
+      setNetDim(1);
       highlightDartArea(null);
     }
   }

@@ -140,9 +140,10 @@ const KCTMRibbons = (() => {
         if (gl.bindVertexArray) gl.bindVertexArray(vao); else vaoExt?.bindVertexArrayOES(vao);
         gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
         gl.disable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE); gl.disable(gl.STENCIL_TEST);
-        for (const name of ["net", "hover", "hover2", "sel"]) {
+        const hoverActive = (style.hover[0] || 0) > 0.05 || (style.hover[1] || 0) > 0.05;
+        for (const name of ["net", "sel", "hover", "hover2"]) {
           const slot = slots.get(name); if (!slot) continue;
-          const opacity = name === "net" ? style.dim : name === "sel" ? 1 : style.hover[name === "hover" ? 0 : 1];
+          const opacity = name === "net" ? style.dim : name === "sel" ? (hoverActive ? Math.min(style.dim * 1.5, 0.45) : 1) : style.hover[name === "hover" ? 0 : 1];
           if (opacity < 0.001) continue;
           for (const b of slot.batches) {
             if (name === "net" && style.selected && !["body", "dash"].includes(b.role)) continue;
