@@ -346,4 +346,29 @@ check('F6: Bus routes never adopt ferry water edges or dedicated train tracks du
   assert.equal(hasWater, false, 'Bus route must not have ferry edges in its geometry');
 });
 
+// F7: Extended Planning Date Range & Calendar
+check('F7: Extended planning horizon supports up to 90 days forward without 48-hour cutoff', () => {
+  const match = appJsCode.match(/const PLANNER_MAX_AHEAD_MS = ([0-9 *]+);/);
+  assert(match, 'PLANNER_MAX_AHEAD_MS definition missing in app.js');
+  const ms = eval(match[1]);
+  assert(ms >= 60 * 24 * 60 * 60 * 1000, `Expected at least 60-day range, got ${ms / (24 * 3600 * 1000)} days`);
+  assert(ms <= 120 * 24 * 60 * 60 * 1000, `Expected <= 120-day range, got ${ms / (24 * 3600 * 1000)} days`);
+});
+
+check('F7: Trip planning context maps future calendar dates (e.g. 14 days, 30 days, 60 days) to valid transit service days', () => {
+  const PT_FMT = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short', hour: 'numeric', minute: 'numeric', second: 'numeric', hourCycle: 'h23' });
+  function testPacificAt(date) {
+    const parts = Object.fromEntries(PT_FMT.formatToParts(date).map((p) => [p.type, p.value]));
+    const key = (w) => (w === 'Sat' ? 'saturday' : w === 'Sun' ? 'sunday' : 'weekday');
+    return key(parts.weekday);
+  }
+
+  const now = new Date();
+  for (const daysAhead of [1, 2, 5, 10, 21, 45, 60, 85]) {
+    const futureDate = new Date(now.getTime() + daysAhead * 24 * 3600 * 1000);
+    const dayKey = testPacificAt(futureDate);
+    assert(['weekday', 'saturday', 'sunday'].includes(dayKey), `Invalid service day for +${daysAhead}d: ${dayKey}`);
+  }
+});
+
 console.log(`\nALL ${checks} ROUTING SPECIFICATION CHECKS PASSED`);

@@ -5297,11 +5297,41 @@
   let plannerStopsCache = null;
   let dirTimeMode = "leave-now";
   let dirTimeValue = "";
-  const PLANNER_MAX_AHEAD_MS = 48 * 60 * 60 * 1000;
+  const PLANNER_MAX_AHEAD_MS = 90 * 24 * 60 * 60 * 1000; // Extended 90-day forward planning range
 
   function localDateTimeValue(date) {
-    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
-    return local.toISOString().slice(0, 16);
+    const d = date instanceof Date ? date : new Date(date);
+    if (!Number.isFinite(d.getTime())) return "";
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    const hh = String(d.getHours()).padStart(2, "0");
+    const min = String(d.getMinutes()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
+  }
+
+  function formatDirTimeDisplay(date) {
+    if (!date || !Number.isFinite(date.getTime())) return "";
+    const now = new Date();
+    const isToday = date.toDateString() === now.toDateString();
+    const tomorrow = new Date(now.getTime() + 86400000);
+    const isTomorrow = date.toDateString() === tomorrow.toDateString();
+
+    const timeStr = new Intl.DateTimeFormat("en-US", {
+      hour: "numeric", minute: "2-digit"
+    }).format(date);
+
+    let dayStr;
+    if (isToday) {
+      dayStr = "Today";
+    } else if (isTomorrow) {
+      dayStr = "Tomorrow";
+    } else {
+      dayStr = new Intl.DateTimeFormat("en-US", {
+        weekday: "short", month: "short", day: "numeric"
+      }).format(date);
+    }
+    return `${dayStr} · ${timeStr}`;
   }
 
   function getDirPlanningTime() {
@@ -5315,8 +5345,289 @@
 
   function plannerTimeLabel(context = getDirPlanningTime()) {
     if (context.mode === "leave-now") return "Leaving now";
-    const when = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", weekday: "short", hour: "numeric", minute: "2-digit" }).format(context.date);
+    const when = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Los_Angeles", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit"
+    }).format(context.date);
     return `${context.mode === "arrive-by" ? "Arrive by" : "Depart at"} ${when}`;
+  }
+
+  let calViewYear = null;
+  let calViewMonth = null;
+
+  function openCustomDatePicker() {
+    const picker = $("#dirCustomPicker");
+    const trigger = $("#dirTimeTriggerBtn");
+    if (!picker) return;
+    picker.hidden = false;
+    trigger?.classList.add("is-open");
+    trigger?.setAttribute("aria-expanded", "true");
+    const curDate = dirTimeValue ? new Date(dirTimeValue) : new Date(Date.now() + 15 * 60000);
+    calViewYear = curDate.getFullYear();
+    calViewMonth = curDate.getMonth();
+    renderCustomDatePicker();
+  }
+
+  function closeCustomDatePicker() {
+    const picker = $("#dirCustomPicker");
+    const trigger = $("#dirTimeTriggerBtn");
+    if (!picker) return;
+    picker.hidden = true;
+    trigger?.classList.remove("is-open");
+    trigger?.setAttribute("aria-expanded", "false");
+  }
+
+  function toggleCustomDatePicker() {
+    const picker = $("#dirCustomPicker");
+    if (!picker) return;
+    if (picker.hidden) openCustomDatePicker();
+    else closeCustomDatePicker();
+  }
+
+  function renderCustomDatePicker() {
+    const picker = $("#dirCustomPicker");
+    if (!picker || picker.hidden) return;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const maxDate = new Date(today.getTime() + PLANNER_MAX_AHEAD_MS);
+    const curDate = dirTimeValue ? new Date(dirTimeValue) : new Date(Date.now() + 15 * 60000);
+
+    if (calViewYear == null || calViewMonth == null) {
+      calViewYear = curDate.getFullYear();
+      calViewMonth = curDate.getMonth();
+    }
+
+    // Quick Date Presets
+    const dow = today.getDay(); // 0 = Sun, 6 = Sat
+    const daysUntilSat = (6 - dow + 7) % 7 || 7;
+    const daysUntilSun = (7 - dow + 7) % 7 || 7;
+    const daysUntilMon = (8 - dow + 7) % 7 || 7;
+
+    const presets = [
+      { label: "Today", date: new Date(today) },
+      { label: "Tomorrow", date: new Date(today.getTime() + 86400000) },
+      { label: dow === 6 ? "This Sun" : "This Sat", date: new Date(today.getTime() + (dow === 6 ? 86400000 : daysUntilSat * 86400000)) },
+      { label: "Next Mon", date: new Date(today.getTime() + daysUntilMon * 86400000) }
+    ];
+
+    let presetsHtml = '<div class="cal-presets" role="group" aria-label="Quick dates">';
+    for (const p of presets) {
+      const yyyy = p.date.getFullYear();
+      const mm = String(p.date.getMonth() + 1).padStart(2, "0");
+      const dd = String(p.date.getDate()).padStart(2, "0");
+      const pStr = `${yyyy}-${mm}-${dd}`;
+      const isActive = curDate.toDateString() === p.date.toDateString();
+      presetsHtml += `<button type="button" class="cal-preset-chip ${isActive ? "is-active" : ""}" data-preset-date="${pStr}">${p.label}</button>`;
+    }
+    presetsHtml += '</div>';
+
+    // Month Navigation
+    const minMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    const maxMonth = new Date(maxDate.getFullYear(), maxDate.getMonth(), 1);
+    const viewMonthDate = new Date(calViewYear, calViewMonth, 1);
+    const canPrev = viewMonthDate > minMonth;
+    const canNext = viewMonthDate < maxMonth;
+    const monthTitle = new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" }).format(viewMonthDate);
+
+    const monthNavHtml = `
+      <div class="cal-month-nav">
+        <button type="button" class="cal-nav-btn" id="calPrevMonth" ${canPrev ? "" : "disabled"} aria-label="Previous month">‹</button>
+        <span class="cal-month-title">${monthTitle}</span>
+        <button type="button" class="cal-nav-btn" id="calNextMonth" ${canNext ? "" : "disabled"} aria-label="Next month">›</button>
+      </div>
+    `;
+
+    // Weekdays
+    const weekdaysHtml = `
+      <div class="cal-weekdays" aria-hidden="true">
+        <span>Su</span><span>Mo</span><span>Tu</span><span>We</span><span>Th</span><span>Fr</span><span>Sa</span>
+      </div>
+    `;
+
+    // Days Grid
+    const startDay = new Date(calViewYear, calViewMonth, 1).getDay();
+    const daysInMonth = new Date(calViewYear, calViewMonth + 1, 0).getDate();
+    let gridHtml = '<div class="cal-grid" role="grid">';
+    for (let i = 0; i < startDay; i++) {
+      gridHtml += '<span class="cal-empty-cell" aria-hidden="true"></span>';
+    }
+    for (let d = 1; d <= daysInMonth; d++) {
+      const cellDate = new Date(calViewYear, calViewMonth, d, 0, 0, 0);
+      const isPast = cellDate < today;
+      const isTooFar = cellDate > maxDate;
+      const disabled = isPast || isTooFar;
+      const isToday = cellDate.toDateString() === today.toDateString();
+      const isSelected = cellDate.toDateString() === curDate.toDateString();
+      const isWeekend = cellDate.getDay() === 0 || cellDate.getDay() === 6;
+
+      const classes = ["cal-day-cell"];
+      if (isSelected) classes.push("is-selected");
+      if (isToday) classes.push("is-today");
+      if (isWeekend) classes.push("is-weekend");
+
+      const yyyy = calViewYear;
+      const mm = String(calViewMonth + 1).padStart(2, "0");
+      const dd = String(d).padStart(2, "0");
+      const dateVal = `${yyyy}-${mm}-${dd}`;
+
+      gridHtml += `<button type="button" class="${classes.join(" ")}" data-cal-date="${dateVal}" ${disabled ? "disabled" : ""} aria-label="${dateVal}">${d}</button>`;
+    }
+    gridHtml += '</div>';
+
+    // Time Section
+    const h24 = curDate.getHours();
+    const m = curDate.getMinutes();
+    const ampm = h24 >= 12 ? "PM" : "AM";
+    let h12 = h24 % 12;
+    if (h12 === 0) h12 = 12;
+    const roundedM = Math.round(m / 5) * 5 % 60;
+
+    let hourOptions = "";
+    for (let h = 1; h <= 12; h++) {
+      hourOptions += `<option value="${h}" ${h === h12 ? "selected" : ""}>${h}</option>`;
+    }
+    let minuteOptions = "";
+    for (let min = 0; min < 60; min += 5) {
+      const minStr = String(min).padStart(2, "0");
+      minuteOptions += `<option value="${min}" ${min === roundedM ? "selected" : ""}>:${minStr}</option>`;
+    }
+
+    const timeSecHtml = `
+      <div class="cal-time-sec">
+        <div class="cal-time-row">
+          <div class="cal-time-selectors">
+            <select class="cal-select" id="calHourSelect" aria-label="Hour">${hourOptions}</select>
+            <span class="cal-time-colon">:</span>
+            <select class="cal-select" id="calMinuteSelect" aria-label="Minute">${minuteOptions}</select>
+            <div class="cal-ampm-wrap" role="group" aria-label="AM or PM">
+              <button type="button" class="cal-ampm-btn ${ampm === "AM" ? "is-active" : ""}" data-ampm="AM">AM</button>
+              <button type="button" class="cal-ampm-btn ${ampm === "PM" ? "is-active" : ""}" data-ampm="PM">PM</button>
+            </div>
+          </div>
+        </div>
+        <div class="cal-quick-times" role="group" aria-label="Quick times">
+          <button type="button" class="cal-qtime-btn" data-qtime="now">Now</button>
+          <button type="button" class="cal-qtime-btn" data-qtime="8:00 AM">8:00 AM</button>
+          <button type="button" class="cal-qtime-btn" data-qtime="12:00 PM">12:00 PM</button>
+          <button type="button" class="cal-qtime-btn" data-qtime="5:30 PM">5:30 PM</button>
+          <button type="button" class="cal-qtime-btn" data-qtime="9:00 PM">9:00 PM</button>
+        </div>
+      </div>
+    `;
+
+    // Footer
+    const footerHtml = `
+      <div class="cal-footer">
+        <button type="button" class="cal-reset-btn" id="calResetNow">Reset to now</button>
+        <button type="button" class="cal-done-btn press" id="calDoneBtn">Done</button>
+      </div>
+    `;
+
+    picker.innerHTML = `${presetsHtml}${monthNavHtml}${weekdaysHtml}${gridHtml}${timeSecHtml}${footerHtml}`;
+  }
+
+  function handleCustomPickerClick(e) {
+    const target = e.target.closest("button");
+    if (!target) return;
+
+    const curDate = dirTimeValue ? new Date(dirTimeValue) : new Date(Date.now() + 15 * 60000);
+
+    if (target.id === "calPrevMonth") {
+      calViewMonth--;
+      if (calViewMonth < 0) { calViewMonth = 11; calViewYear--; }
+      renderCustomDatePicker();
+      return;
+    }
+
+    if (target.id === "calNextMonth") {
+      calViewMonth++;
+      if (calViewMonth > 11) { calViewMonth = 0; calViewYear++; }
+      renderCustomDatePicker();
+      return;
+    }
+
+    if (target.dataset.presetDate) {
+      const [y, m, d] = target.dataset.presetDate.split("-").map(Number);
+      calViewYear = y;
+      calViewMonth = m - 1;
+      const newDate = new Date(y, m - 1, d, curDate.getHours(), curDate.getMinutes());
+      dirTimeValue = localDateTimeValue(newDate);
+      syncDirTimeControls();
+      if (dirOrigin && dirDest) executeTripPlan();
+      return;
+    }
+
+    if (target.dataset.calDate) {
+      const [y, m, d] = target.dataset.calDate.split("-").map(Number);
+      const newDate = new Date(y, m - 1, d, curDate.getHours(), curDate.getMinutes());
+      dirTimeValue = localDateTimeValue(newDate);
+      syncDirTimeControls();
+      if (dirOrigin && dirDest) executeTripPlan();
+      return;
+    }
+
+    if (target.dataset.ampm) {
+      const targetAMPM = target.dataset.ampm;
+      let h = curDate.getHours();
+      if (targetAMPM === "PM" && h < 12) h += 12;
+      if (targetAMPM === "AM" && h >= 12) h -= 12;
+      const newDate = new Date(curDate.getFullYear(), curDate.getMonth(), curDate.getDate(), h, curDate.getMinutes());
+      dirTimeValue = localDateTimeValue(newDate);
+      syncDirTimeControls();
+      if (dirOrigin && dirDest) executeTripPlan();
+      return;
+    }
+
+    if (target.dataset.qtime) {
+      const q = target.dataset.qtime;
+      let newH = curDate.getHours(), newM = curDate.getMinutes();
+      if (q === "now") {
+        const now = new Date();
+        newH = now.getHours();
+        newM = Math.ceil(now.getMinutes() / 5) * 5;
+        if (newM >= 60) { newH = (newH + 1) % 24; newM = 0; }
+      } else if (q === "8:00 AM") { newH = 8; newM = 0; }
+      else if (q === "12:00 PM") { newH = 12; newM = 0; }
+      else if (q === "5:30 PM") { newH = 17; newM = 30; }
+      else if (q === "9:00 PM") { newH = 21; newM = 0; }
+
+      const newDate = new Date(curDate.getFullYear(), curDate.getMonth(), curDate.getDate(), newH, newM);
+      dirTimeValue = localDateTimeValue(newDate);
+      syncDirTimeControls();
+      if (dirOrigin && dirDest) executeTripPlan();
+      return;
+    }
+
+    if (target.id === "calResetNow") {
+      dirTimeValue = localDateTimeValue(new Date(Date.now() + 15 * 60000));
+      calViewYear = null;
+      calViewMonth = null;
+      syncDirTimeControls();
+      if (dirOrigin && dirDest) executeTripPlan();
+      return;
+    }
+
+    if (target.id === "calDoneBtn") {
+      closeCustomDatePicker();
+      return;
+    }
+  }
+
+  function handleCustomPickerChange(e) {
+    const curDate = dirTimeValue ? new Date(dirTimeValue) : new Date(Date.now() + 15 * 60000);
+    const hourSelect = $("#calHourSelect");
+    const minuteSelect = $("#calMinuteSelect");
+    if (!hourSelect || !minuteSelect) return;
+
+    const h12 = parseInt(hourSelect.value, 10);
+    const min = parseInt(minuteSelect.value, 10);
+    const isPM = $("#dirCustomPicker .cal-ampm-btn[data-ampm='PM']")?.classList.contains("is-active");
+    const h24 = (h12 % 12) + (isPM ? 12 : 0);
+
+    const newDate = new Date(curDate.getFullYear(), curDate.getMonth(), curDate.getDate(), h24, min);
+    dirTimeValue = localDateTimeValue(newDate);
+    syncDirTimeControls();
+    if (dirOrigin && dirDest) executeTripPlan();
   }
 
   function syncDirTimeControls() {
@@ -5324,6 +5635,7 @@
     const input = $("#dirTimeInput");
     const wrap = $("#dirTimeInputWrap");
     const label = $("#dirTimeLabel");
+    const display = $("#dirTimeDisplay");
     if (!dirTimeValue && dirTimeMode !== "leave-now") dirTimeValue = localDateTimeValue(new Date(now.getTime() + 15 * 60000));
     if (input) {
       input.min = localDateTimeValue(now);
@@ -5332,10 +5644,15 @@
     }
     if (wrap) wrap.hidden = dirTimeMode === "leave-now";
     if (label) label.textContent = dirTimeMode === "arrive-by" ? "Arrive by" : "Depart at";
+    if (display) {
+      const selectedDate = dirTimeValue ? new Date(dirTimeValue) : new Date(now.getTime() + 15 * 60000);
+      display.textContent = formatDirTimeDisplay(selectedDate);
+    }
     for (const button of document.querySelectorAll("[data-plan-time]")) {
       button.classList.toggle("is-active", button.dataset.planTime === dirTimeMode);
       button.setAttribute("aria-pressed", button.dataset.planTime === dirTimeMode ? "true" : "false");
     }
+    renderCustomDatePicker();
   }
 
   function distMeters(lat1, lon1, lat2, lon2) {
@@ -7119,6 +7436,7 @@
   }
 
   function closeTripPlanner() {
+    closeCustomDatePicker();
     $("#searchBar").hidden = false;
     $("#filterBar").hidden = false;
     $("#dirPanel").hidden = true;
@@ -7468,13 +7786,48 @@
     for (const button of document.querySelectorAll("[data-plan-time]")) {
       button.addEventListener("click", () => {
         dirTimeMode = button.dataset.planTime;
-        if (dirTimeMode !== "leave-now" && !dirTimeValue) {
-          dirTimeValue = localDateTimeValue(new Date(Date.now() + 15 * 60 * 1000));
+        if (dirTimeMode !== "leave-now") {
+          if (!dirTimeValue) {
+            dirTimeValue = localDateTimeValue(new Date(Date.now() + 15 * 60 * 1000));
+          }
+          openCustomDatePicker();
+        } else {
+          closeCustomDatePicker();
         }
         syncDirTimeControls();
         if (dirOrigin && dirDest) executeTripPlan();
       });
     }
+
+    $("#dirTimeTriggerBtn")?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleCustomDatePicker();
+    });
+
+    $("#dirCustomPicker")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      handleCustomPickerClick(e);
+    });
+
+    $("#dirCustomPicker")?.addEventListener("change", (e) => {
+      e.stopPropagation();
+      handleCustomPickerChange(e);
+    });
+
+    document.addEventListener("click", (e) => {
+      const wrap = $("#dirTimeInputWrap");
+      if (wrap && !wrap.contains(e.target)) {
+        closeCustomDatePicker();
+      }
+    });
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        closeCustomDatePicker();
+      }
+    });
+
     $("#dirTimeInput")?.addEventListener("change", (event) => {
       dirTimeValue = event.target.value;
       syncDirTimeControls();
