@@ -544,7 +544,8 @@ const KCTMGeom = (() => {
     const GROW = (n) => Math.min(2.6, 1 + 0.4 * Math.log2(Math.max(1, n)));
 
     // One view. p: { z (zoom step), zNow, u (px per line unit), capU, keyOn {key: bool}, selIdx, routeFilter,
-    //   view [x0, y0, x1, y1] in meters, tags { gap, every, busZ }, theme ("l"/"d"), colors {key: css} }
+    //   view [x0, y0, x1, y1] in meters, tags { gap, every, busZ }, theme ("l"/"d"),
+    //   colors {key: css}, focusColors {key: css} }
     function build(p) {
       // z: the zoom the lanes are laid out for (follows the map closely while it zooms); zs: its
       // quarter step, for what should stay put while zooming (simplified shapes, tag spacing)
@@ -559,6 +560,9 @@ const KCTMGeom = (() => {
       const W = (v) => CAT[v].w * ((p.wscale && p.wscale[v]) || 1);
       const selKey = selIdx >= 0 ? dkey(LINES[selIdx]) : null;
       const color = (key) => p.colors[key] || p.colors.local;
+      // Overview colors can be deliberately softened. A selected or hovered route is an
+      // active navigation target, so use its unmuted service color instead.
+      const focusColor = (key) => (p.focusColors && p.focusColors[key]) || color(key);
 
       // 1. each segment in (or near) view: which corridors show, their lanes and squeeze
       const V = p.view;
@@ -680,7 +684,7 @@ const KCTMGeom = (() => {
       // one route, in its own strand
       const strand = (i) => (Lo) => [Lo.sp.get(i), Lo.sw.get(i) / 2];
       if (selIdx >= 0) {
-        const c = CAT[selKey], col = color(selKey);
+        const c = CAT[selKey], col = focusColor(selKey);
         for (const ch of ROUTE_CHAINS[selIdx]) {
           for (const run of runs(ch, selIdx)) {
             drawPath(strand(selIdx), run, lay, S, (k, coords) => {
@@ -692,7 +696,7 @@ const KCTMGeom = (() => {
           }
         }
       }
-      last = { lay, S, z, W, easeAt, zu, colors: p.colors };
+      last = { lay, S, z, W, easeAt, zu, colors: p.colors, focusColors: p.focusColors };
 
       // 4. route-number tags. Connected blocks carrying the same routes form one stretch; a
       //    stretch gets one tag (on its longest block), plus repeats along long blocks, and the
@@ -788,7 +792,7 @@ const KCTMGeom = (() => {
     // hover previews).
     function routePaths(idxs) {
       if (!last) return [];
-      const { lay, S, W, easeAt, zu, colors } = last, out = [];
+      const { lay, S, W, easeAt, zu, colors, focusColors } = last, out = [];
       for (const idx of idxs) {
         if (!LINES[idx]) continue;
         const v = dkey(LINES[idx]), c = CAT[v] || CAT.link;
@@ -799,7 +803,7 @@ const KCTMGeom = (() => {
             drawPath((Lo) => [Lo.sp.get(idx), Lo.sw.get(idx) / 2], run, lay, S, (k, coords) => {
               if (coords.length < 2) return;
               const Lo = lay[run[k].E.k], w = wide ? Math.min(Lo.wk.get(v), W(v)) * Lo.s : Lo.sw.get(idx);
-              out.push({ type: "Feature", properties: { r: idx, cat: v, e: run[k].E.k, zu, c: colors[v] || colors.link || colors.local, d: c.dash ? 1 : 0,
+              out.push({ type: "Feature", properties: { r: idx, cat: v, e: run[k].E.k, zu, c: (focusColors && focusColors[v]) || colors[v] || colors.link || colors.local, d: c.dash ? 1 : 0,
                 ar: c.group === "water" ? 0 : arrow(run[k].E.dirOf(idx), run[k].fwd), wm: w + 0.14, cm: w + 0.55, gm: w + 2.8 },
               geometry: { type: "LineString", coordinates: coords.map(toLL) } });
             }, c.group === "water", false, easeAt);

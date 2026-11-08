@@ -63,6 +63,16 @@ check('a selected route stays visible when its category is hidden', () => {
   assert.equal(b.feats.length, 0);
   assert(b.selFeats.length > 0);
 });
+check('a focused commuter route uses its full service color instead of its muted overview color', () => {
+  const i = lines.findIndex((line) => line.cat === 'peak');
+  assert(i >= 0, 'a peak-service route is present');
+  const p = params(15);
+  const b = engine.build({ ...p, selIdx: i, colors: { ...p.colors, peak: '#9eabbc' }, focusColors: { ...p.colors, peak: '#2b6cb0' } });
+  const hover = engine.routePaths([i]);
+  assert(b.selFeats.length > 0 && hover.length > 0);
+  assert(b.selFeats.every((f) => f.properties.c === '#2b6cb0'));
+  assert(hover.every((f) => f.properties.c === '#2b6cb0'));
+});
 check('empty views return no stray geometry', () => {
   const b = engine.build({ ...params(15), view: [1e7, 1e7, 1e7 + 100, 1e7 + 100] });
   assert.equal(b.feats.length, 0);

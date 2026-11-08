@@ -384,7 +384,7 @@ class TestTier1FeatureCoverage(E2EBaseTestCase):
         """F6: tools/geometry_check.js passes all 11 multiscale geometry checks."""
         res = run_node_script(ROOT / "tools" / "geometry_check.js")
         self.assertEqual(res.returncode, 0, f"geometry_check.js failed:\n{res.stderr}")
-        self.assertIn("11/11 passed", res.stdout)
+        self.assertIn("12/12 passed", res.stdout)
 
     def test_t1_f6_02_finite_coords_in_network(self):
         """F6: All network edges contain strictly finite floating-point coordinates."""
@@ -1236,7 +1236,7 @@ class TestTier4RealWorldScenarios(E2EBaseTestCase):
         """T4 Scenario 6: Full Regional Network Multiscale Cartography Workflow."""
         res_geom = run_node_script(ROOT / "tools" / "geometry_check.js")
         self.assertEqual(res_geom.returncode, 0)
-        self.assertIn("11/11 passed", res_geom.stdout)
+        self.assertIn("12/12 passed", res_geom.stdout)
 
         res_ribbon = run_node_script(ROOT / "tools" / "ribbon_check.js")
         self.assertEqual(res_ribbon.returncode, 0)

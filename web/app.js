@@ -431,10 +431,11 @@
   // Each service group draws, bottom to top: a soft drop shadow, a casing that separates
   // neighboring lines, the colored body, and the center treatment (glass highlight,
   // white rail center, RapidRide dots or railroad ties).
-  // Visual hierarchy: rush-hour lines recede, all-day lines are a touch softer, so the frequent
-  // network, RapidRide and trains read first in busy places like downtown.
+  // Visual hierarchy: rush-hour lines are a touch softer in the overview, so the frequent
+  // network, RapidRide and trains read first in busy places like downtown. Focused routes use
+  // their full service color below; a commuter route must never remain washed out on hover/tap.
   const LINE_OP = 1;
-  const SOFT = { peak: 0.75, local: 0.95, dart: 0.85 };
+  const SOFT = { peak: 0.90, local: 0.95, dart: 0.85 };
   const mixHex = (a, b, t) => { // a toward b by (1 - t)
     const pa = [1, 3, 5].map((i) => parseInt(a.slice(i, i + 2), 16)), pb = [1, 3, 5].map((i) => parseInt(b.slice(i, i + 2), 16));
     return "#" + pa.map((v, i) => Math.round(v * t + pb[i] * (1 - t)).toString(16).padStart(2, "0")).join("");
@@ -1357,11 +1358,11 @@
 
   const zStep = (z) => Math.max(9, Math.min(19, Math.round(z * 4) / 4));
   // Zoomed out, all-day and rush-hour buses are slimmer than frequent ones, so the busy
-  // coverage map underneath stays readable and the frequent network stands out, while all-day
-  // buses remain clearly visible across the region.
+  // coverage map underneath stays readable and the frequent network stands out. Peak service
+  // retains enough width to stay findable before it is focused.
   function minorScale(z) {
     const f = z <= 10.0 ? 0.82 : z >= 12.5 ? 1 : 0.82 + 0.18 * (z - 10.0) / 2.5;
-    return { local: f, peak: Math.max(0.50, f * 0.68), shuttle: f * 0.88, dart: f * 0.78 };
+    return { local: f, peak: Math.max(0.60, f * 0.80), shuttle: f * 0.88, dart: f * 0.78 };
   }
   function tierFor(z) { const t = BUS_TIERS[settings.busDetail]; return z >= t[2] ? 2 : z >= t[1] ? 1 : 0; }
   let lastZ = -1, labelStep = null, needsRebuild = false, builtView = null, lastFeats = [], lastSelFeats = [];
@@ -1414,7 +1415,7 @@
     }
     const p = { z, zs, zNow, u, capU: interp(CAP_PX, z) / u, keyOn, routeFilter,
       selIdx: selected && selected.type === "route" ? LINEIDX[selected.id] : -1,
-      view: (builtView = viewBox(0.45)), tags: tagSpacing(TAG_DENSITY[settings.tags], zNow), theme: theme[0], colors: netColors(theme),
+      view: (builtView = viewBox(0.45)), tags: tagSpacing(TAG_DENSITY[settings.tags], zNow), theme: theme[0], colors: netColors(theme), focusColors: LINE[theme],
       wscale: minorScale(zNow) };
     lastParams = p;
     const msg = { id: ++buildSeq, p };
