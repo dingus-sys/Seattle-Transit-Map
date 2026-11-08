@@ -3523,6 +3523,21 @@
     </div>`;
   }
 
+  function isLateNightSpan(w) {
+    if (!w) return false;
+    if (w.span_h >= 22) return true;
+    if (!w.last) return false;
+    const m = w.last.match(/(\d+):(\d+)\s*(AM|PM)/i);
+    if (!m) return false;
+    let h = parseInt(m[1], 10);
+    const min = parseInt(m[2], 10);
+    const isPM = m[3].toUpperCase() === "PM";
+    if (isPM && h !== 12) h += 12;
+    if (!isPM && h === 12) h = 0;
+    const totalMinutes = h * 60 + min;
+    return totalMinutes >= 21 * 60 + 30 || totalMinutes <= 4 * 60 + 30;
+  }
+
   function routeBadgesHTML(r) {
     const w = r.sched?.weekday;
     if (!w) return "";
@@ -3535,9 +3550,13 @@
       : (r.sched?.saturday && (r.sched.saturday.mid_n > 0 || r.sched.saturday.trips > 5))
         ? `<span class="freq-pill parttime" title="Runs Monday through Saturday, no Sunday service">${poiIconSVG("clock", 13)} Mon–Sat · Part-time</span>`
         : `<span class="freq-pill parttime" title="Part-time service (Monday–Friday only)">${poiIconSVG("clock", 13)} Mon–Fri only · Part-time</span>`;
+    const isNight = isLateNightSpan(w);
+    const spanIcon = isNight
+      ? `<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M6 .278a.768.768 0 0 1 .08.858 7.208 7.208 0 0 0-.878 3.46c0 4.021 3.278 7.277 7.318 7.277.527 0 1.04-.055 1.533-.16a.787.787 0 0 1 .81.316.733.733 0 0 1-.031.893A8.349 8.349 0 0 1 8.344 16C3.734 16 0 12.286 0 7.71 0 4.266 2.114 1.312 5.124.06A.752.752 0 0 1 6 .278z"/></svg>`
+      : `<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.5a2 2 0 0 0-2 2v.29C4.24 4.55 3 6.38 3 8.5v3l-1.5 1.5v.5h13v-.5L13 11.5v-3c0-2.12-1.24-3.95-3-4.71V3.5a2 2 0 0 0-2-2zm-1.5 13a1.5 1.5 0 0 0 3 0h-3z"/></svg>`;
     return `<div class="freq-badge-row">
       <span class="freq-pill headway" title="Typical midday wait time"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 1 0 8 8A8 8 0 0 0 8 0zm.5 4.5v3.25l2.5 1.5-.75 1.25-3.25-2V4.5z"/></svg>${esc(headwayText)}</span>
-      <span class="freq-pill span" title="Daily hours of service"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M6 .278a.768.768 0 0 1 .08.858 7.208 7.208 0 0 0-.878 3.46c0 4.021 3.278 7.277 7.318 7.277.527 0 1.04-.055 1.533-.16a.787.787 0 0 1 .81.316.733.733 0 0 1-.031.893A8.349 8.349 0 0 1 8.344 16C3.734 16 0 12.286 0 7.71 0 4.266 2.114 1.312 5.124.06A.752.752 0 0 1 6 .278z"/></svg>${esc(spanText)}</span>
+      <span class="freq-pill span" title="Daily hours of service">${spanIcon}${esc(spanText)}</span>
       ${runsPill}
       ${peakText ? `<span class="freq-pill peak" title="Morning peak frequency"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M11.251.068a.5.5 0 0 1 .227.58L9.677 6.5H13a.5.5 0 0 1 .364.843l-8 8.5a.5.5 0 0 1-.842-.49L6.323 9.5H3a.5.5 0 0 1-.364-.843l8-8.5a.5.5 0 0 1 .615-.089z"/></svg>${esc(peakText)}</span>` : ""}
     </div>`;
@@ -8656,32 +8675,54 @@
         highlightStop(null);
         const ln = pickLine(e.point);
         if (ln) {
-          cur = { kind: "line", id: ln.r, cat: ln.f.properties.cat };
-          map.getCanvas().style.cursor = "pointer";
           const strandRoute = ln.r >= 0 ? LINES[ln.r] : (ln.routes && ln.routes[0]);
-          if (strandRoute) {
-            focusRoute(strandRoute);
-            if (panelView === "corridor") {
-              document.querySelectorAll(".route-row.is-hovered").forEach((el) => {
-                if (el.dataset.route !== strandRoute.id) el.classList.remove("is-hovered");
-              });
-              const row = document.querySelector(`.corridor-picker .route-row[data-route="${strandRoute.id}"]`);
-              if (row && !row.classList.contains("is-hovered")) row.classList.add("is-hovered");
+          if (selected && selected.type === "route") {
+            // When a route is actively selected and displaying its info,
+            // hovering other routes must NOT highlight them or pop up other route tooltips.
+            if (!strandRoute || strandRoute.id !== selected.id) {
+              setHover(null);
+            } else {
+              cur = { kind: "line", id: ln.r, cat: ln.f.properties.cat };
+              map.getCanvas().style.cursor = "pointer";
+              const rs = ln.routes, r = strandRoute || rs[0];
+              const nal = r ? routeAlerts(r.id) : [];
+              const more = (ln.n > 1 ? `<span class="tt-more">${ln.n} routes share this street</span>` : "")
+                + (nal.length ? `<span class="tt-alert al-${LEVEL[nal[0].level][0]}">${alertIcon(nal[0].level)}${nal.length === 1 ? esc(LEVEL[nal[0].level][1]) : `${nal.length} alerts`}</span>` : "");
+              const schedInfo = routeServiceDesc(r);
+              const tr = getThroughRouteInfo(r);
+              const trInfo = tr && tr.partners.length
+                ? `<span class="tt-tr">${poiIconSVG("transfer", 14)} Stay on bus: continues as ${tr.partners.map((p) => routeTitle(p)).join("/")} through Downtown</span>`
+                : "";
+              tipShow("line:" + (r ? r.id : ""), `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}${schedInfo}${trInfo}${more}</span>`, "", ev(e));
+              return;
             }
-          } else if (ln.f) {
-            focusCorridor(ln.f);
+          } else {
+            cur = { kind: "line", id: ln.r, cat: ln.f.properties.cat };
+            map.getCanvas().style.cursor = "pointer";
+            if (strandRoute) {
+              focusRoute(strandRoute);
+              if (panelView === "corridor") {
+                document.querySelectorAll(".route-row.is-hovered").forEach((el) => {
+                  if (el.dataset.route !== strandRoute.id) el.classList.remove("is-hovered");
+                });
+                const row = document.querySelector(`.corridor-picker .route-row[data-route="${strandRoute.id}"]`);
+                if (row && !row.classList.contains("is-hovered")) row.classList.add("is-hovered");
+              }
+            } else if (ln.f) {
+              focusCorridor(ln.f);
+            }
+            const rs = ln.routes, r = strandRoute || rs[0];
+            const nal = r ? routeAlerts(r.id) : [];
+            const more = (ln.n > 1 ? `<span class="tt-more">${ln.n} routes share this street · Hovering ${esc(routeTitle(r))}</span>` : "")
+              + (nal.length ? `<span class="tt-alert al-${LEVEL[nal[0].level][0]}">${alertIcon(nal[0].level)}${nal.length === 1 ? esc(LEVEL[nal[0].level][1]) : `${nal.length} alerts`}</span>` : "");
+            const schedInfo = routeServiceDesc(r);
+            const tr = getThroughRouteInfo(r);
+            const trInfo = tr && tr.partners.length
+              ? `<span class="tt-tr">${poiIconSVG("transfer", 14)} Stay on bus: continues as ${tr.partners.map((p) => routeTitle(p)).join("/")} through Downtown</span>`
+              : "";
+            tipShow("line:" + (r ? r.id : "") + ":" + rs.map((x) => x.id).join(","), `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}${schedInfo}${trInfo}${more}</span>`, "", ev(e));
+            return;
           }
-          const rs = ln.routes, r = strandRoute || rs[0];
-          const nal = r ? routeAlerts(r.id) : [];
-          const more = (ln.n > 1 ? `<span class="tt-more">${ln.n} routes share this street · Hovering ${esc(routeTitle(r))}</span>` : "")
-            + (nal.length ? `<span class="tt-alert al-${LEVEL[nal[0].level][0]}">${alertIcon(nal[0].level)}${nal.length === 1 ? esc(LEVEL[nal[0].level][1]) : `${nal.length} alerts`}</span>` : "");
-          const schedInfo = routeServiceDesc(r);
-          const tr = getThroughRouteInfo(r);
-          const trInfo = tr && tr.partners.length
-            ? `<span class="tt-tr">${poiIconSVG("transfer", 14)} Stay on bus: continues as ${tr.partners.map((p) => routeTitle(p)).join("/")} through Downtown</span>`
-            : "";
-          tipShow("line:" + (r ? r.id : "") + ":" + rs.map((x) => x.id).join(","), `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}${schedInfo}${trInfo}${more}</span>`, "", ev(e));
-          return;
         }
         const trailHover = map.queryRenderedFeatures([[e.point.x - 6, e.point.y - 6], [e.point.x + 6, e.point.y + 6]], {
           layers: ["trail-pbl", "trail-greenway", "trail-lane", "trail-sharrow", "trail-dash"].filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none")
@@ -8701,21 +8742,25 @@
             const df = dartHits[0];
             const dp = df.properties || {};
             const rSlug = dp.slug || (dp.route ? ("metro-" + dp.route) : null);
-            const r = rSlug ? RBY[rSlug] : null;
-            cur = { kind: "dart", id: rSlug || dp.route };
-            map.getCanvas().style.cursor = "pointer";
-            highlightDartArea(rSlug || dp.route);
-            if (r && !(selected && selected.type === "route")) {
-              focusRoute(r);
+            if (selected && selected.type === "route" && selected.id !== (rSlug || dp.route)) {
+              // Skip hovering other routes' DART areas when a route is selected
+            } else {
+              const r = rSlug ? RBY[rSlug] : null;
+              cur = { kind: "dart", id: rSlug || dp.route };
+              map.getCanvas().style.cursor = "pointer";
+              highlightDartArea(rSlug || dp.route);
+              if (r && !(selected && selected.type === "route")) {
+                focusRoute(r);
+              }
+              tipShow(
+                "dart:" + (rSlug || dp.route),
+                (r ? badgeHTML(r) : "") +
+                `<span class="tt"><b>Dial-a-Ride (DART) Area · Route ${esc(dp.route)}</b>${r ? `<br>${esc(r.name)}` : ""}<br><span style="color:var(--accent);font-weight:600">Flexible on-demand service area · Tap to explore</span></span>`,
+                "",
+                ev(e)
+              );
+              return;
             }
-            tipShow(
-              "dart:" + (rSlug || dp.route),
-              (r ? badgeHTML(r) : "") +
-              `<span class="tt"><b>Dial-a-Ride (DART) Area · Route ${esc(dp.route)}</b>${r ? `<br>${esc(r.name)}` : ""}<br><span style="color:var(--accent);font-weight:600">Flexible on-demand service area · Tap to explore</span></span>`,
-              "",
-              ev(e)
-            );
-            return;
           }
         }
         cur = null;

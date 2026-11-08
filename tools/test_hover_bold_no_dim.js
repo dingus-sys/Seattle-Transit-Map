@@ -9,7 +9,7 @@ const appCode = fs.readFileSync("web/app.js", "utf8");
 console.log("=== HOVER BOLD WITHOUT DIMMING & CLICK DIMMING TEST ===");
 
 // 1. Verify pickLine hover handler bolds route without calling setNetDim
-const pickLineSection = appCode.substring(appCode.indexOf("const ln = pickLine(e.point);"), appCode.indexOf("const ln = pickLine(e.point);") + 600);
+const pickLineSection = appCode.substring(appCode.indexOf("const ln = pickLine(e.point);"), appCode.indexOf("const ln = pickLine(e.point);") + 2500);
 assert(pickLineSection.includes("focusRoute(strandRoute);"), "Hovering a line must call focusRoute to bold the route");
 assert(!pickLineSection.includes("setNetDim("), "Hovering a line must NOT call setNetDim (other lines must not dim on hover)");
 console.log("PASS 1: Map line hover bolds route without dimming other lines");
