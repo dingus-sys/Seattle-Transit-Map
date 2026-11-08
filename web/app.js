@@ -765,9 +765,11 @@
       clock: '<path d="M12 3a9 9 0 1 0 9 9 9 9 0 0 0-9-9Zm0 16.2A7.2 7.2 0 1 1 19.2 12 7.2 7.2 0 0 1 12 19.2Zm.75-11.2h-1.5v4.5l3.5 2.1.75-1.2-2.75-1.65Z"/>',
       night: '<path d="M20 15.5A8 8 0 0 1 8.5 4 8 8 0 1 0 20 15.5Z"/>',
       transfer: '<path d="M7 3 3 7l4 4M3 7h12a4 4 0 0 1 4 4v1M17 21l4-4-4-4m4 4H9a4 4 0 0 1-4-4v-1"/>',
-      book: '<path d="M4 4h7a3 3 0 0 1 3 3v13a3 3 0 0 0-3-3H4V4Zm16 0h-7a3 3 0 0 0-3 3v13a3 3 0 0 1 3-3h7V4Z"/>',
+      book: '<g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3.5h6a4 4 0 0 1 4 4v13.5a3 3 0 0 0-3-3H2z"/><path d="M22 3.5h-6a4 4 0 0 0-4 4v13.5a3 3 0 0 1 3-3h7z"/><path d="M12 7.5v13.5"/></g>',
+      legend: '<g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3.5h6a4 4 0 0 1 4 4v13.5a3 3 0 0 0-3-3H2z"/><path d="M22 3.5h-6a4 4 0 0 0-4 4v13.5a3 3 0 0 1 3-3h7z"/><path d="M12 7.5v13.5"/></g>',
+      guide: '<g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3.5h6a4 4 0 0 1 4 4v13.5a3 3 0 0 0-3-3H2z"/><path d="M22 3.5h-6a4 4 0 0 0-4 4v13.5a3 3 0 0 1 3-3h7z"/><path d="M12 7.5v13.5"/></g>',
       shield: '<path d="M12 2 20 5v6c0 5-3.4 9-8 11-4.6-2-8-6-8-11V5l8-3Zm0 5v8m-4-4h8"/>',
-      map: '<path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6Zm6-3v15m6-12v15"/>',
+      map: '<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6z"/><path d="M9 3v15m6-12v15"/></g>',
       star: '<path d="m12 2 2.75 5.57L21 8.48l-4.5 4.38 1.06 6.19L12 16.16l-5.56 2.9 1.06-6.19L3 8.48l6.25-.91L12 2Z"/>',
       close: '<path d="m5 5 14 14M19 5 5 19"/>',
       live: '<circle cx="12" cy="12" r="3"/><path d="M5 12a7 7 0 0 1 7-7m7 7a7 7 0 0 0-7-7M5 12a7 7 0 0 0 7 7m7-7a7 7 0 0 1-7 7"/>',
@@ -3798,7 +3800,7 @@
           <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="m1.5 1.5 5 5.5-5 5.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button></li>
         <li><button class="row nav-row" id="openLegendGuide" type="button">
-          <span class="icon" style="background:#2563eb;color:#fff;display:flex;align-items:center;justify-content:center;border-radius:8px">${poiIconSVG("book", 17)}</span>
+          <span class="icon" style="background:#2563eb;color:#fff;display:flex;align-items:center;justify-content:center;border-radius:8px">${poiIconSVG("book", 18)}</span>
           <span class="txt"><span class="name">Transit Map Guide & Legend</span><span class="desc">Service levels, bus runs & symbols</span></span>
           <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="m1.5 1.5 5 5.5-5 5.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button></li>
