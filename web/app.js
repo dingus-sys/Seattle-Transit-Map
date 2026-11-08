@@ -395,7 +395,9 @@
       { id: "park", type: "fill", source: "base", "source-layer": "park", paint: { "fill-color": P.park } },
       { id: "cemetery", type: "fill", source: "base", "source-layer": "landuse", filter: ["==", ["get", "class"], "cemetery"], paint: { "fill-color": P.park } },
       { id: "water", type: "fill", source: "base", "source-layer": "water", filter: ["!=", ["get", "brunnel"], "tunnel"], paint: { "fill-color": P.water } },
-      { id: "waterway", type: "line", source: "base", "source-layer": "waterway", minzoom: 11,
+      // Tile data contains a few unnamed hydrographic traces across open lake
+      // water. They look like broken ship routes, so only draw named waterways.
+      { id: "waterway", type: "line", source: "base", "source-layer": "waterway", minzoom: 11, filter: ["has", "name"],
         paint: { "line-color": P.waterLine, "line-width": ["interpolate", ["linear"], ["zoom"], 11, 0.5, 16, 2.5] } },
       { id: "runway", type: "line", source: "base", "source-layer": "aeroway", filter: ["==", ["get", "class"], "runway"],
         paint: { "line-color": P.runway, "line-width": ["interpolate", ["exponential", 1.8], ["zoom"], 10, 2, 16, 40] } },
@@ -802,13 +804,28 @@
     "dest-uw", "dest-childrens", "dest-colman-dock", "dest-pier-50", "dest-woodland-zoo",
     "dest-museum-flight", "dest-green-lake", "dest-alki-beach", "dest-tacoma-dome"
   ]);
-  const DESTINATION_LAYER_IDS = ["destinations-major-icon", "destinations-major-label", "destinations-icon", "destinations-label"];
+  // The transparent circle is an intentionally generous, direct-tap target for
+  // every custom POI, including a label or glyph that MapLibre has collided out.
+  const DESTINATION_LAYER_IDS = ["destinations-hit", "destinations-major-icon", "destinations-major-label", "destinations-icon", "destinations-label"];
 
   function destLayers(P) {
     const dark = theme === "dark";
     const major = [">=", ["get", "rank"], 2];
     const detail = ["<", ["get", "rank"], 2];
     return [
+      {
+        id: "destinations-hit",
+        type: "circle",
+        source: "destinations",
+        minzoom: 9.6,
+        paint: {
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 9.6, 22, 14, 26],
+          // Near-transparent rather than fully transparent so MapLibre keeps
+          // the feature in its rendered-feature hit-test index.
+          "circle-opacity": 0.01,
+          "circle-stroke-opacity": 0,
+        },
+      },
       // A small, curated set of regional anchors: unlike ordinary tile POIs,
       // these icons never disappear in a collision and are visible before the
       // detailed custom destinations below.
@@ -903,6 +920,15 @@
       }
       destRoutes = [...nearbyRouteIds].map((id) => RBY[id]).filter((r) => r && LINEIDX[r.id] != null).sort(tagOrder);
     } catch (_) {}
+    // A destination behaves like a compact route focus: its nearby transit
+    // stays bright, while every unrelated line fades into the background.
+    if (destRoutes.length) {
+      setNetDim(0.18);
+      focusRoutes(destRoutes, true, { glow: true, widthScale: 1.45 });
+    } else {
+      setNetDim(0.38);
+      focusOff();
+    }
     const html = `${backBtn}
       <div class="destination-view">
         <div class="hero">
@@ -944,6 +970,9 @@
     $("#back").addEventListener("click", () => {
       selected = null;
       panelView = null;
+      setNetDim(1);
+      focusOff();
+      showRouteStops(null);
       showHome();
     });
     body().querySelectorAll("[data-dest-route]").forEach((b) => {
