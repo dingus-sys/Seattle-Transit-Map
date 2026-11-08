@@ -2067,4 +2067,347 @@ td.sched-cell-now {
   cursor: pointer;
 }
 
+/* Route view: Next Departures & Live ETA (Transit App inspired) */
+.route-departures-card {
+  margin: 14px 0 16px;
+  background: var(--group);
+  border: .5px solid var(--hairline);
+  border-radius: 18px;
+  padding: 12px 14px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .03);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.rd-header-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.rd-section-title {
+  margin: 0;
+  font: 700 12.5px/1.2 var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--muted);
+}
+.rd-live-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.rd-live-tag.is-live {
+  color: var(--on);
+}
+.rd-live-tag .pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--on);
+  animation: pulse-ring 1.8s ease-out infinite;
+}
+.rd-origin-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--fill);
+  border-radius: 12px;
+}
+.rd-origin-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.rd-origin-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: var(--glass-solid);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .08);
+}
+.rd-origin-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.rd-origin-sub {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 550;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rd-origin-name {
+  font: 650 13px/1.25 var(--font-display);
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rd-origin-walk {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  flex-shrink: 0;
+}
+.rd-walk-min {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.rd-walk-dist {
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.rd-hint-pill {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--fill-2);
+  padding: 3px 8px;
+  border-radius: 99px;
+  flex-shrink: 0;
+}
+/* Main Transit App style inner departures card */
+.rd-card-body {
+  background: var(--glass-solid);
+  border: .5px solid var(--hairline);
+  border-radius: 14px;
+  padding: 12px 12px 8px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .04);
+}
+.rd-route-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 9px;
+  border-bottom: .5px solid var(--hairline);
+  margin-bottom: 8px;
+}
+.rd-route-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.rd-route-badge .badge {
+  font-size: 13px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 6px;
+}
+.rd-route-headsign {
+  font: 650 14px/1.2 var(--font-display);
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rd-hero-eta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  font: 750 16px/1 var(--font-display);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.rd-hero-eta.is-live {
+  color: #16a34a;
+}
+:root[data-theme="dark"] .rd-hero-eta.is-live {
+  color: #4ade80;
+}
+.rd-live-waves {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #16a34a;
+  flex-shrink: 0;
+}
+:root[data-theme="dark"] .rd-live-waves {
+  color: #4ade80;
+}
+.rd-live-waves svg {
+  display: block;
+}
+.rd-dep-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.rd-dep-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 6px;
+  border-radius: 8px;
+  transition: background-color .15s ease;
+}
+.rd-dep-row:hover {
+  background: var(--fill);
+}
+.rd-dep-dest-col {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.rd-dep-dest-name {
+  font: 550 13px/1.2 var(--font);
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rd-dep-agency-tag {
+  font-size: 10px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  color: var(--muted);
+  background: var(--fill);
+  padding: 2px 5px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.rd-dep-time-col {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  font: 700 13px/1 var(--font-mono);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.rd-dep-time-col.is-live {
+  color: #16a34a;
+}
+:root[data-theme="dark"] .rd-dep-time-col.is-live {
+  color: #4ade80;
+}
+.rd-footer {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: .5px solid var(--hairline);
+}
+.rd-all-deps-btn {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 6px 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font: 600 12.5px/1 var(--font);
+  color: var(--accent);
+  cursor: pointer;
+  border-radius: 8px;
+  transition: background-color .15s ease;
+}
+.rd-all-deps-btn:hover {
+  background: var(--fill);
+}
+.rd-all-deps-btn .rd-chev {
+  color: var(--muted);
+}
+.rd-no-deps {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 8px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+.rd-no-deps strong {
+  color: var(--ink-2);
+  display: block;
+  margin-bottom: 2px;
+}
+.rd-no-deps p {
+  margin: 0;
+}
+.rd-no-deps-icon {
+  margin-top: 1px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+@keyframes deps-highlight {
+  0% { box-shadow: 0 0 0 0 rgba(0, 122, 255, .5); }
+  50% { box-shadow: 0 0 0 6px rgba(0, 122, 255, .25); }
+  100% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0); }
+}
+.route-departures-card.deps-pulse {
+  animation: deps-highlight 1.2s ease-out;
+}
+
+/* Stop list item refinements for departure selection */
+.stop-row-btn {
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  gap: 8px !important;
+  width: 100%;
+}
+.stop-row-btn.is-active {
+  background: var(--fill) !important;
+  font-weight: 600;
+}
+.stop-row-btn.is-active::before {
+  background: var(--line-c, var(--accent)) !important;
+  box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--line-c, var(--accent)) !important;
+  transform: scale(1.2);
+}
+.stop-row-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+.stop-row-right {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+}
+.stop-active-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  color: #fff;
+  background: var(--line-c, var(--accent));
+  padding: 2px 7px;
+  border-radius: 99px;
+}
+.stop-tap-hint {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 500;
+  opacity: 0;
+  transition: opacity .15s ease;
+}
+.stop-row-btn:hover .stop-tap-hint {
+  opacity: 1;
+}
+
+
 

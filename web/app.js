@@ -813,6 +813,7 @@
       shield: '<g fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5 19.5 5.5v5.5c0 5-3.2 9-7.5 10.5C7.7 20 4.5 16 4.5 11V5.5L12 2.5z"/><path d="M12 7.5v7.5M8.5 11.2h7"/></g>',
       map: '<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6z"/><path d="M9 3v15m6-12v15"/></g>',
       star: '<g fill="currentColor" stroke="none"><path d="m12 2.5 2.8 5.6 6.2.9-4.5 4.4 1.1 6.1L12 16.6l-5.6 2.9 1.1-6.1-4.5-4.4 6.2-.9L12 2.5z"/></g>',
+      signal: '<g fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round"><path d="M4.5 10.5a10.6 10.6 0 0 1 15 0M7.5 13.5a6.4 6.4 0 0 1 9 0M10.5 16.5a2.1 2.1 0 0 1 3 0"/><circle cx="12" cy="19.5" r="1.1" fill="currentColor" stroke="none"/></g>',
       close: '<g fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 5.5l13 13M18.5 5.5l-13 13"/></g>',
       live: '<g fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"/><path d="M8.2 8.2a5.5 5.5 0 0 0 0 7.6M15.8 8.2a5.5 5.5 0 0 1 0 7.6M5 5a10 10 0 0 0 0 14M19 5a10 10 0 0 1 0 14"/></g>',
       snow: '<g fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5v19M3.5 7.5l17 9M20.5 7.5l-17 9M8.5 4.5l3.5 2 3.5-2M8.5 19.5l3.5-2 3.5 2"/></g>',
@@ -2674,6 +2675,9 @@
       const running = (live.current || []).filter((v) => v.r && v.r.id === selected.id), n = running.length;
       chip.hidden = !enabled.has("live") || !live.mode;
       chip.querySelector("span.n").textContent = (n === 0 ? "None running right now" : `${n} running now`) + (live.mode === "est" || n > 0 && running.every((v) => v.est) ? " (timetable)" : "");
+      if (typeof refreshRouteDeparturesCard === "function" && document.getElementById("routeDepsCardSlot")) {
+        refreshRouteDeparturesCard();
+      }
     }
   }
   let liveAnimRaf = 0, lastAnimMs = 0, lastActiveTime = Date.now();
@@ -3258,6 +3262,320 @@
     return h + "</div>";
   }
 
+  // ---------------------------------------------------------------- route departures & live ETA
+  let activeRouteStop = null;
+  let activeRoutePatIdx = 0;
+  let activeRouteObj = null;
+
+  function getRouteDeparturesForStop(r, stop, pat = null) {
+    if (!r || !stop) return { list: [], hasLive: false, heroEta: null, stop: null };
+    const st = typeof stop === "object" && stop ? stop : (stopIndex[stop] || { id: stop, key: stop, name: STOPNAMES[stop] || stop });
+    const keys = [...new Set([st.key, ...((st.stops || []).map((sid) => stopIndex[sid] && stopIndex[sid].key).filter(Boolean))])];
+    const stopIds = stopIdsOf(st);
+    const now = pacificNow();
+    const nowSecs = now.secs;
+
+    // 1. Live departures from OneBusAway (if cached)
+    const live = liveDepartures(stopIds, 25);
+    const liveMatches = [];
+    if (live && live.length) {
+      for (const d of live) {
+        if (!d.r) continue;
+        const match = (d.r.id === r.id || d.r.short === r.short || d.r.label === r.label || d.r === r);
+        if (!match) continue;
+        liveMatches.push({
+          t: d.t,
+          isLive: !!d.live,
+          toName: d.toName || (pat ? (pat.headsign || placeName(pat.stops[pat.stops.length - 1])) : ""),
+          occ: d.occ
+        });
+      }
+    }
+
+    // 2. Scheduled departures from timetable (DEP & SCHED)
+    const schedMatches = [];
+    if (SCHED && DEP) {
+      for (const k of keys) {
+        for (const [pi, i] of DEP.get(k) || []) {
+          const p = SCHED.patterns[pi];
+          if (!p || !p.f || i >= p.f.length - 1) continue;
+          const rObj = ROUTES[p.r];
+          if (!rObj || (rObj.id !== r.id && rObj.label !== r.label)) continue;
+          const toSid = p.s[p.s.length - 1];
+          const toName = placeName(toSid);
+          for (const [day, off] of [[now.day, 0], [now.prev, 86400]]) {
+            for (const [s0, du] of (SCHED.byPat[day] && SCHED.byPat[day].get(pi)) || []) {
+              const t = s0 + p.f[i] * du - off - nowSecs;
+              if (t < -20 || t > 7200) continue; // within 2 hours
+              schedMatches.push({
+                t,
+                isLive: false,
+                toName: toName || (pat ? (pat.headsign || placeName(pat.stops[pat.stops.length - 1])) : "")
+              });
+            }
+          }
+        }
+      }
+    }
+
+    // Sort and combine:
+    let list = [];
+    if (liveMatches.length > 0) {
+      liveMatches.sort((a, b) => a.t - b.t);
+      const deduped = [];
+      for (const d of liveMatches) {
+        if (!deduped.some((x) => Math.abs(x.t - d.t) < 120)) deduped.push(d);
+      }
+      list = deduped;
+      if (list.length < 4 && schedMatches.length > 0) {
+        const maxLiveT = Math.max(...list.map((d) => d.t));
+        const laterSched = schedMatches.filter((d) => d.t > maxLiveT + 150).sort((a, b) => a.t - b.t);
+        for (const sd of laterSched) {
+          if (!list.some((x) => Math.abs(x.t - sd.t) < 120)) {
+            list.push(sd);
+            if (list.length >= 4) break;
+          }
+        }
+      }
+    } else {
+      schedMatches.sort((a, b) => a.t - b.t);
+      const deduped = [];
+      for (const d of schedMatches) {
+        if (!deduped.some((x) => Math.abs(x.t - d.t) < 120)) deduped.push(d);
+        if (deduped.length >= 4) break;
+      }
+      list = deduped;
+    }
+
+    const formatted = list.slice(0, 5).map((d) => {
+      const waitMin = Math.max(0, Math.round(d.t / 60));
+      let timeText = "";
+      if (d.t < 60) {
+        timeText = "Due now";
+      } else if (d.t < 3600) {
+        timeText = `${waitMin} min`;
+      } else {
+        const dt = new Date(Date.now() + Math.max(0, d.t) * 1000);
+        timeText = CLOCK.format(dt);
+      }
+      return {
+        ...d,
+        waitMin,
+        timeText
+      };
+    });
+
+    let heroEta = null;
+    if (formatted.length > 0) {
+      const first = formatted[0];
+      heroEta = {
+        isLive: first.isLive,
+        text: first.t < 60 ? "Due now" : `in ${first.waitMin} min`
+      };
+    }
+
+    return {
+      list: formatted,
+      hasLive: formatted.some((d) => d.isLive),
+      heroEta,
+      stop: st
+    };
+  }
+
+  function routeDeparturesCardHTML(r, stop, pat, depData) {
+    if (!stop) return "";
+    const name = stop.name || STOPNAMES[stop.id] || stop.id;
+    const bayMatch = name.match(/\bBay\s+([A-Z0-9]+)\b/i);
+    const bayBadge = bayMatch ? `<span class="bay-pill">Bay ${esc(bayMatch[1])}</span>` : "";
+    const cleanName = name.replace(/\s*-\s*Bay\s+[A-Z0-9]+/i, "").trim();
+
+    let hasWalk = false, walkMin = 0, walkDist = 0;
+    if (userCoords && stop.lat && stop.lon) {
+      walkDist = Math.round(distMeters(userCoords.lat, userCoords.lng, stop.lat, stop.lon));
+      if (walkDist <= 3000) {
+        hasWalk = true;
+        walkMin = Math.max(1, Math.round(walkDist / 75));
+      }
+    }
+
+    const headsignText = (pat?.headsign || routeTitle(r)).replace(/^to\s+/i, "");
+    const list = depData?.list || [];
+    const hasLive = depData?.hasLive || false;
+    const heroEta = depData?.heroEta;
+    const heroText = heroEta ? heroEta.text : "No service right now";
+    const heroIsLive = heroEta ? heroEta.isLive : false;
+
+    let agencyTag = "Metro Bus";
+    if (r.cat === "rapidride") agencyTag = "RapidRide";
+    else if (r.cat === "link") agencyTag = "Link Light Rail";
+    else if (r.cat === "sounder") agencyTag = "Sounder Train";
+    else if (r.cat === "streetcar") agencyTag = "Streetcar";
+    else if (r.cat === "ferry") agencyTag = "WSF Ferry";
+    else if (r.agency === "Community Transit") agencyTag = "Community Transit";
+    else if (r.agency === "Sound Transit") agencyTag = "Sound Transit";
+    else if (r.agency === "Pierce Transit") agencyTag = "Pierce Transit";
+    else if (r.agency === "Everett Transit") agencyTag = "Everett Transit";
+    else if (r.agency === "Kitsap Transit") agencyTag = "Kitsap Transit";
+    else if (r.agency) agencyTag = r.agency;
+
+    let rowsHTML = "";
+    if (list.length > 0) {
+      rowsHTML = list.map((d) => `
+        <div class="rd-dep-row">
+          <div class="rd-dep-dest-col">
+            <span class="rd-dep-dest-name">${esc(d.toName || headsignText)}</span>
+            <span class="rd-dep-agency-tag">${esc(agencyTag)}</span>
+          </div>
+          <div class="rd-dep-time-col${d.isLive ? " is-live" : ""}">
+            ${d.isLive ? `<span class="rd-live-waves" aria-hidden="true" title="Real-time GPS prediction">${poiIconSVG("signal", 13)}</span>` : ""}
+            <span class="rd-dep-time-text">${esc(d.timeText)}</span>
+          </div>
+        </div>
+      `).join("");
+    } else {
+      const w = r.sched?.weekday;
+      const hoursHint = w ? `Operates ${esc(w.first.replace(" ", " "))} – ${esc(w.last.replace(" ", " "))}` : "See full schedule table below.";
+      rowsHTML = `
+        <div class="rd-no-deps">
+          <span class="rd-no-deps-icon">${poiIconSVG("clock", 16)}</span>
+          <div class="rd-no-deps-text">
+            <strong>No upcoming departures in next 90 minutes</strong>
+            <p>${esc(hoursHint)}</p>
+          </div>
+        </div>
+      `;
+    }
+
+    return `
+      <div class="route-departures-card" id="routeDepsCard">
+        <div class="rd-header-bar">
+          <h3 class="rd-section-title">Next departures & ETA</h3>
+          <span class="rd-live-tag${hasLive ? " is-live" : ""}">
+            ${hasLive ? `<span class="pulse" aria-hidden="true"></span>Live GPS predictions` : `Timetable schedule`}
+          </span>
+        </div>
+
+        <div class="rd-origin-bar">
+          <div class="rd-origin-left">
+            <span class="rd-origin-icon">${hasWalk ? poiIconSVG("walk", 16) : poiIconSVG("bus", 16)}</span>
+            <div class="rd-origin-text">
+              <span class="rd-origin-sub">${hasWalk ? "Walk to boarding stop" : "Boarding stop · Tap any stop below to change"}</span>
+              <span class="rd-origin-name">${esc(cleanName)}${bayBadge}</span>
+            </div>
+          </div>
+          ${hasWalk ? `
+            <div class="rd-origin-walk">
+              <span class="rd-walk-min">${walkMin} min</span>
+              <span class="rd-walk-dist">${walkDist}m</span>
+            </div>` : `<span class="rd-hint-pill">Active Stop</span>`}
+        </div>
+
+        <div class="rd-card-body">
+          <div class="rd-route-hero">
+            <div class="rd-route-meta">
+              <span class="rd-route-badge">${badgeHTML(r, "sm")}</span>
+              <span class="rd-route-headsign">${esc(headsignText)}</span>
+            </div>
+            <div class="rd-hero-eta${heroIsLive ? " is-live" : ""}">
+              ${heroIsLive ? `<span class="rd-live-waves" aria-hidden="true">${poiIconSVG("signal", 14)}</span>` : ""}
+              <span class="rd-hero-eta-val">${esc(heroText)}</span>
+            </div>
+          </div>
+
+          <div class="rd-dep-list" id="rdDepList">
+            ${rowsHTML}
+          </div>
+
+          <div class="rd-footer">
+            <button type="button" class="rd-all-deps-btn press" id="rdAllDepsBtn" data-stop="${esc(stop.key || stop.id)}" title="View all routes and full timetable at this stop">
+              <span>All departures at this stop</span>
+              <svg class="rd-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function bindRouteDeparturesEvents() {
+    const slot = document.getElementById("routeDepsCardSlot");
+    if (!slot) return;
+    const allBtn = slot.querySelector("#rdAllDepsBtn");
+    if (allBtn) {
+      allBtn.addEventListener("click", () => {
+        if (activeRouteStop) selectStop(activeRouteStop.key || activeRouteStop.id);
+      });
+    }
+  }
+
+  function refreshRouteDeparturesCard() {
+    const slot = document.getElementById("routeDepsCardSlot");
+    if (!slot || !activeRouteObj || !activeRouteStop) return;
+    const r = activeRouteObj;
+    const pats = (r.patterns || []).filter((p) => p.stops && p.stops.length);
+    const pat = pats[activeRoutePatIdx] || pats[0];
+    const depData = getRouteDeparturesForStop(r, activeRouteStop, pat);
+    slot.innerHTML = routeDeparturesCardHTML(r, activeRouteStop, pat, depData);
+    bindRouteDeparturesEvents();
+  }
+
+  function handleRouteStopClick(stopId) {
+    if (!selected || selected.type !== "route" || !activeRouteObj) return false;
+    const r = activeRouteObj;
+    const pats = (r.patterns || []).filter((p) => p.stops && p.stops.length);
+    if (!pats.length) return false;
+
+    let foundPatIdx = -1;
+    for (let i = 0; i < pats.length; i++) {
+      if (pats[i].stops.includes(stopId)) {
+        foundPatIdx = i;
+        break;
+      }
+    }
+    if (foundPatIdx === -1) {
+      const targetKey = stopIndex[stopId]?.key || stopId;
+      for (let i = 0; i < pats.length; i++) {
+        if (pats[i].stops.some((sid) => (stopIndex[sid]?.key || sid) === targetKey)) {
+          foundPatIdx = i;
+          break;
+        }
+      }
+    }
+    if (foundPatIdx === -1) return false;
+
+    if (foundPatIdx !== activeRoutePatIdx) {
+      const tabBtns = body().querySelectorAll(".segmented button");
+      if (tabBtns[foundPatIdx]) {
+        tabBtns[foundPatIdx].click();
+      }
+    }
+
+    const st = stopIndex[stopId] || { id: stopId, key: stopId, name: STOPNAMES[stopId] || stopId };
+    activeRouteStop = st;
+
+    $("#stoplist")?.querySelectorAll(".stop-row-btn").forEach((btn) => {
+      const match = (btn.dataset.sid === stopId || btn.dataset.stop === (st.key || stopId));
+      btn.classList.toggle("is-active", match);
+      const rBadge = btn.querySelector(".stop-row-right");
+      if (rBadge) {
+        rBadge.innerHTML = match ? `<span class="stop-active-badge">Boarding</span>` : `<span class="stop-tap-hint">Departures</span>`;
+      }
+    });
+
+    if (st.lon && st.lat) {
+      map.flyTo({ center: [st.lon, st.lat], zoom: Math.max(map.getZoom(), 15), duration: 600 });
+      highlightStop({ type: "Feature", geometry: { type: "Point", coordinates: [st.lon, st.lat] }, properties: { id: st.id, name: st.name } });
+    }
+
+    refreshRouteDeparturesCard();
+    ensureDepartures(stopIdsOf(activeRouteStop), () => {
+      refreshRouteDeparturesCard();
+    });
+
+    return true;
+  }
+
+
   // one-way arrow: a small chevron in the line's color with a white edge
   function drawArrow(id) {
     const color = id.slice(4);
@@ -3350,14 +3668,14 @@
   }
   function clearSelection({ push = false } = {}) {
     if (panelView === "directions") return;
-    selected = null;
-    panelView = "home";
-    corridorRoutes = [];
+    selected = null; activeRouteStop = null; activeRouteObj = null;
+    panelView = "home"; corridorRoutes = [];
     setHash("", push);
     closePopup();
     if (typeof clearPlaceMarker === "function") clearPlaceMarker();
     rebuild();
     applySelectionStyle();
+    if (typeof highlightStop === "function") highlightStop(null);
     showRouteStops(null);
     highlightDartArea(null);
     showHome();
@@ -4745,11 +5063,17 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
           <span>Share</span>
         </button>
+        <button type="button" class="action-btn deps-action-btn press" id="routeViewDepsBtn" aria-label="View next departures and ETA">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <span>Departures</span>
+        </button>
       </div>
       ${snowBanner}
       ${routeBadgesHTML(r)}
       ${throughRouteHTML}
-      <div id="routeAlerts"></div>${r.id.startsWith("wsf-") ? showFerryInfo([...new Set(pats.flatMap((p) => p.stops).filter((id) => /^wsf-\d+$/.test(id)).map((id) => +id.slice(4)))]) : ""}
+      <div id="routeAlerts"></div>
+      <div id="routeDepsCardSlot"></div>
+      ${r.id.startsWith("wsf-") ? showFerryInfo([...new Set(pats.flatMap((p) => p.stops).filter((id) => /^wsf-\d+$/.test(id)).map((id) => +id.slice(4)))]) : ""}
       <div class="tiles">
         <div class="tile"><span class="k">Midday on weekdays</span><span class="v">${w && w.mid_n >= 3 ? "Every " : ""}${freq}</span></div>
         <div class="tile"><span class="k">Weekday hours</span><span class="v sm">${esc(span)}</span></div>
@@ -4786,6 +5110,15 @@
         url: `${location.origin}${location.pathname}#route-${r.id}`
       });
     });
+    $("#routeViewDepsBtn")?.addEventListener("click", () => {
+      const card = document.getElementById("routeDepsCard");
+      if (card) {
+        card.scrollIntoView({ behavior: "smooth", block: "center" });
+        card.classList.remove("deps-pulse");
+        void card.offsetWidth;
+        card.classList.add("deps-pulse");
+      }
+    });
     body().querySelectorAll(".through-route-card [data-tr-route]").forEach((b) => {
       const p = RBY[b.dataset.trRoute];
       if (!p) return;
@@ -4806,18 +5139,59 @@
         selectRoute(p.id, { fit: true });
       });
     });
+
+    activeRouteObj = r;
+    activeRoutePatIdx = 0;
+    const pickDefaultRouteStop = (patIdx) => {
+      const pat = pats[patIdx];
+      if (!pat || !pat.stops || !pat.stops.length) return null;
+      if (userCoords) {
+        let best = null, minD = Infinity;
+        for (const sid of pat.stops) {
+          const s = stopIndex[sid];
+          if (!s) continue;
+          const d = distMeters(userCoords.lat, userCoords.lng, s.lat, s.lon);
+          if (d < minD) { minD = d; best = s; }
+        }
+        if (best && minD <= 4000) return best;
+      }
+      const s0 = pat.stops[0];
+      return stopIndex[s0] || { id: s0, key: s0, name: STOPNAMES[s0] || s0 };
+    };
+    activeRouteStop = pickDefaultRouteStop(0);
+
     const renderStops = (i) => {
+      activeRoutePatIdx = i;
       const p = pats[i];
+      if (!p.stops.includes(activeRouteStop?.id)) {
+        activeRouteStop = pickDefaultRouteStop(i);
+        refreshRouteDeparturesCard();
+        if (activeRouteStop) {
+          ensureDepartures(stopIdsOf(activeRouteStop), () => refreshRouteDeparturesCard());
+        }
+      }
       $("#stoplist").innerHTML = p.stops.map((sid) => {
         const s = stopIndex[sid];
         const susp = s && stopIsSuspended(s.id);
         const name = s ? s.name : STOPNAMES[sid] || sid;
-        return `<li><button type="button" data-stop="${esc(s ? s.key : "")}" class="stop-row-btn${susp ? " is-suspended" : ""}">
-          <span class="stop-name${susp ? " suspended-text" : ""}">${esc(name)}</span>
-          ${susp ? `<span class="stop-susp-pill">${poiIconSVG("alert", 12)} Closed</span>` : ""}
-        </button></li>`;
+        const isActive = activeRouteStop && (activeRouteStop.id === sid || activeRouteStop.key === (s?.key || sid));
+        return `<li class="stop-item${isActive ? " is-active-departure" : ""}">
+          <button type="button" data-sid="${esc(sid)}" data-stop="${esc(s ? s.key : sid)}" class="stop-row-btn${isActive ? " is-active" : ""}${susp ? " is-suspended" : ""}" title="View next departures from this stop">
+            <span class="stop-row-left">
+              <span class="stop-name${susp ? " suspended-text" : ""}">${esc(name)}</span>
+              ${susp ? `<span class="stop-susp-pill">${poiIconSVG("alert", 12)} Closed</span>` : ""}
+            </span>
+            <span class="stop-row-right">
+              ${isActive ? `<span class="stop-active-badge">Boarding</span>` : `<span class="stop-tap-hint">Departures</span>`}
+            </span>
+          </button>
+        </li>`;
       }).join("");
-      for (const b of $("#stoplist").querySelectorAll("button")) b.addEventListener("click", () => { if (b.dataset.stop) selectStop(b.dataset.stop); });
+      for (const b of $("#stoplist").querySelectorAll(".stop-row-btn")) {
+        b.addEventListener("click", () => {
+          handleRouteStopClick(b.dataset.sid || b.dataset.stop);
+        });
+      }
       const tabs = [...body().querySelectorAll(".segmented button")];
       tabs.forEach((t) => t.setAttribute("aria-selected", String(+t.dataset.i === i)));
       const thumb = body().querySelector(".seg-thumb");
@@ -4832,6 +5206,10 @@
     if (pats.length) {
       renderStops(0);
       for (const t of body().querySelectorAll(".segmented button")) t.addEventListener("click", () => renderStops(+t.dataset.i));
+    }
+    refreshRouteDeparturesCard();
+    if (activeRouteStop) {
+      ensureDepartures(stopIdsOf(activeRouteStop), () => refreshRouteDeparturesCard());
     }
     fillRouteAlerts(r);
     if ($("#ferryInfo")) { fillFerryInfo(); loadFerryTerminals(); }
@@ -8849,7 +9227,11 @@
       // a tap right on a station's circle opens the station, even with a train or bus on top of it
       const onStation = map.getLayer("stations") && map.getLayoutProperty("stations", "visibility") !== "none"
         ? map.queryRenderedFeatures([[e.point.x - 4, e.point.y - 4], [e.point.x + 4, e.point.y + 4]], { layers: ["stations"] }) : [];
-      if (onStation.length) { selectStop(onStation[0].properties.id, { fly: false }); return; }
+      if (onStation.length) {
+        if (selected && selected.type === "route" && typeof handleRouteStopClick === "function" && handleRouteStopClick(onStation[0].properties.id)) return;
+        selectStop(onStation[0].properties.id, { fly: false });
+        return;
+      }
       // A nearby badge must not steal a tap meant for the shared route band.
       const vehicle = nearest(vehAt(e.point, isNarrow() ? 12 : 8), e.point);
       const vehicleRadius = isNarrow() ? (selected?.type === "route" ? 22 : 14) : 10;
@@ -8880,6 +9262,9 @@
         const f = hit.find((h) => h.layer.id === "stations") || hit[0];
         if (f.layer.id === "flex") {
           openPopup(f.geometry.coordinates, flexHTML(f.properties), "290px");
+          return;
+        }
+        if (selected && selected.type === "route" && typeof handleRouteStopClick === "function" && handleRouteStopClick(f.properties.id)) {
           return;
         }
         selectStop(f.properties.id, { fly: false });
