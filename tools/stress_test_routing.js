@@ -54,6 +54,7 @@ const stopIdsOf = (s) => [s.id, ...(s.stops || [])];
 
 // Extract EXACT routing functions from web/app.js
 const appCode = fs.readFileSync(path.join(ROOT, 'web/app.js'), 'utf8');
+const glyphBlock = appCode.slice(appCode.indexOf('  function poiIconSVG('), appCode.indexOf('  function poiKindFromBadge('));
 const block = appCode.slice(appCode.indexOf('let plannerStopsCache = null;'), appCode.indexOf('  function renderTripOnMap('));
 
 const routingModule = new Function(
@@ -63,6 +64,7 @@ const routingModule = new Function(
   function setNetDim() {}
   function focusOff() {}
   function highlightDartArea() {}
+  ${glyphBlock}
   ${block}
   return { distMeters, getPlannerStops, getStopToStation, findNearbyStops, timetableTripTimes, planTransitTrip, currentVehWord, modeIcon, getSoonestBus };
 `)(SCHED, DEP, ROUTES, RBY, LINEIDX, STOPS, NET, stopIndex, pacificNow, CLOCK, liveDepartures, stopIdsOf);
@@ -413,22 +415,22 @@ test('4.1 Exhaustive Route Verification: All 200+ routes in dataset have consist
 
     // Verify valid word
     assert(['train', 'ferry', 'streetcar', 'bus', 'walk'].includes(word), `Invalid vehWord ${word} on ${route.id}`);
-    // Verify valid icon
-    assert(['🚆', '⛴️', '🚊', '🚌', '🚶'].includes(icon), `Invalid icon ${icon} on ${route.id}`);
+    // Mode glyphs are custom SVGs, never platform emoji.
+    assert.match(icon, /<svg[^>]+class="poi-glyph"/, `Invalid vector glyph on ${route.id}`);
 
     // Mode-specific consistency checks
     if (['link', 'sounder', 'amtrak', 'monorail'].includes(route.cat)) {
       assert.equal(word, 'train', `Route ${route.id} (cat ${route.cat}) must be 'train'`);
-      assert.equal(icon, '🚆', `Route ${route.id} (cat ${route.cat}) must be '🚆'`);
+      assert.match(icon, /data-icon="train"/, `Route ${route.id} (cat ${route.cat}) must use the train glyph`);
     } else if (['ferry', 'watertaxi'].includes(route.cat)) {
       assert.equal(word, 'ferry', `Route ${route.id} (cat ${route.cat}) must be 'ferry'`);
-      assert.equal(icon, '⛴️', `Route ${route.id} (cat ${route.cat}) must be '⛴️'`);
+      assert.match(icon, /data-icon="ferry"/, `Route ${route.id} (cat ${route.cat}) must use the ferry glyph`);
     } else if (route.cat === 'streetcar') {
       assert.equal(word, 'streetcar', `Route ${route.id} must be 'streetcar'`);
-      assert.equal(icon, '🚊', `Route ${route.id} must be '🚊'`);
+      assert.match(icon, /data-icon="streetcar"/, `Route ${route.id} must use the streetcar glyph`);
     } else {
       assert.equal(word, 'bus', `Route ${route.id} (cat ${route.cat}) must be 'bus'`);
-      assert.equal(icon, '🚌', `Route ${route.id} (cat ${route.cat}) must be '🚌'`);
+      assert.match(icon, /data-icon="bus"/, `Route ${route.id} (cat ${route.cat}) must use the bus glyph`);
     }
 
     verifiedRoutes++;
@@ -449,20 +451,20 @@ test('4.2 Mode helpers accept both string category and route object, plus fallba
   assert.equal(currentVehWord('rapidride'), 'bus');
   assert.equal(currentVehWord('walk'), 'walk');
 
-  assert.equal(modeIcon('amtrak'), '🚆');
-  assert.equal(modeIcon('monorail'), '🚆');
-  assert.equal(modeIcon('watertaxi'), '⛴️');
-  assert.equal(modeIcon('ferry'), '⛴️');
-  assert.equal(modeIcon('streetcar'), '🚊');
-  assert.equal(modeIcon('rapidride'), '🚌');
-  assert.equal(modeIcon('walk'), '🚶');
+  assert.match(modeIcon('amtrak'), /data-icon="train"/);
+  assert.match(modeIcon('monorail'), /data-icon="train"/);
+  assert.match(modeIcon('watertaxi'), /data-icon="ferry"/);
+  assert.match(modeIcon('ferry'), /data-icon="ferry"/);
+  assert.match(modeIcon('streetcar'), /data-icon="streetcar"/);
+  assert.match(modeIcon('rapidride'), /data-icon="bus"/);
+  assert.match(modeIcon('walk'), /data-icon="walk"/);
 
   // Unknown / null / empty fallback
   assert.equal(currentVehWord(null), 'bus');
   assert.equal(currentVehWord(''), 'bus');
   assert.equal(currentVehWord('alien_spacecraft'), 'bus');
-  assert.equal(modeIcon(null), '🚌');
-  assert.equal(modeIcon(''), '🚌');
+  assert.match(modeIcon(null), /data-icon="bus"/);
+  assert.match(modeIcon(''), /data-icon="bus"/);
   totalAssertions += 21;
 });
 

@@ -704,8 +704,9 @@
     if (!map.hasImage(id)) map.addImage(id, { width: W, height: H, data: x.getImageData(0, 0, W, H).data }, { pixelRatio: dpr });
   }
 
-  // POIs use our own small SVG glyph family.  System emoji vary by platform
-  // (and read as Apple emoji on macOS), so never use them for destination UI.
+  // The interface uses one small SVG glyph family. System emoji vary by
+  // platform (and read as Apple emoji on macOS), so they are never used for
+  // destinations, trip planning, or map controls.
   function poiIconSVG(kind, size = 18) {
     const shapes = {
       school: '<path d="M2 9 12 4l10 5-10 5L2 9Zm4 3.1V17c2.3 2 7.7 2 12 0v-4.9l-6 3-6-3ZM21 10v6"/>',
@@ -718,12 +719,56 @@
       library: '<path d="M4 3h5v18H4V3Zm6 0h4v18h-4V3Zm5 2h5v16h-5V5Z"/>',
       ferry: '<path d="M3 13h18l-2 6H5l-2-6Zm3-8h12v7H6V5Zm2 2v3h3V7H8Zm5 0v3h3V7h-3ZM4 21c1.3-1 2.7-1 4 0 1.3-1 2.7-1 4 0 1.3-1 2.7-1 4 0"/>',
       civic: '<path d="M3 9 12 4l9 5v2H3V9Zm2 4h3v6H5v2h14v-2h-3v-6h3v-2H5v2Zm6 0h2v6h-2v-6Z"/>',
+      airplane: '<path d="m21 16-8-3-3-8-2 1 1 7-6 2v2l7-.5 3 4 2-1.5-2-3 7 1 1-1.3Z"/>',
+      marina: '<path d="M4 14h16l-2 5H6l-2-5Zm4-7h8v6H8V7Zm2 2v2h4V9h-4ZM3 21c1.5-1 3-1 4.5 0 1.5-1 3-1 4.5 0 1.5-1 3-1 4.5 0"/>',
+      beach: '<path d="M3 16h18M4 20c2-1.4 4-1.4 6 0 2-1.4 4-1.4 6 0M12 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm0-2v1m0 8v1M5.6 4.6l.8.8m11.2 0 .8-.8M4 8h1m14 0h1"/>',
+      dog: '<path d="M7 8.2C4 8.2 2 10.5 2 13.3 2 16 4.3 18 7 18c1.7 0 3.1-.8 4-2.1.9 1.3 2.3 2.1 4 2.1 2.7 0 5-2 5-4.7 0-2.8-2-5.1-5-5.1-1.2 0-2.3.4-3.1 1.1-.8-.7-1.9-1.1-3.1-1.1ZM7 2a2 2 0 1 1 0 4 2 2 0 0 1 0-4Zm10 0a2 2 0 1 1 0 4 2 2 0 0 1 0-4Z"/>',
+      golf: '<path d="M6 22h12M8 22V3m0 0h8l-2.6 3L16 9H8M8 15a4 4 0 1 0 8 0 4 4 0 0 0-8 0Z"/>',
+      water: '<path d="M3 9c2-2 4-2 6 0s4 2 6 0 4-2 6 0M3 15c2-2 4-2 6 0s4 2 6 0 4-2 6 0M3 20c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/>',
+      camp: '<path d="m3 20 8.7-15L21 20H3Zm6-5h6M12 5v10"/>',
+      theater: '<path d="M4 4h16v16H4V4Zm4 5h.01M16 9h.01M8 14c2.5 2 5.5 2 8 0"/>',
+      music: '<path d="M15 4v11.5a3 3 0 1 1-2-2.83V7l7-2v8.5a3 3 0 1 1-2-2.83V3l-3 1Z"/>',
+      tower: '<path d="M8 21h8M9 21l1-10h4l1 10M8 11h8l-4-8-4 8Zm3 3h2"/>',
+      bridge: '<path d="M2 19h20M4 19V9m16 10V9M4 9c4-5 12-5 16 0M7 19v-5m10 5v-5M2 14h20"/>',
+      viewpoint: '<path d="m2 20 7-11 4 6 3-4 6 9H2Zm7-11 1-2 2 3M5 5h4M7 3v4"/>',
+      market: '<path d="M5 8h14l-1 13H6L5 8Zm3 0V6a4 4 0 0 1 8 0v2M9 13h6"/>',
+      hotel: '<path d="M3 19v-7h18v7M5 12V7h6v5m0 0V9h5a3 3 0 0 1 3 3M2 21h20"/>',
+      coffee: '<path d="M4 6h13v9a5 5 0 0 1-10 0V6Zm13 2h2a2 2 0 0 1 0 4h-2M7 2c-1 1.2-1 2.2 0 3.2M11 2c-1 1.2-1 2.2 0 3.2"/>',
+      restaurant: '<path d="M6 3v8m-3-8v5a3 3 0 0 0 6 0V3m8 0v18m0-18c3 2 3 6 0 8"/>',
+      post: '<path d="M3 5h18v14H3V5Zm0 2 9 6 9-6"/>',
+      worship: '<path d="M4 21h16M7 21V10l5-6 5 6v11M12 2v5m-2 5h4m-4 4h4"/>',
+      pharmacy: '<path d="M9 2h6v7h7v6h-7v7H9v-7H2V9h7V2Z"/>',
+      bank: '<path d="M2 9 12 3l10 6v2H2V9Zm2 4h3v6H4v2h16v-2h-3v-6h3v-2H4v2Zm6 0h4v6h-4v-6Z"/>',
+      train: '<path d="M6 3h12a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3Zm1 5h10M8 21l2-3m4 0 2 3M7.5 14.5h.01m8.99 0h.01"/>',
+      streetcar: '<path d="M5 5h14a2 2 0 0 1 2 2v10H3V7a2 2 0 0 1 2-2Zm2 5h10M8 21l2-4m4 0 2 4M8 14h.01m7.99 0H16"/>',
+      bus: '<path d="M5 3h14a2 2 0 0 1 2 2v12H3V5a2 2 0 0 1 2-2Zm0 8h14M7 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm10 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/>',
+      parking: '<path d="M6 3h7a5 5 0 0 1 0 10H9v8H6V3Zm3 3v4h4a2 2 0 0 0 0-4H9Z"/>',
+      bike: '<path d="M6 18a3 3 0 1 1 0-6 3 3 0 0 1 0 6Zm12 0a3 3 0 1 1 0-6 3 3 0 0 1 0 6ZM6 15h5l-2-6h4m0 0 2 6h-4m2-6 2-3h3"/>',
+      home: '<path d="m3 11 9-8 9 8v10H5V11h-2Zm6 10v-6h6v6"/>',
+      walk: '<path d="M13 4a2 2 0 1 1-4 0 2 2 0 0 1 4 0Zm-1 4-2 4 3 2 2 6m-5-8-3 3-3-1m8-6 4 2"/>',
+      directions: '<path d="m3 11 18-8-8 18-2-8-8-2Z"/>',
+      external: '<path d="M14 4h6v6m0-6-9 9M19 14v5H5V5h5"/>',
+      calendar: '<path d="M4 5h16v16H4V5Zm0 5h16M8 2v6m8-6v6"/>',
+      clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+      night: '<path d="M20 15.5A8 8 0 0 1 8.5 4 8 8 0 1 0 20 15.5Z"/>',
+      transfer: '<path d="M7 3 3 7l4 4M3 7h12a4 4 0 0 1 4 4v1M17 21l4-4-4-4m4 4H9a4 4 0 0 1-4-4v-1"/>',
+      book: '<path d="M4 4h7a3 3 0 0 1 3 3v13a3 3 0 0 0-3-3H4V4Zm16 0h-7a3 3 0 0 0-3 3v13a3 3 0 0 1 3-3h7V4Z"/>',
+      shield: '<path d="M12 2 20 5v6c0 5-3.4 9-8 11-4.6-2-8-6-8-11V5l8-3Zm0 5v8m-4-4h8"/>',
+      map: '<path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6Zm6-3v15m6-12v15"/>',
+      star: '<path d="m12 2 2.75 5.57L21 8.48l-4.5 4.38 1.06 6.19L12 16.16l-5.56 2.9 1.06-6.19L3 8.48l6.25-.91L12 2Z"/>',
+      close: '<path d="m5 5 14 14M19 5 5 19"/>',
+      live: '<circle cx="12" cy="12" r="3"/><path d="M5 12a7 7 0 0 1 7-7m7 7a7 7 0 0 0-7-7M5 12a7 7 0 0 0 7 7m7-7a7 7 0 0 1-7 7"/>',
+      snow: '<path d="M12 2v20M3.3 7l17.4 10M20.7 7 3.3 17M8.5 4l3.5 2 3.5-2M8.5 20l3.5-2 3.5 2"/>',
+      alert: '<path d="M12 3 2 21h20L12 3Zm0 6v5m0 3h.01"/>',
+      car: '<path d="m5 17 1-7h12l1 7M4 17h16v3H4v-3Zm4 3v2m8-2v2M8 14h.01m7.99 0H16"/>',
       place: '<path d="M12 2a7 7 0 0 0-7 7c0 5.1 7 13 7 13s7-7.9 7-13a7 7 0 0 0-7-7Zm0 10.2A3.2 3.2 0 1 1 12 5.8a3.2 3.2 0 0 1 0 6.4Z"/>'
     };
-    return `<svg class="poi-glyph" width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round">${shapes[kind] || shapes.place}</svg>`;
+    const iconKind = shapes[kind] ? kind : "place";
+    return `<svg class="poi-glyph" data-icon="${iconKind}" width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round">${shapes[iconKind]}</svg>`;
   }
 
   function poiKindFromBadge(badge) {
+    if (badge?.iconKind) return badge.iconKind;
     const text = `${badge?.label || ""}`.toLowerCase();
     if (/ferry|marina/.test(text)) return "ferry";
     if (/hospital|medical|pharmacy/.test(text)) return "hospital";
@@ -906,20 +951,23 @@
     ];
   }
 
-  function showDestination(d) {
-    selected = { type: "dest", id: d.id };
-    panelView = "dest";
-    openSheet("half");
-    map.easeTo({ center: d.coords, zoom: Math.max(map.getZoom(), 14.5), duration: 700 });
+  const BASE_POI_LAYER_IDS = ["poi13", "poi14", "poi15"];
+
+  function nearbyPoiRoutes(coords, radius = 450) {
     let destRoutes = [];
     try {
-      const nearbyStopsList = findNearbyStops(d.coords[1], d.coords[0], 450, 900);
+      const nearbyStopsList = findNearbyStops(coords[1], coords[0], radius, 900);
       const nearbyRouteIds = new Set();
       for (const item of nearbyStopsList) {
         for (const rid of (item.stop.routes || [])) nearbyRouteIds.add(rid);
       }
       destRoutes = [...nearbyRouteIds].map((id) => RBY[id]).filter((r) => r && LINEIDX[r.id] != null).sort(tagOrder);
     } catch (_) {}
+    return destRoutes;
+  }
+
+  function focusPoiRoutes(coords, radius = 450) {
+    const destRoutes = nearbyPoiRoutes(coords, radius);
     // A destination behaves like a compact route focus: its nearby transit
     // stays bright, while every unrelated line fades into the background.
     if (destRoutes.length) {
@@ -929,6 +977,62 @@
       setNetDim(0.38);
       focusOff();
     }
+    return destRoutes;
+  }
+
+  function destinationPopupHTML(d, destRoutes) {
+    return `<div class="pop poi-map-pop">
+      <div class="poi-map-head">
+        <span class="poi-map-icon" style="background:${poiColor(d.kind)}">${poiIconSVG(d.kind, 19)}</span>
+        <div><h3>${esc(d.name)}</h3><p>${esc(poiKindTitle(d.kind))}</p></div>
+      </div>
+      <p class="poi-map-desc">${esc(d.desc)}</p>
+      <div class="poi-map-actions">
+        <button type="button" class="poi-map-action primary dir-inapp-btn dest" data-dir-dest-lat="${d.coords[1]}" data-dir-dest-lon="${d.coords[0]}" data-dir-dest-name="${esc(d.name)}">${poiIconSVG("directions", 15)}<span>Navigate</span></button>
+        <button type="button" class="poi-map-action" data-dest-details="${esc(d.id)}">${poiIconSVG("book", 15)}<span>Details</span></button>
+      </div>
+      ${d.transit ? `<p class="poi-map-transit">${poiIconSVG("bus", 14)}<span>${esc(d.transit)}</span></p>` : ""}
+      ${destRoutes.length ? `<div class="poi-map-routes">${destRoutes.slice(0, 9).map((r) => `<button type="button" class="press" data-route="${esc(r.id)}" title="Follow ${esc(routeTitle(r))}">${badgeHTML(r)}</button>`).join("")}</div>` : ""}
+    </div>`;
+  }
+
+  function showDestinationPopup(d) {
+    if (!d) return;
+    selected = { type: "dest", id: d.id };
+    const destRoutes = focusPoiRoutes(d.coords);
+    openPopup(d.coords, destinationPopupHTML(d, destRoutes), "330px");
+  }
+
+  function showMapPoiPopup(place) {
+    if (!place || !Number.isFinite(place.lat) || !Number.isFinite(place.lon)) return;
+    const badge = place.badge || getPlaceBadge(place);
+    const coords = [place.lon, place.lat];
+    selected = { type: "poi", id: place.id || `${place.name}:${place.lat.toFixed(5)}:${place.lon.toFixed(5)}` };
+    const routes = focusPoiRoutes(coords);
+    const iconKind = badge.iconKind || poiKindFromBadge(badge);
+    const html = `<div class="pop poi-map-pop">
+      <div class="poi-map-head">
+        <span class="poi-map-icon" style="background:${badge.bg}">${poiIconSVG(iconKind, 19)}</span>
+        <div><h3>${esc(place.name || "Point of Interest")}</h3><p>${esc(badge.label)}</p></div>
+      </div>
+      ${place.desc ? `<p class="poi-map-desc">${esc(place.desc)}</p>` : ""}
+      <div class="poi-map-actions">
+        <button type="button" class="poi-map-action primary dir-inapp-btn dest" data-dir-dest-lat="${place.lat}" data-dir-dest-lon="${place.lon}" data-dir-dest-name="${esc(place.name || "Destination")}">${poiIconSVG("directions", 15)}<span>Navigate</span></button>
+        <button type="button" class="poi-map-action" data-place-details>${poiIconSVG("book", 15)}<span>Details</span></button>
+      </div>
+      ${routes.length ? `<div class="poi-map-routes">${routes.slice(0, 9).map((r) => `<button type="button" class="press" data-route="${esc(r.id)}" title="Follow ${esc(routeTitle(r))}">${badgeHTML(r)}</button>`).join("")}</div>` : ""}
+    </div>`;
+    openPopup(coords, html, "320px");
+    popup?.getElement().querySelector("[data-place-details]")?.addEventListener("click", () => showPlaceCard(place));
+  }
+
+  function showDestination(d) {
+    closePopup();
+    selected = { type: "dest", id: d.id };
+    panelView = "dest";
+    openSheet("half");
+    map.easeTo({ center: d.coords, zoom: Math.max(map.getZoom(), 14.5), duration: 700 });
+    const destRoutes = focusPoiRoutes(d.coords);
     const html = `${backBtn}
       <div class="destination-view">
         <div class="hero">
@@ -951,7 +1055,7 @@
         </div>
         <h3 class="section">Transit Connections</h3>
         <div class="dest-transit-card">
-          <span class="dest-tr-icon">🚌</span>
+          <span class="dest-tr-icon">${poiIconSVG("bus", 18)}</span>
           <div class="dest-tr-text">
             <strong>Serving routes & stations</strong>
             <p>${esc(d.transit)}</p>
@@ -1789,9 +1893,9 @@
       const url = info?.url || (id ? `https://wsdot.com/ferries/vesselwatch/TerminalDetail.aspx?terminalid=${id}` : "");
       const name = info?.name || stopIndex[`wsf-${id}`]?.name || "Terminal";
       if (!url) return "";
-      return `<a class="link-out press" href="${url}" target="_blank" rel="noopener" style="margin-top:4px">⛴️ ${esc(name)} Guide & Loading Webcams<span aria-hidden="true">↗</span></a>`;
+      return `<a class="link-out press" href="${url}" target="_blank" rel="noopener" style="margin-top:4px">${poiIconSVG("ferry", 15)} ${esc(name)} Guide & Loading Webcams${poiIconSVG("external", 12)}</a>`;
     }).filter(Boolean).join("");
-    const driveUpLink = `<a class="link-out press" href="https://wsdot.com/ferries/vesselwatch/terminals.aspx" target="_blank" rel="noopener" style="margin-top:4px">🚗 Real-time Drive-Up Space & Terminal Cameras<span aria-hidden="true">↗</span></a>`;
+    const driveUpLink = `<a class="link-out press" href="https://wsdot.com/ferries/vesselwatch/terminals.aspx" target="_blank" rel="noopener" style="margin-top:4px">${poiIconSVG("car", 15)} Real-time Drive-Up Space & Terminal Cameras${poiIconSVG("external", 12)}</a>`;
     const liveBox = wsfOn() ? `<div id="ferryInfo" data-terminals="${ids.join(",")}"></div>` : "";
     return `${liveBox}<div class="ferry-terminal-links" style="margin:6px 0 10px">${termLinks}${driveUpLink}</div>`;
   }
@@ -2008,7 +2112,7 @@
     return `<li class="alert al-${LEVEL[a.level][0]}"><details><summary>${alertIcon(a.level)}<span class="al-body"><span class="al-kind">${LEVEL[a.level][1]}</span>
       <span class="al-title">${esc(a.title)}</span>${rs.length ? `<span class="al-routes">${rs.slice(0, 8).map((r) => `<button type="button" class="al-r" data-route="${esc(r.id)}">${badgeHTML(r)}</button>`).join("")}${rs.length > 8 ? `<span class="sc-more">+${rs.length - 8}</span>` : ""}</span>` : ""}</span>
       <svg class="al-chev" width="12" height="8" viewBox="0 0 12 8" aria-hidden="true"><path d="m1.5 1.5 4.5 4.5 4.5-4.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
-      <div class="al-more">${a.desc ? `<p>${esc(a.desc).replace(/\n/g, "<br>")}</p>` : ""}${meta ? `<p class="al-meta">${esc(meta)}</p>` : ""}${a.url ? `<a class="al-link" href="${esc(a.url)}" target="_blank" rel="noopener">More from ${esc(agencyName(a.agency) || "the agency")}<span aria-hidden="true">↗</span></a>` : ""}</div></details></li>`;
+      <div class="al-more">${a.desc ? `<p>${esc(a.desc).replace(/\n/g, "<br>")}</p>` : ""}${meta ? `<p class="al-meta">${esc(meta)}</p>` : ""}${a.url ? `<a class="al-link" href="${esc(a.url)}" target="_blank" rel="noopener">More from ${esc(agencyName(a.agency) || "the agency")}${poiIconSVG("external", 12)}</a>` : ""}</div></details></li>`;
   }
   function bindAlertList(root) {
     for (const b of root.querySelectorAll(".al-r[data-route]")) {
@@ -2016,7 +2120,7 @@
       previewOnHover(b);
     }
   }
-  // a short line for cards: "⚠ Detour: Route 24 ..." (the most serious one) and how many more
+  // a short line for cards: "Detour: Route 24 ..." (the most serious one) and how many more
   function alertTeaser(list) {
     if (!list.length) return "";
     const a = list[0];
@@ -3021,8 +3125,8 @@
     const codes = [...new Set(all.map((x) => x.code).filter(Boolean))];
     const kind = s.kind === "stop" ? (codes.length > 1 ? `Stops ${esc(codes.join(" & "))}` : codes.length ? `Stop ${esc(codes[0])}` : "Bus stop") : "Station";
     const susp = stopIsSuspended(s.id);
-    let h = `<div class="sc"><div class="sc-name">${esc(s.name)}${susp ? ` <span class="stop-susp-pill">🚫 Closed</span>` : ""}</div><div class="sc-sub">${susp ? `<span style="color:#d0213b;font-weight:600">Service Suspended</span> · ` : ""}${kind} · ${rs.length} route${rs.length === 1 ? "" : "s"}${end === 2 ? " · <b>End of the line</b>" : end === 1 ? " · <b>Trips start here</b>" : ""}</div>`;
-    if (susp) h += `<div class="stop-susp-banner" style="margin:4px 0 6px;padding:6px 8px;font-size:11.5px"><span class="susp-icon" style="font-size:14px">🚫</span><span><strong>Stop Closed</strong> · Regular transit service is currently suspended</span></div>`;
+    let h = `<div class="sc"><div class="sc-name">${esc(s.name)}${susp ? ` <span class="stop-susp-pill">${poiIconSVG("alert", 12)} Closed</span>` : ""}</div><div class="sc-sub">${susp ? `<span style="color:#d0213b;font-weight:600">Service Suspended</span> · ` : ""}${kind} · ${rs.length} route${rs.length === 1 ? "" : "s"}${end === 2 ? " · <b>End of the line</b>" : end === 1 ? " · <b>Trips start here</b>" : ""}</div>`;
+    if (susp) h += `<div class="stop-susp-banner" style="margin:4px 0 6px;padding:6px 8px;font-size:11.5px"><span class="susp-icon" style="font-size:14px">${poiIconSVG("alert", 14)}</span><span><strong>Stop Closed</strong> · Regular transit service is currently suspended</span></div>`;
     if (rs.length) h += `<div class="sc-badges">${rs.slice(0, 10).map((r) => badgeHTML(r)).join("")}${rs.length > 10 ? `<span class="sc-more">+${rs.length - 10}</span>` : ""}</div>`;
     h += alertTeaser(stopAlerts(stopIds));
     h += `<div id="scDeps">${depRowsHTML(keys, stopIds)}</div>`;
@@ -3184,7 +3288,7 @@
     } else {
       list.push(id);
       added = true;
-      showToast("Saved to favorites ★");
+      showToast("Saved to favorites");
     }
     f[key] = list;
     saveFavs(f);
@@ -3232,7 +3336,7 @@
         type: it?.type || "direct",
       });
       added = true;
-      showToast("Trip saved to favorites ★");
+      showToast("Trip saved to favorites");
     }
     f.trips = trips;
     saveFavs(f);
@@ -3331,10 +3435,10 @@
     const peakText = (w.am_n && w.am < w.mid) ? `Peak: every ${w.am} min` : "";
     const everyday = isEveryday(r);
     const runsPill = everyday
-      ? `<span class="freq-pill everyday" title="Runs 7 days a week">📅 7 Days · Every day</span>`
+      ? `<span class="freq-pill everyday" title="Runs 7 days a week">${poiIconSVG("calendar", 13)} 7 Days · Every day</span>`
       : (r.sched?.saturday && (r.sched.saturday.mid_n > 0 || r.sched.saturday.trips > 5))
-        ? `<span class="freq-pill parttime" title="Runs Monday through Saturday, no Sunday service">🕒 Mon–Sat · Part-time</span>`
-        : `<span class="freq-pill parttime" title="Part-time service (Monday–Friday only)">🕒 Mon–Fri only · Part-time</span>`;
+        ? `<span class="freq-pill parttime" title="Runs Monday through Saturday, no Sunday service">${poiIconSVG("clock", 13)} Mon–Sat · Part-time</span>`
+        : `<span class="freq-pill parttime" title="Part-time service (Monday–Friday only)">${poiIconSVG("clock", 13)} Mon–Fri only · Part-time</span>`;
     return `<div class="freq-badge-row">
       <span class="freq-pill headway" title="Typical midday wait time"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 1 0 8 8A8 8 0 0 0 8 0zm.5 4.5v3.25l2.5 1.5-.75 1.25-3.25-2V4.5z"/></svg>${esc(headwayText)}</span>
       <span class="freq-pill span" title="Daily hours of service"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M6 .278a.768.768 0 0 1 .08.858 7.208 7.208 0 0 0-.878 3.46c0 4.021 3.278 7.277 7.318 7.277.527 0 1.04-.055 1.533-.16a.787.787 0 0 1 .81.316.733.733 0 0 1-.031.893A8.349 8.349 0 0 1 8.344 16C3.734 16 0 12.286 0 7.71 0 4.266 2.114 1.312 5.124.06A.752.752 0 0 1 6 .278z"/></svg>${esc(spanText)}</span>
@@ -3352,9 +3456,9 @@
     { key: "On demand", label: "On demand", color: () => FLEX[theme] },
   ];
   const SPECIAL_FILTERS = [
-    { key: "favs", label: "★ Saved lines", color: () => "#ffcc00" },
-    { key: "nightowl", label: "🌙 Night Owl", color: () => "#5e5ce6" },
-    { key: "snow", label: "❄️ Snow Routes", color: () => "#00c7be" },
+    { key: "favs", label: "Saved lines", color: () => "#ffcc00" },
+    { key: "nightowl", label: "Night Owl", color: () => "#5e5ce6" },
+    { key: "snow", label: "Snow Routes", color: () => "#00c7be" },
   ];
   const filterMemory = {};
   function renderFilterBar() {
@@ -3496,11 +3600,11 @@
       const html = `<div class="home-view">
         <div class="hero">
           <span class="icon" style="background:#ffcc00; color:#1a1a1a"><svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M3.612 15.443c-.386.198-.824-.149-.746-.592l.83-4.73L.173 6.765c-.329-.314-.158-.888.283-.95l4.898-.696L7.538.792c.197-.39.73-.39.927 0l2.184 4.327 4.898.696c.441.062.612.636.282.95l-3.522 3.356.83 4.73c.078.443-.36.79-.746.592L8 13.187l-4.389 2.256z"/></svg></span>
-          <div><h2>★ Saved Lines & Commutes</h2><p>${totalSaved} saved item${totalSaved === 1 ? "" : "s"}</p></div>
+          <div><h2>Saved Lines & Commutes</h2><p>${totalSaved} saved item${totalSaved === 1 ? "" : "s"}</p></div>
         </div>
         <p class="hint">The map and vehicle tracking are currently filtered to <b>only show your saved lines</b>.</p>
-        <button type="button" class="fchip on" id="clearFavFilter" style="margin: 0 0 14px 0; background: var(--fill); color: var(--ink);">✕ Show all transit lines on map</button>
-        ${favRoutes.length ? `<h3 class="section">${favRoutes.length} saved transit route${favRoutes.length > 1 ? "s" : ""}</h3>${routeRows(favRoutes)}` : `<p class="hint">No transit routes favorited yet. Tap the <b>☆ Favorite</b> button on any route page to display it here.</p>`}
+        <button type="button" class="fchip on" id="clearFavFilter" style="margin: 0 0 14px 0; background: var(--fill); color: var(--ink);">${poiIconSVG("close", 13)} Show all transit lines on map</button>
+        ${favRoutes.length ? `<h3 class="section">${favRoutes.length} saved transit route${favRoutes.length > 1 ? "s" : ""}</h3>${routeRows(favRoutes)}` : `<p class="hint">No transit routes favorited yet. Tap the <b>Favorite</b> button on any route page to display it here.</p>`}
         ${favTrips.length ? `<h3 class="section" style="margin-top:16px">${favTrips.length} saved trip${favTrips.length > 1 ? "s" : ""} & commute${favTrips.length > 1 ? "s" : ""}</h3><ul class="group" role="list">${favTrips.map(renderFavTripRow).join("")}</ul>` : ""}
         ${favStops.length ? `<h3 class="section" style="margin-top:16px">${favStops.length} saved stop${favStops.length > 1 ? "s" : ""}</h3><ul class="group" role="list">${favStops.map((s) => `<li><button type="button" class="row" data-stop="${esc(s.key || s.id)}"><span class="icon"><span class="stop-glyph" aria-hidden="true"></span></span><span class="txt"><span class="name">${esc(s.name)}</span><span class="desc">${s.kind === "stop" ? `Bus stop ${s.code ? "#" + s.code : ""}` : "Station"} · ${(s.routes || []).length} routes</span></span><svg class="chev" width="8" height="13" viewBox="0 0 8 13" aria-hidden="true"><path d="M1.5 1.5 6.5 6.5l-5 5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></button></li>`).join("")}</ul>` : ""}
       </div>`;
@@ -3514,7 +3618,7 @@
       const html = `<div class="home-view">
         <div class="hero">
           <span class="icon" style="background:#5e5ce6; color:#fff"><svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M6 .278a.768.768 0 0 1 .08.858 7.208 7.208 0 0 0-.878 3.46c0 4.021 3.278 7.277 7.318 7.277.527 0 1.04-.055 1.533-.16a.787.787 0 0 1 .81.316.733.733 0 0 1-.031.893A8.349 8.349 0 0 1 8.344 16C3.734 16 0 12.286 0 7.71 0 4.266 2.114 1.312 5.124.06A.752.752 0 0 1 6 .278z"/></svg></span>
-          <div><h2>🌙 Night Owl Network</h2><p>Service from Midnight to 5:00 AM</p></div>
+          <div><h2>Night Owl Network</h2><p>Service from Midnight to 5:00 AM</p></div>
         </div>
         <p class="hint">All-night & 24-hour service connecting Downtown Seattle, Capitol Hill, Ballard, West Seattle, Sea-Tac Airport, and Federal Way.</p>
         <h3 class="section">${owlRoutes.length} Night Owl routes</h3>
@@ -3533,7 +3637,7 @@
       const html = `<div class="home-view">
         <div class="hero">
           <span class="icon" style="background:#00c7be; color:#fff"><svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a.5.5 0 0 1 .5.5v1.293l.707-.707a.5.5 0 1 1 .708.708L8.707 2.5l1.207 1.207.708-.707a.5.5 0 0 1 .707.707l-.707.707H12a.5.5 0 0 1 0 1h-1.293l.707.707a.5.5 0 0 1-.708.708L9.5 6.707 8.293 7.914l.707.708a.5.5 0 0 1-.707.707l-.707-.707V10a.5.5 0 0 1-1 0V8.621l-.707.707a.5.5 0 0 1-.708-.707l.707-.708L5.293 6.707l-.707.708a.5.5 0 0 1-.708-.708L4.586 6H3.293a.5.5 0 0 1 0-1h1.293l-.707-.707a.5.5 0 0 1 .707-.707l.707.707L6.5 5.5l1.207-1.207-.707-.707a.5.5 0 1 1 .708-.708L8.414 3.5V.5A.5.5 0 0 1 8 0z"/></svg></span>
-          <div><h2>❄️ Winter Snow Network</h2><p>Emergency Snow Network (ESN)</p></div>
+          <div><h2>Winter Snow Network</h2><p>Emergency Snow Network (ESN)</p></div>
         </div>
         <p class="hint">Designated arterial routes operating during severe winter storms. Avoids steep hill grades and unplowed neighborhood streets.</p>
         <h3 class="section">${snowRoutes.length} Snow Network routes</h3>
@@ -3569,7 +3673,7 @@
       <div class="fav-header-wrap">
         <h3 class="section fav-header">Favorites <span class="fav-sub">${favRoutes.length + favStops.length + favTrips.length} saved</span></h3>
         <button type="button" class="fav-filter-toggle${specialFilter === "favs" ? " active" : ""}" id="toggleFavFilter">
-          ${specialFilter === "favs" ? "★ Showing saved only" : "Filter map to saved"}
+          ${specialFilter === "favs" ? "Showing saved only" : "Filter map to saved"}
         </button>
       </div>
       <ul class="group" role="list">
@@ -3589,7 +3693,7 @@
 
     const throughRoutePreview = [RBY["metro-1"], RBY["metro-14"]].filter(Boolean);
     const throughRoutesHomeHTML = `<button type="button" class="through-routes-home press" id="openThroughRoutes">
-      <span class="through-routes-home-icon" aria-hidden="true">🔄</span>
+      <span class="through-routes-home-icon" aria-hidden="true">${poiIconSVG("transfer", 19)}</span>
       <span class="txt"><span class="name">Stay on board through Downtown</span><span class="desc">Some buses continue as another route — no curbside transfer or extra fare.</span></span>
       <span class="through-routes-home-badges" aria-hidden="true">${throughRoutePreview.map((r) => badgeHTML(r)).join("<span class=\"through-routes-home-arrow\">➔</span>")}</span>
       <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="m1.5 1.5 5 5.5-5 5.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -3647,7 +3751,7 @@
           <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="m1.5 1.5 5 5.5-5 5.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button></li>
         <li><button class="row nav-row" id="openLegendGuide" type="button">
-          <span class="icon" style="background:#2563eb;color:#fff;font-size:15px;display:flex;align-items:center;justify-content:center;border-radius:8px">📖</span>
+          <span class="icon" style="background:#2563eb;color:#fff;display:flex;align-items:center;justify-content:center;border-radius:8px">${poiIconSVG("book", 17)}</span>
           <span class="txt"><span class="name">Transit Map Guide & Legend</span><span class="desc">Service levels, bus runs & symbols</span></span>
           <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="m1.5 1.5 5 5.5-5 5.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button></li>
@@ -3707,7 +3811,7 @@
     const html = `${backBtn}
       <div class="through-routes-view">
         <div class="hero">
-          <span class="icon" style="background:#059669;color:#fff;font-size:20px;display:flex;align-items:center;justify-content:center;border-radius:12px">🔄</span>
+          <span class="icon" style="background:#059669;color:#fff;display:flex;align-items:center;justify-content:center;border-radius:12px">${poiIconSVG("transfer", 20)}</span>
           <div>
             <h2>Stay on the Bus</h2>
             <p>Direct downtown transfer pairs</p>
@@ -3757,7 +3861,7 @@
     const html = `${backBtn}
       <div class="legend-guide-view">
         <div class="hero">
-          <span class="icon" style="background:#2563eb;color:#fff;font-size:20px;display:flex;align-items:center;justify-content:center;border-radius:12px">📖</span>
+          <span class="icon" style="background:#2563eb;color:#fff;display:flex;align-items:center;justify-content:center;border-radius:12px">${poiIconSVG("book", 20)}</span>
           <div>
             <h2>Transit Map Guide & Legend</h2>
             <p>Official service levels, bus runs & symbols</p>
@@ -3813,7 +3917,7 @@
             </div>
             <div class="legend-row">
               <span class="legend-swatch" style="background:#8a8f98;height:4px"></span>
-              <div><strong>Seattle Center Monorail</strong><br><span class="muted">Westlake Center ↔ Seattle Center</span></div>
+              <div><strong>Seattle Center Monorail</strong><br><span class="muted">Westlake Center to Seattle Center</span></div>
             </div>
           </div>
 
@@ -3844,7 +3948,7 @@
           <div class="legend-section">
             <h3 class="legend-sec-title">Through-Routes (Stay on the Bus)</h3>
             <div class="legend-row">
-              <span style="font-size:18px">🔄</span>
+              <span class="legend-inline-icon">${poiIconSVG("transfer", 18)}</span>
               <div><strong>Direct downtown transfers</strong><br><span class="muted">Paired routes that continue through Downtown Seattle without a transfer or second fare</span></div>
             </div>
             <button type="button" class="legend-nav-btn press" id="legendOpenThrough">View all 6 through-route pairs ➔</button>
@@ -3852,16 +3956,16 @@
 
           <div class="legend-section">
             <h3 class="legend-sec-title">Connections & Points of Interest</h3>
-            <div class="legend-row"><span style="font-size:18px">★</span> <div><strong>Point of Interest</strong> · Sights, waterfront, Space Needle</div></div>
-            <div class="legend-row"><span style="font-size:18px">🎓</span> <div><strong>College / University</strong> · UW, Seattle U, SPU, SCC, Bellevue College</div></div>
-            <div class="legend-row"><span style="font-size:18px">🏥</span> <div><strong>Hospital / Medical Center</strong> · Harborview, Swedish, Children's, UWMC</div></div>
-            <div class="legend-row"><span style="font-size:18px">🏟️</span> <div><strong>Stadium / Arena</strong> · Lumen Field, T-Mobile Park, Climate Pledge</div></div>
-            <div class="legend-row"><span style="font-size:18px">📖</span> <div><strong>Public Library</strong> · Seattle Central Library & regional branches</div></div>
-            <div class="legend-row"><span style="font-size:18px">🌳</span> <div><strong>Park / Green Space</strong> · Discovery Park, Green Lake, Seward Park</div></div>
-            <div class="legend-row"><span style="font-size:18px">⛴️</span> <div><strong>Ferry Terminal</strong> · Colman Dock Pier 52, Pier 50 Fast Ferry</div></div>
-            <div class="legend-row"><span style="font-size:18px">🚆</span> <div><strong>Amtrak & Sounder Train Hub</strong> · King Street Station, Tacoma Dome</div></div>
-            <div class="legend-row"><span style="font-size:18px">🅿️</span> <div><strong>Park & Ride</strong> · Major regional transit lots & garages</div></div>
-            <div class="legend-row"><span style="font-size:18px">🚲</span> <div><strong>Bicycle Facilities</strong> · Protected bike lanes, greenways & multi-use trails</div></div>
+            <div class="legend-row"><span class="legend-inline-icon">${poiIconSVG("star", 18)}</span> <div><strong>Point of Interest</strong> · Sights, waterfront, Space Needle</div></div>
+            <div class="legend-row"><span class="legend-inline-icon">${poiIconSVG("school", 18)}</span> <div><strong>College / University</strong> · UW, Seattle U, SPU, SCC, Bellevue College</div></div>
+            <div class="legend-row"><span class="legend-inline-icon">${poiIconSVG("hospital", 18)}</span> <div><strong>Hospital / Medical Center</strong> · Harborview, Swedish, Children's, UWMC</div></div>
+            <div class="legend-row"><span class="legend-inline-icon">${poiIconSVG("stadium", 18)}</span> <div><strong>Stadium / Arena</strong> · Lumen Field, T-Mobile Park, Climate Pledge</div></div>
+            <div class="legend-row"><span class="legend-inline-icon">${poiIconSVG("library", 18)}</span> <div><strong>Public Library</strong> · Seattle Central Library & regional branches</div></div>
+            <div class="legend-row"><span class="legend-inline-icon">${poiIconSVG("park", 18)}</span> <div><strong>Park / Green Space</strong> · Discovery Park, Green Lake, Seward Park</div></div>
+            <div class="legend-row"><span class="legend-inline-icon">${poiIconSVG("ferry", 18)}</span> <div><strong>Ferry Terminal</strong> · Colman Dock Pier 52, Pier 50 Fast Ferry</div></div>
+            <div class="legend-row"><span class="legend-inline-icon">${poiIconSVG("train", 18)}</span> <div><strong>Amtrak & Sounder Train Hub</strong> · King Street Station, Tacoma Dome</div></div>
+            <div class="legend-row"><span class="legend-inline-icon">${poiIconSVG("parking", 18)}</span> <div><strong>Park & Ride</strong> · Major regional transit lots & garages</div></div>
+            <div class="legend-row"><span class="legend-inline-icon">${poiIconSVG("bike", 18)}</span> <div><strong>Bicycle Facilities</strong> · Protected bike lanes, greenways & multi-use trails</div></div>
           </div>
         </div>
       </div>`;
@@ -4362,14 +4466,14 @@
     const steepHill = STEEP_HILLS.find((h) => h.routes.includes(r.short) || h.routes.includes(r.label) || h.routes.includes(r.id) || (r.short === "G" && h.id === "hill-madison"));
     const showHillNotice = steepHill && (specialFilter === "snow" || enabled.has("trails"));
     const isSnow = specialFilter === "snow";
-    const hillNotice = showHillNotice ? `<div class="hill-note"><span class="hill-icon">${isSnow ? "❄️" : "🚲"}</span><span><strong>${isSnow ? "Winter Snow Bypass" : "Steep Incline Corridor"} (${steepHill.grade}):</strong> ${esc(isSnow ? steepHill.snowBypass : `Traverses ${steepHill.location}. ${steepHill.snowBypass}`)}</span></div>` : "";
-    const snowBanner = specialFilter === "snow" ? `<div class="snow-banner"><span class="snow-icon">${isSnowRoute(r) ? "❄️" : "⚠️"}</span><span>${isSnowRoute(r) ? "<strong>Active Winter Snow Route:</strong> Operates on plowed arterials during winter storms. Avoids steep hills and non-essential branches." : "<strong>Suspended during Snow Emergencies:</strong> This route is not part of the Emergency Snow Network and pauses during severe winter conditions."}</span></div>` : "";
+    const hillNotice = showHillNotice ? `<div class="hill-note"><span class="hill-icon">${poiIconSVG(isSnow ? "snow" : "bike", 16)}</span><span><strong>${isSnow ? "Winter Snow Bypass" : "Steep Incline Corridor"} (${steepHill.grade}):</strong> ${esc(isSnow ? steepHill.snowBypass : `Traverses ${steepHill.location}. ${steepHill.snowBypass}`)}</span></div>` : "";
+    const snowBanner = specialFilter === "snow" ? `<div class="snow-banner"><span class="snow-icon">${poiIconSVG(isSnowRoute(r) ? "snow" : "alert", 16)}</span><span>${isSnowRoute(r) ? "<strong>Active Winter Snow Route:</strong> Operates on plowed arterials during winter storms. Avoids steep hills and non-essential branches." : "<strong>Suspended during Snow Emergencies:</strong> This route is not part of the Emergency Snow Network and pauses during severe winter conditions."}</span></div>` : "";
     const trInfo = getThroughRouteInfo(r);
     const throughRouteHTML = trInfo && trInfo.partners.length ? `
       <div class="through-route-card">
         <div class="tr-badge-row">
           <div class="tr-header-left">
-            <span class="tr-icon">🔄</span>
+            <span class="tr-icon">${poiIconSVG("transfer", 17)}</span>
             <span class="tr-title">Stay on the bus to transfer</span>
           </div>
           <span class="tr-time-tag">${esc(trInfo.time === "all-day" ? "All Day" : trInfo.time)}</span>
@@ -4384,7 +4488,7 @@
         <p class="tr-desc">${esc(trInfo.desc)}</p>
       </div>` : "";
     const isSusp = isRouteSuspended(r);
-    const suspBanner = isSusp ? `<div class="route-susp-banner"><span class="susp-icon">🚫</span><span><strong>Route Temporarily Suspended:</strong> Trips on this route are currently not operating due to an active service disruption or seasonal suspension.</span></div>` : "";
+    const suspBanner = isSusp ? `<div class="route-susp-banner"><span class="susp-icon">${poiIconSVG("alert", 16)}</span><span><strong>Route Temporarily Suspended:</strong> Trips on this route are currently not operating due to an active service disruption or seasonal suspension.</span></div>` : "";
     let html = `${backBtn}
       ${suspBanner}
       <div class="hero">${badgeHTML(r, "xl")}<div><h2>${esc(routeTitle(r))}</h2><p>${esc(r.name || "")}</p></div></div>
@@ -4415,7 +4519,7 @@
         `<button role="tab" type="button" aria-selected="${i === 0}" data-i="${i}">To ${esc((p.headsign || "terminal").replace(/^to\s+/i, ""))}</button>`).join("")}<span class="seg-thumb" aria-hidden="true"></span></div>
         <ol class="group stoplist" id="stoplist" style="--line-c:${color}"></ol>`;
     }
-    if (r.url) html += `<a class="link-out press" href="${esc(r.url)}" target="_blank" rel="noopener">Official schedule and alerts<span aria-hidden="true">↗</span></a>`;
+    if (r.url) html += `<a class="link-out press" href="${esc(r.url)}" target="_blank" rel="noopener">Official schedule and alerts${poiIconSVG("external", 12)}</a>`;
     setView(html);
     $("#back").addEventListener("click", () => {
       if (history.length > 1 && window.history.state?.hash) {
@@ -4453,7 +4557,7 @@
         const name = s ? s.name : STOPNAMES[sid] || sid;
         return `<li><button type="button" data-stop="${esc(s ? s.key : "")}" class="stop-row-btn${susp ? " is-suspended" : ""}">
           <span class="stop-name${susp ? " suspended-text" : ""}">${esc(name)}</span>
-          ${susp ? `<span class="stop-susp-pill">🚫 Closed</span>` : ""}
+          ${susp ? `<span class="stop-susp-pill">${poiIconSVG("alert", 12)} Closed</span>` : ""}
         </button></li>`;
       }).join("");
       for (const b of $("#stoplist").querySelectorAll("button")) b.addEventListener("click", () => { if (b.dataset.stop) selectStop(b.dataset.stop); });
@@ -4515,11 +4619,11 @@
     const bayBadge = bayMatch ? `<span class="bay-pill">Bay ${esc(bayMatch[1])}</span>` : "";
     const cleanName = s.name.replace(/\s*-\s*Bay\s+[A-Z0-9]+/i, "").trim();
     const isRail = s.kind === "station" || rs.some((r) => ["link", "sounder"].includes(r.cat));
-    const elevatorHTML = isRail ? `<a class="elevator-link press" href="https://www.soundtransit.org/ride-with-us/service-alerts" target="_blank" rel="noopener">♿ Live Station Elevators & Escalators Status ↗</a>` : "";
+    const elevatorHTML = isRail ? `<a class="elevator-link press" href="https://www.soundtransit.org/ride-with-us/service-alerts" target="_blank" rel="noopener">Live Station Elevators & Escalators Status ${poiIconSVG("external", 12)}</a>` : "";
     const isSusp = stopIsSuspended(s.id);
     const suspBanner = isSusp ? `
       <div class="stop-susp-banner">
-        <span class="susp-icon">🚫</span>
+        <span class="susp-icon">${poiIconSVG("alert", 16)}</span>
         <div>
           <strong>Service Suspended · Stop Temporarily Closed</strong>
           <p>Buses are currently bypassing or not serving this stop due to an active service disruption or detour.</p>
@@ -4650,7 +4754,7 @@
       view: "legend",
       title: "Transit Map Guide & Legend",
       desc: "Service levels, bus runs, infrequent routes, dashed lines & badge symbols",
-      icon: "📖",
+      icon: "book",
       key: "transit map guide legend symbols key bus runs everyday not everyday part-time frequent infrequent peak dashed line help explanation".toLowerCase()
     });
     searchIndex.push({
@@ -4659,7 +4763,7 @@
       view: "through-routes",
       title: "Stay on the Bus · Through Routes",
       desc: "Direct transfers through Downtown Seattle (Routes 1/14, 2/13, 5/21, 24/33/124, 28/131/132)",
-      icon: "🔄",
+      icon: "transfer",
       key: "stay on the bus through routes pairs transfer downtown seattle direct connection continuation 1 14 2 13 5 21 24 33 124 28 131 132".toLowerCase()
     });
   }
@@ -4709,7 +4813,7 @@
     const p = f.properties;
     const isUnpaved = p.surface === "unpaved";
     const catName = p.cat_name || "Bicycle Facility";
-    const icon = p.facility === "trail" ? "🚲" : p.facility === "pbl" ? "🛡️" : p.facility === "greenway" ? "🌿" : p.facility === "lane" ? "🚲" : p.facility === "sharrow" ? "🚴" : "🚲";
+    const icon = poiIconSVG(p.facility === "pbl" ? "shield" : p.facility === "greenway" ? "park" : "bike", 17);
     const badgeColor = p.facility === "pbl" || p.facility === "trail" ? "#047857" : p.facility === "greenway" ? "#10b981" : p.facility === "lane" ? "#0891b2" : p.facility === "sharrow" ? "#15803d" : "#b45309";
     const statusBadge = p.status === "UNDERCONS" ? ` · <span class="incline-badge" style="background:#fbbf24;color:#78350f">Under Construction</span>` : "";
     const html = `<div class="pop">
@@ -4729,10 +4833,10 @@
     if (!pr) return;
     map.flyTo({ center: [pr.lon, pr.lat], zoom: 16, padding: fitPadding(), duration: 800 });
     const html = `<div class="pop">
-      <h3>🅿️ ${esc(pr.name)}</h3>
+      <h3>${poiIconSVG("parking", 17)} ${esc(pr.name)}</h3>
       <p class="trail-meta"><strong>${pr.stalls} Parking Stalls</strong> · ${esc(pr.agency)}</p>
-      <p>🚲 <strong>Bicycle Parking:</strong> ${esc(pr.bikes)}</p>
-      <p>🚌 <strong>Transit Connections:</strong> ${esc(pr.transit)}</p>
+      <p>${poiIconSVG("bike", 14)} <strong>Bicycle Parking:</strong> ${esc(pr.bikes)}</p>
+      <p>${poiIconSVG("bus", 14)} <strong>Transit Connections:</strong> ${esc(pr.transit)}</p>
       <div style="margin-top:10px">${directionsHTML(pr.lat, pr.lon, pr.name)}</div>
       <p class="foot" style="margin-top:6px">Regional commuter park & ride. BikeLink lockers offer secure on-demand bike parking via app or smartcard.</p>
     </div>`;
@@ -4742,11 +4846,11 @@
     if (!h) return;
     map.flyTo({ center: [h.lon, h.lat], zoom: 16.2, padding: fitPadding(), duration: 800 });
     const html = `<div class="pop">
-      <h3>⚠️ ${esc(h.name)}</h3>
+      <h3>${poiIconSVG("alert", 17)} ${esc(h.name)}</h3>
       <p class="trail-meta"><span class="incline-badge">${h.grade} grade</span> · ${esc(h.location)}</p>
       <p>${esc(h.desc)}</p>
-      <p>🚌 <strong>Traversing Routes:</strong> ${h.routes.join(", ")}</p>
-      <p class="foot" style="color:var(--accent);margin-top:6px">❄️ <strong>Snow Bypass:</strong> ${esc(h.snowBypass)}</p>
+      <p>${poiIconSVG("bus", 14)} <strong>Traversing Routes:</strong> ${h.routes.join(", ")}</p>
+      <p class="foot" style="color:var(--accent);margin-top:6px">${poiIconSVG("snow", 14)} <strong>Snow Bypass:</strong> ${esc(h.snowBypass)}</p>
     </div>`;
     openPopup({ lng: h.lon, lat: h.lat }, html, "320px");
   }
@@ -4758,151 +4862,151 @@
   }
 
   function getPlaceBadge(p) {
-    if (!p) return { emoji: "📍", bg: "#007aff", label: "Location" };
+    if (!p) return { iconKind: "place", bg: "#007aff", label: "Location" };
     const k = (p.osm_key || p.class || "").toLowerCase();
     const v = (p.osm_value || p.type || "").toLowerCase();
     const str = `${p.name || ""} ${p.desc || ""} ${v} ${k}`.toLowerCase();
 
     // 1. Airports & Aviation
     if (k === "aeroway" || v === "aerodrome" || v === "airport" || /\b(airport|airfield|aerodrome|heliport|helipad|seatac|sea-tac|boeing field|paine field)\b/i.test(str)) {
-      return { emoji: "✈️", bg: "#0284c7", label: "Airport" };
+      return { iconKind: "airplane", bg: "#0284c7", label: "Airport" };
     }
     // 2. Ferry Terminals & Marine Docks
     if (v === "ferry_terminal" || k === "ferry" || /\b(ferry|colman dock|water taxi|pier 50|pier 52|fauntleroy|bainbridge ferry|bremerton ferry|kingston ferry|edmonds ferry|mukilteo ferry)\b/i.test(str)) {
-      return { emoji: "⛴️", bg: "#0369a1", label: "Ferry Terminal" };
+      return { iconKind: "ferry", bg: "#0369a1", label: "Ferry Terminal" };
     }
     // 3. Marinas & Boat Launches
     if (v === "marina" || /\b(marina|boat launch|yacht club|boat ramp)\b/i.test(str)) {
-      return { emoji: "⛵", bg: "#0284c7", label: "Marina" };
+      return { iconKind: "marina", bg: "#0284c7", label: "Marina" };
     }
     // 4. Beaches & Coastline
     if (v === "beach" || /\b(beach|beaches|seashore|shoreline|cove|golden gardens|alki beach|madison park beach)\b/i.test(str)) {
-      return { emoji: "🏖️", bg: "#d97706", label: "Beach" };
+      return { iconKind: "beach", bg: "#d97706", label: "Beach" };
     }
     // 5. Aquariums
     if (v === "aquarium" || /\b(aquarium|oceanarium)\b/i.test(str)) {
-      return { emoji: "🐠", bg: "#0284c7", label: "Aquarium" };
+      return { iconKind: "zoo", bg: "#0284c7", label: "Aquarium" };
     }
     // 6. Zoos
     if (v === "zoo" || /\b(zoo|zoological|woodland park zoo|safari)\b/i.test(str)) {
-      return { emoji: "🦁", bg: "#15803d", label: "Zoo" };
+      return { iconKind: "zoo", bg: "#15803d", label: "Zoo" };
     }
     // 7. Dog Parks
     if (v === "dog_park" || /\b(dog park|off-leash|dog area)\b/i.test(str)) {
-      return { emoji: "🐕", bg: "#10b981", label: "Dog Park" };
+      return { iconKind: "dog", bg: "#10b981", label: "Dog Park" };
     }
     // 8. Golf Courses
     if (v === "golf_course" || /\b(golf course|golf club|driving range|golf links)\b/i.test(str)) {
-      return { emoji: "⛳", bg: "#15803d", label: "Golf Course" };
+      return { iconKind: "golf", bg: "#15803d", label: "Golf Course" };
     }
     // 9. Lakes, Rivers, Bays & Water Bodies
     if (k === "water" || k === "waterway" || v === "lake" || v === "water" || v === "river" || v === "bay" || /\b(lake|pond|river|canal|creek|sound|bay\b|reservoir|lake washington|lake union|green lake|puget sound|elliott bay)\b/i.test(str)) {
-      return { emoji: "🌊", bg: "#0891b2", label: "Lake / Water" };
+      return { iconKind: "water", bg: "#0891b2", label: "Lake / Water" };
     }
     // 10. Hospitals & Medical Centers
     if (v === "hospital" || v === "clinic" || v === "doctors" || v === "urgent_care" || /\b(hospital|medical center|medical centre|clinic|urgent care|emergency room|swedish|harborview|virginia mason|kaiser permanente|children\x27s hospital|uw medical|polyclinic)\b/i.test(str)) {
-      return { emoji: "🏥", bg: "#e11d48", label: "Hospital / Medical" };
+      return { iconKind: "hospital", bg: "#e11d48", label: "Hospital / Medical" };
     }
     // 11. Universities & Colleges
     if (v === "university" || v === "college" || /\b(university|college|campus|uw\b|u-district|seattle university|seattle u\b|spu\b|seattle pacific|bellevue college)\b/i.test(str)) {
-      return { emoji: "🎓", bg: "#4f46e5", label: "University" };
+      return { iconKind: "school", bg: "#4f46e5", label: "University" };
     }
     // 12. Schools & Academies
     if (v === "school" || v === "kindergarten" || /\b(high school|middle school|elementary|school\b|academy|prep\b|preschool|daycare|kindergarten)\b/i.test(str)) {
-      return { emoji: "🏫", bg: "#2563eb", label: "School" };
+      return { iconKind: "school", bg: "#2563eb", label: "School" };
     }
     // 13. Stadiums & Arenas
     if (v === "stadium" || v === "arena" || v === "sports_centre" || /\b(stadium|arena|ballpark|coliseum|lumen field|t-mobile park|climate pledge|husky stadium)\b/i.test(str)) {
-      return { emoji: "🏟️", bg: "#ea580c", label: "Stadium / Arena" };
+      return { iconKind: "stadium", bg: "#ea580c", label: "Stadium / Arena" };
     }
     // 14. Parks, Gardens & Nature
     if (v === "park" || v === "garden" || v === "nature_reserve" || v === "playground" || /\b(park|parks|garden|gardens|arboretum|preserve|greenbelt|cemetery|shelterhouse|gatehouse|cal anderson|discovery park|volunteer park|seward park|gas works)\b/i.test(str)) {
-      return { emoji: "🌳", bg: "#059669", label: "Park" };
+      return { iconKind: "park", bg: "#059669", label: "Park" };
     }
     // 15. Campgrounds
     if (v === "camp_site" || /\b(campground|campsite|camping)\b/i.test(str)) {
-      return { emoji: "⛺", bg: "#b45309", label: "Campground" };
+      return { iconKind: "camp", bg: "#b45309", label: "Campground" };
     }
     // 16. Libraries
     if (v === "library" || /\b(library|libraries|spl\b|kcls\b)\b/i.test(str)) {
-      return { emoji: "📚", bg: "#0f766e", label: "Library" };
+      return { iconKind: "library", bg: "#0f766e", label: "Library" };
     }
     // 17. Museums & Science Centers
     if (v === "museum" || v === "gallery" || /\b(museum|art gallery|gallery|mopop|seattle art museum|pacific science center|chihuly|mohai|burke museum)\b/i.test(str)) {
-      return { emoji: "🏛️", bg: "#7c3aed", label: "Museum" };
+      return { iconKind: "museum", bg: "#7c3aed", label: "Museum" };
     }
     // 18. Theaters & Performance Arts
     if (v === "theatre" || v === "cinema" || /\b(theater|theatre|cinema|playhouse|opera|symphony|benaroya|paramount|5th avenue|cinerama|siff\b)\b/i.test(str)) {
-      return { emoji: "🎭", bg: "#9333ea", label: "Theater / Arts" };
+      return { iconKind: "theater", bg: "#9333ea", label: "Theater / Arts" };
     }
     // 19. Music Venues
     if (v === "nightclub" || /\b(music hall|showbox|neumos|jazz alley|ballroom)\b/i.test(str)) {
-      return { emoji: "🎵", bg: "#8b5cf6", label: "Music Venue" };
+      return { iconKind: "music", bg: "#8b5cf6", label: "Music Venue" };
     }
     // 20. Observation Towers, Bridges & Peaks
     if (/\b(space needle|smith tower|columbia center|tower)\b/i.test(str) || v === "tower") {
-      return { emoji: "🗼", bg: "#d97706", label: "Landmark / Tower" };
+      return { iconKind: "tower", bg: "#d97706", label: "Landmark / Tower" };
     }
     if (/\b(bridge|viaduct)\b/i.test(str) || v === "bridge") {
-      return { emoji: "🌉", bg: "#0284c7", label: "Bridge" };
+      return { iconKind: "bridge", bg: "#0284c7", label: "Bridge" };
     }
     if (v === "viewpoint" || v === "peak" || /\b(viewpoint|lookout|overlook|mountain|summit|peak)\b/i.test(str)) {
-      return { emoji: "⛰️", bg: "#b45309", label: "Viewpoint" };
+      return { iconKind: "viewpoint", bg: "#b45309", label: "Viewpoint" };
     }
     // 21. Markets & Shopping
     if (k === "shop" || v === "marketplace" || v === "mall" || v === "supermarket" || /\b(market|marketplace|pike place|mall|grocery|safeway|qfc|trader joe|whole foods|costco|target|h mart|uwajimaya)\b/i.test(str)) {
-      return { emoji: "🛍️", bg: "#db2777", label: "Market / Shopping" };
+      return { iconKind: "market", bg: "#db2777", label: "Market / Shopping" };
     }
     // 22. Hotels & Lodging
     if (v === "hotel" || v === "motel" || v === "hostel" || /\b(hotel|motel|inn\b|hostel|resort|marriott|hilton|hyatt|sheraton|westin)\b/i.test(str)) {
-      return { emoji: "🏨", bg: "#3b82f6", label: "Hotel" };
+      return { iconKind: "hotel", bg: "#3b82f6", label: "Hotel" };
     }
     // 23. Coffee & Bakeries
     if (v === "cafe" || v === "bakery" || /\b(coffee|cafe|café|espresso|roaster|roastery|bakery|bakehouse|starbucks)\b/i.test(str)) {
-      return { emoji: "☕", bg: "#b45309", label: "Coffee / Cafe" };
+      return { iconKind: "coffee", bg: "#b45309", label: "Coffee / Cafe" };
     }
     // 24. Restaurants & Dining
     if (v === "restaurant" || v === "bar" || v === "pub" || /\b(restaurant|grill|bistro|brewery|pub\b|tavern|pizzeria|sushi|diner)\b/i.test(str)) {
-      return { emoji: "🍽️", bg: "#c2410c", label: "Restaurant" };
+      return { iconKind: "restaurant", bg: "#c2410c", label: "Restaurant" };
     }
     // 25. Post Office
     if (v === "post_office" || /\b(post office|usps|fedex|ups store)\b/i.test(str)) {
-      return { emoji: "📮", bg: "#0284c7", label: "Post Office" };
+      return { iconKind: "post", bg: "#0284c7", label: "Post Office" };
     }
     // 26. Places of Worship
     if (v === "place_of_worship" || /\b(church|cathedral|temple|mosque|synagogue|chapel|parish)\b/i.test(str)) {
-      return { emoji: "⛪", bg: "#7e22ce", label: "Place of Worship" };
+      return { iconKind: "worship", bg: "#7e22ce", label: "Place of Worship" };
     }
     // 27. Civic / Government
     if (v === "townhall" || v === "courthouse" || v === "police" || v === "fire_station" || /\b(city hall|courthouse|justice center|convention center|police|fire station)\b/i.test(str)) {
-      return { emoji: "🏛️", bg: "#475569", label: "Civic / Government" };
+      return { iconKind: "civic", bg: "#475569", label: "Civic / Government" };
     }
     // 28. Pharmacy
     if (v === "pharmacy" || /\b(pharmacy|drugstore|walgreens|cvs|bartell)\b/i.test(str)) {
-      return { emoji: "💊", bg: "#059669", label: "Pharmacy" };
+      return { iconKind: "pharmacy", bg: "#059669", label: "Pharmacy" };
     }
     // 29. Bank
     if (v === "bank" || /\b(bank|credit union|chase|wells fargo|becu)\b/i.test(str)) {
-      return { emoji: "🏦", bg: "#047857", label: "Bank" };
+      return { iconKind: "bank", bg: "#047857", label: "Bank" };
     }
     // 30. Stations & Transit
     if (p.kind === "station" || v === "station" || /\b(station|link light rail|sounder|amtrak)\b/i.test(str)) {
-      return { emoji: "🚆", bg: "#059669", label: "Transit Station" };
+      return { iconKind: "train", bg: "#059669", label: "Transit Station" };
     }
     if (p.kind === "stop") {
-      return { emoji: "🚌", bg: "#2563eb", label: "Bus Stop" };
+      return { iconKind: "bus", bg: "#2563eb", label: "Bus Stop" };
     }
     if (p.kind === "pr") {
-      return { emoji: "🅿️", bg: "#0284c7", label: "Park & Ride" };
+      return { iconKind: "parking", bg: "#0284c7", label: "Park & Ride" };
     }
     if (p.kind === "trail") {
-      return { emoji: "🚲", bg: "#059669", label: "Trail / Bike" };
+      return { iconKind: "bike", bg: "#059669", label: "Trail / Bike" };
     }
     // 31. Residential / Street Address
     if (v === "house" || v === "building" || k === "building" || /\b\d+\s+[A-Za-z0-9\s]+(st|ave|blvd|rd|way|dr|ct|pl|lane|street|avenue|boulevard|road|drive)\b/i.test(str)) {
-      return { emoji: "🏠", bg: "#2563eb", label: "Address" };
+      return { iconKind: "home", bg: "#2563eb", label: "Address" };
     }
-    return { emoji: "📍", bg: "#007aff", label: "Location" };
+    return { iconKind: "place", bg: "#007aff", label: "Location" };
   }
 
   function showPlaceCard(place) {
@@ -4925,7 +5029,10 @@
       .setLngLat([place.lon, place.lat])
       .addTo(map);
 
-    el.addEventListener("click", () => showPlaceCard(place));
+    el.addEventListener("click", (event) => {
+      event.stopPropagation();
+      showMapPoiPopup(place);
+    });
 
     map.flyTo({
       center: [place.lon, place.lat],
@@ -5016,12 +5123,12 @@
         if (it.kind === "route") return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}">${badgeHTML(it.r)}<span class="txt"><span class="name">${esc(routeTitle(it.r))}</span><span class="desc">${esc(it.r.name)}</span></span></button>`;
         if (it.kind === "trail") {
           const p = it.f.properties;
-          const icon = p.facility === "trail" ? "🚲" : p.facility === "pbl" ? "🛡️" : p.facility === "greenway" ? "🌿" : "🚲";
+          const icon = poiIconSVG(p.facility === "pbl" ? "shield" : p.facility === "greenway" ? "park" : "bike", 17);
           const cat = p.cat_name || "Bicycle Facility";
           return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true">${icon}</span><span class="txt"><span class="name">${esc(p.name)}</span><span class="desc">${esc(cat)}${p.length_mi ? ` · ${p.length_mi} mi` : ""}${p.surface === "unpaved" ? " · Gravel" : ""}${p.region ? ` (${esc(p.region)})` : ""}</span></span></button>`;
         }
         if (it.kind === "guide") {
-          return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true" style="background:#2563eb;color:#fff">${it.icon}</span><span class="txt"><span class="name">${esc(it.title)}</span><span class="desc">${esc(it.desc)}</span></span></button>`;
+          return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true" style="background:#2563eb;color:#fff">${poiIconSVG(it.icon, 17)}</span><span class="txt"><span class="name">${esc(it.title)}</span><span class="desc">${esc(it.desc)}</span></span></button>`;
         }
         if (it.kind === "dest") {
           const d = it.d;
@@ -5029,11 +5136,11 @@
         }
         if (it.kind === "pr") {
           const pr = it.pr;
-          return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true" style="background:#007aff;color:#fff">🅿️</span><span class="txt"><span class="name">${esc(pr.name)}</span><span class="desc">${pr.stalls} stalls · ${esc(pr.bikes)}</span></span></button>`;
+          return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true" style="background:#007aff;color:#fff">${poiIconSVG("parking", 17)}</span><span class="txt"><span class="name">${esc(pr.name)}</span><span class="desc">${pr.stalls} stalls · ${esc(pr.bikes)}</span></span></button>`;
         }
         if (it.kind === "hill") {
           const h = it.hill;
-          return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true" style="background:#f59e0b;color:#fff">⚠️</span><span class="txt"><span class="name">${esc(h.short)} <span class="incline-badge">${h.grade}</span></span><span class="desc">${esc(h.location)}</span></span></button>`;
+          return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true" style="background:#f59e0b;color:#fff">${poiIconSVG("alert", 17)}</span><span class="txt"><span class="name">${esc(h.short)} <span class="incline-badge">${h.grade}</span></span><span class="desc">${esc(h.location)}</span></span></button>`;
         }
         if (it.kind === "address") {
           const p = it.place;
@@ -6030,11 +6137,11 @@
 
   function modeIcon(catOrRoute) {
     const cat = typeof catOrRoute === "string" ? catOrRoute : (catOrRoute && catOrRoute.cat) || "";
-    if (cat === "walk") return "🚶";
-    if (cat === "link" || cat === "sounder" || cat === "amtrak" || cat === "monorail") return "🚆";
-    if (cat === "ferry" || cat === "watertaxi") return "⛴️";
-    if (cat === "streetcar") return "🚊";
-    return "🚌";
+    if (cat === "walk") return poiIconSVG("walk", 16);
+    if (cat === "link" || cat === "sounder" || cat === "amtrak" || cat === "monorail") return poiIconSVG("train", 16);
+    if (cat === "ferry" || cat === "watertaxi") return poiIconSVG("ferry", 16);
+    if (cat === "streetcar") return poiIconSVG("streetcar", 16);
+    return poiIconSVG("bus", 16);
   }
 
   function getSoonestBus(it) {
@@ -6413,7 +6520,7 @@
       <div class="home-view">
         <div class="planner-summary-card">
           <div class="planner-summary-title">
-            <span>🗺️ Dynamic Trip Planner</span>
+            <span>${poiIconSVG("map", 17)} Dynamic Trip Planner</span>
             <button class="planner-reverse-btn press" id="planExitBtn" type="button">All routes</button>
           </div>
           ${dirOrigin ? `<p class="planner-sub" style="margin-bottom:6px"><strong>Start:</strong> ${esc(dirOrigin.isLocation ? "Your location" : dirOrigin.name)}</p>` : ""}
@@ -6459,7 +6566,7 @@
       let badgeHtml = "";
       let descHtml = "";
       if (it.type === "walk") {
-        badgeHtml = `<span class="trip-walk-pill">🚶 Walk only</span>`;
+        badgeHtml = `<span class="trip-walk-pill">${poiIconSVG("walk", 14)} Walk only</span>`;
         descHtml = `Direct walk · ${(it.dist / 1609.34).toFixed(1)} miles`;
       } else if (it.type === "direct") {
         badgeHtml = badgeHTML(it.route);
@@ -6489,7 +6596,7 @@
         ? `<b>Walk anytime</b>`
         : `<b>${soonest.text}</b>${soonest.clock ? ` (${soonest.clock})` : ""}`;
       const soonestFootHtml = soonest ? `<div class="trip-soonest-foot">
-        <span class="soonest-icon">${soonest.isLive ? "🟢" : soonest.type === "walk" ? "🚶" : "🕒"}</span>
+        <span class="soonest-icon">${poiIconSVG(soonest.isLive ? "live" : soonest.type === "walk" ? "walk" : "clock", 14)}</span>
         <span class="soonest-foot-label">${footLabel}</span>
         <span class="soonest-foot-val">${footVal}</span>
       </div>` : "";
@@ -6528,7 +6635,7 @@
         </div>
         <div class="step-row">
           <span class="step-line"></span>
-          <span class="step-icon">🚶</span>
+          <span class="step-icon">${poiIconSVG("walk", 16)}</span>
           <div class="step-content">
             <div class="step-main">Walk ${(cur.dist / 1609.34).toFixed(1)} mi to destination</div>
             <div class="step-meta">About ${cur.totalDuration} minutes</div>
@@ -6552,7 +6659,7 @@
         </div>
         <div class="step-row">
           <span class="step-line"></span>
-          <span class="step-icon">🚶</span>
+          <span class="step-icon">${poiIconSVG("walk", 16)}</span>
           <div class="step-content">
             <div class="step-main">Walk to ${esc(cur.boardStop.name)}</div>
             <div class="step-meta">${cur.walk1Time} min walk · ${Math.round(cur.walk1Dist)} m</div>
@@ -6563,12 +6670,12 @@
           <span class="step-icon transit">${modeIcon(cur.route)}</span>
           <div class="step-content">
             <div class="step-main">Board ${badgeHTML(cur.route)} towards ${esc(cur.pattern.headsign || "Destination")}</div>
-            <div class="step-meta">${curSoonest ? `<span class="step-soonest${curSoonest.isLive ? " is-live" : ""}">${curSoonest.isLive ? "🟢 Live departure:" : "🕒 Soonest departure:"} <b>${curSoonest.text}</b>${curSoonest.clock ? ` (${curSoonest.clock})` : ""}</span> · ` : ""}${cur.rideTime} min ride · ${cur.numStops} stop${cur.numStops > 1 ? "s" : ""}</div>
+            <div class="step-meta">${curSoonest ? `<span class="step-soonest${curSoonest.isLive ? " is-live" : ""}">${poiIconSVG(curSoonest.isLive ? "live" : "clock", 12)} ${curSoonest.isLive ? "Live departure:" : "Soonest departure:"} <b>${curSoonest.text}</b>${curSoonest.clock ? ` (${curSoonest.clock})` : ""}</span> · ` : ""}${cur.rideTime} min ride · ${cur.numStops} stop${cur.numStops > 1 ? "s" : ""}</div>
           </div>
         </div>
         <div class="step-row">
           <span class="step-line"></span>
-          <span class="step-icon">🚶</span>
+          <span class="step-icon">${poiIconSVG("walk", 16)}</span>
           <div class="step-content">
             <div class="step-main">Alight at ${esc(cur.alightStop.name)}</div>
             <div class="step-meta">Walk ${cur.walk2Time} min · ${Math.round(cur.walk2Dist)} m to destination</div>
@@ -6592,7 +6699,7 @@
         </div>
         <div class="step-row">
           <span class="step-line"></span>
-          <span class="step-icon">🚶</span>
+          <span class="step-icon">${poiIconSVG("walk", 16)}</span>
           <div class="step-content">
             <div class="step-main">Walk to ${esc(cur.boardStop.name)}</div>
             <div class="step-meta">${cur.walk1Time} min walk</div>
@@ -6603,12 +6710,12 @@
           <span class="step-icon transit">${modeIcon(cur.r1)}</span>
           <div class="step-content">
             <div class="step-main">Board ${badgeHTML(cur.r1)} towards ${esc(cur.p1.headsign || "Transfer")}</div>
-            <div class="step-meta">${curSoonest ? `<span class="step-soonest${curSoonest.isLive ? " is-live" : ""}">${curSoonest.isLive ? "🟢 Live departure:" : "🕒 Soonest departure:"} <b>${curSoonest.text}</b>${curSoonest.clock ? ` (${curSoonest.clock})` : ""}</span> · ` : ""}${cur.ride1} min · ${cur.numStops1} stops</div>
+            <div class="step-meta">${curSoonest ? `<span class="step-soonest${curSoonest.isLive ? " is-live" : ""}">${poiIconSVG(curSoonest.isLive ? "live" : "clock", 12)} ${curSoonest.isLive ? "Live departure:" : "Soonest departure:"} <b>${curSoonest.text}</b>${curSoonest.clock ? ` (${curSoonest.clock})` : ""}</span> · ` : ""}${cur.ride1} min · ${cur.numStops1} stops</div>
           </div>
         </div>
         <div class="step-row">
           <span class="step-line"></span>
-          <span class="step-icon">🔄</span>
+          <span class="step-icon">${poiIconSVG("transfer", 16)}</span>
           <div class="step-content">
             <div class="step-main">${cur.transferStop1 && cur.transferStop2 && cur.transferStop1.id !== cur.transferStop2.id && cur.transferStop1.name !== cur.transferStop2.name ? `Transfer: Walk ${cur.transferWalkTime || 1} min from ${esc(cur.transferStop1.name)} to ${esc(cur.transferStop2.name)}` : `Transfer at ${esc((cur.transferStop1 || cur.transferStop).name)}`}</div>
             <div class="step-meta">Connection buffer ~${cur.wait2} min</div>
@@ -6624,7 +6731,7 @@
         </div>
         <div class="step-row">
           <span class="step-line"></span>
-          <span class="step-icon">🚶</span>
+          <span class="step-icon">${poiIconSVG("walk", 16)}</span>
           <div class="step-content">
             <div class="step-main">Alight at ${esc(cur.alightStop.name)}</div>
             <div class="step-meta">Walk ${cur.walk2Time} min to destination</div>
@@ -6640,19 +6747,19 @@
     } else if (cur.type === "multi") {
       const rows = [];
       rows.push(`<div class="step-row"><span class="step-line"></span>${origIconHtml}<div class="step-content"><div class="step-main">Start at ${esc(origTitle)}</div></div></div>`);
-      rows.push(`<div class="step-row"><span class="step-line"></span><span class="step-icon">🚶</span><div class="step-content"><div class="step-main">Walk to ${esc(cur.legs[0].boardStop.name)}</div><div class="step-meta">${cur.walk1Time} min walk · ${Math.round(cur.walk1Dist)} m</div></div></div>`);
+      rows.push(`<div class="step-row"><span class="step-line"></span><span class="step-icon">${poiIconSVG("walk", 16)}</span><div class="step-content"><div class="step-main">Walk to ${esc(cur.legs[0].boardStop.name)}</div><div class="step-meta">${cur.walk1Time} min walk · ${Math.round(cur.walk1Dist)} m</div></div></div>`);
       cur.legs.forEach((leg, index) => {
-        const firstDeparture = index === 0 && curSoonest ? `<span class="step-soonest${curSoonest.isLive ? " is-live" : ""}">${curSoonest.isLive ? "🟢 Live departure:" : "🕒 Soonest departure:"} <b>${curSoonest.text}</b>${curSoonest.clock ? ` (${curSoonest.clock})` : ""}</span> · ` : "";
+        const firstDeparture = index === 0 && curSoonest ? `<span class="step-soonest${curSoonest.isLive ? " is-live" : ""}">${poiIconSVG(curSoonest.isLive ? "live" : "clock", 12)} ${curSoonest.isLive ? "Live departure:" : "Soonest departure:"} <b>${curSoonest.text}</b>${curSoonest.clock ? ` (${curSoonest.clock})` : ""}</span> · ` : "";
         rows.push(`<div class="step-row"><span class="step-line"></span><span class="step-icon transit">${modeIcon(leg.route)}</span><div class="step-content"><div class="step-main">Board ${badgeHTML(leg.route)} towards ${esc(leg.pattern.headsign || "Destination")}</div><div class="step-meta">${firstDeparture}${leg.rideTime} min · ${leg.numStops} stop${leg.numStops === 1 ? "" : "s"}</div></div></div>`);
         if (index < cur.legs.length - 1) {
           const next = cur.legs[index + 1];
           const transferName = leg.alightStop.id !== next.boardStop.id && leg.alightStop.name !== next.boardStop.name
             ? `Walk ${next.transferWalkTime} min from ${esc(leg.alightStop.name)} to ${esc(next.boardStop.name)}`
             : `Transfer at ${esc(leg.alightStop.name)}`;
-          rows.push(`<div class="step-row"><span class="step-line"></span><span class="step-icon">🔄</span><div class="step-content"><div class="step-main">${transferName}</div><div class="step-meta">Connection buffer ~${next.waitTime} min</div></div></div>`);
+          rows.push(`<div class="step-row"><span class="step-line"></span><span class="step-icon">${poiIconSVG("transfer", 16)}</span><div class="step-content"><div class="step-main">${transferName}</div><div class="step-meta">Connection buffer ~${next.waitTime} min</div></div></div>`);
         }
       });
-      rows.push(`<div class="step-row"><span class="step-line"></span><span class="step-icon">🚶</span><div class="step-content"><div class="step-main">Alight at ${esc(cur.alightStop.name)}</div><div class="step-meta">Walk ${cur.walk2Time} min · ${Math.round(cur.walk2Dist)} m to destination</div></div></div>`);
+      rows.push(`<div class="step-row"><span class="step-line"></span><span class="step-icon">${poiIconSVG("walk", 16)}</span><div class="step-content"><div class="step-main">Alight at ${esc(cur.alightStop.name)}</div><div class="step-meta">Walk ${cur.walk2Time} min · ${Math.round(cur.walk2Dist)} m to destination</div></div></div>`);
       rows.push(`<div class="step-row">${destIconHtml}<div class="step-content"><div class="step-main">Arrive at ${esc(destTitle)}</div></div></div>`);
       stepsHtml = `<div class="trip-steps">${rows.join("")}</div>`;
     }
@@ -6667,7 +6774,7 @@
         <div class="planner-summary-title">
           <span>${cur.totalDuration} min · ${currentItineraries.length} route option${currentItineraries.length > 1 ? "s" : ""}</span>
           <div style="display:flex; gap:6px; align-items:center;">
-            <button class="planner-fav-btn press${isSaved ? " is-fav" : ""}" id="planFavBtn" type="button">${isSaved ? "★ Saved" : "☆ Save trip"}</button>
+            <button class="planner-fav-btn press${isSaved ? " is-fav" : ""}" id="planFavBtn" type="button">${poiIconSVG("star", 13)} ${isSaved ? "Saved" : "Save trip"}</button>
             <button class="planner-reverse-btn press" id="planRevBtn" type="button">Reverse ⇄</button>
           </div>
         </div>
@@ -6919,10 +7026,10 @@
     };
     if (dirActiveField === "orig" || (!dirOrigin && dirDest)) {
       dirOrigin = pt;
-      showToast("Start location set from map 📍");
+      showToast("Start location set from map");
     } else {
       dirDest = pt;
-      showToast("Destination set from map 🏁");
+      showToast("Destination set from map");
     }
     dirActiveField = null;
     hideDirSuggestionsBox();
@@ -7038,15 +7145,15 @@
       return;
     }
     box.innerHTML = items.map((it, idx) => {
-      let glyph = "📍";
+      let glyph = poiIconSVG("place", 16);
       let bg = "var(--accent,#007aff)";
-      if (it.kind === "favtrip") { glyph = "⭐"; bg = "#f59e0b"; }
-      else if (it.kind === "currloc") { glyph = "📍"; bg = "#2563eb"; }
-      else if (it.kind === "mapchoice") { glyph = "🗺️"; bg = "#0891b2"; }
-      else if (it.kind === "station") { glyph = "🚆"; bg = "#059669"; }
-      else if (it.kind === "stop") { glyph = "🚌"; bg = "#2563eb"; }
-      else if (it.kind === "pr") { glyph = "🅿️"; bg = "#0284c7"; }
-      else if (it.kind === "trail") { glyph = "🚲"; bg = "#059669"; }
+      if (it.kind === "favtrip") { glyph = poiIconSVG("star", 16); bg = "#f59e0b"; }
+      else if (it.kind === "currloc") { glyph = poiIconSVG("place", 16); bg = "#2563eb"; }
+      else if (it.kind === "mapchoice") { glyph = poiIconSVG("map", 16); bg = "#0891b2"; }
+      else if (it.kind === "station") { glyph = poiIconSVG("train", 16); bg = "#059669"; }
+      else if (it.kind === "stop") { glyph = poiIconSVG("bus", 16); bg = "#2563eb"; }
+      else if (it.kind === "pr") { glyph = poiIconSVG("parking", 16); bg = "#0284c7"; }
+      else if (it.kind === "trail") { glyph = poiIconSVG("bike", 16); bg = "#059669"; }
       else {
         const badge = it.badge || getPlaceBadge(it);
         glyph = poiIconSVG(badge.iconKind || poiKindFromBadge(badge), 16);
@@ -7470,6 +7577,12 @@
       b.addEventListener("click", () => { closePopup(); selectRoute(b.dataset.route, { fit: true }); });
       previewOnHover(b);
     });
+    popup.getElement().querySelectorAll("[data-dest-details]").forEach((b) => {
+      b.addEventListener("click", () => {
+        const d = KEY_DESTINATIONS.find((item) => item.id === b.dataset.destDetails);
+        if (d) showDestination(d);
+      });
+    });
   }
   function setupInteraction() {
     const hitLayers = () => ["sel-stops", "hov-stops", "stations", "stops", "flex"].filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none");
@@ -7492,6 +7605,19 @@
       if (!h) return null;
       const held = cur && cur.kind === "veh" && cur.id === h.f.properties.id;
       return h.d <= (held ? 12 : 7) ? h.f : null;
+    };
+    const mapPoiFromFeature = (feature, fallbackLngLat = null) => {
+      const p = feature?.properties || {};
+      const c = feature?.geometry?.type === "Point" ? feature.geometry.coordinates : fallbackLngLat ? [fallbackLngLat.lng, fallbackLngLat.lat] : null;
+      if (!c || !Number.isFinite(c[0]) || !Number.isFinite(c[1]) || !p.name) return null;
+      return {
+        id: `base-poi:${p.name}:${c[0].toFixed(5)}:${c[1].toFixed(5)}`,
+        name: p.name,
+        lat: c[1], lon: c[0],
+        osm_key: p.class,
+        osm_value: p.subclass || p.class,
+        type: p.subclass || p.class,
+      };
     };
     const pickStop = (pt) => {
       const h = nearest(qrf([[pt.x - 11, pt.y - 11], [pt.x + 11, pt.y + 11]], { layers: hitLayers() }), pt);
@@ -7532,33 +7658,33 @@
     function routeServiceDesc(r) {
       if (!r) return "";
       if (isRouteSuspended(r)) {
-        return `<div class="tt-service-info"><span class="tt-sched suspended">🚫 Service Suspended · Temporarily closed</span></div>`;
+        return `<div class="tt-service-info"><span class="tt-sched suspended">${poiIconSVG("alert", 13)} Service Suspended · Temporarily closed</span></div>`;
       }
       let catText = "";
       const w = r.sched?.weekday;
       const midMin = w && w.mid_n >= 3 ? w.mid : null;
       if (r.cat === "frequent") {
-        catText = midMin ? `🟢 Frequent Bus · Every ${midMin} min all day` : "🟢 Frequent Bus · Every 10–15 min all day";
+        catText = midMin ? `Frequent Bus · Every ${midMin} min all day` : "Frequent Bus · Every 10–15 min all day";
       } else if (r.cat === "rapidride") {
-        catText = midMin ? `🔴 RapidRide BRT · Every ${midMin} min all day` : "🔴 RapidRide BRT · Frequent arterial service";
+        catText = midMin ? `RapidRide BRT · Every ${midMin} min all day` : "RapidRide BRT · Frequent arterial service";
       } else if (r.cat === "swift") {
-        catText = midMin ? `🔵 Swift BRT · Every ${midMin} min all day` : "🔵 Swift BRT · Frequent arterial service";
+        catText = midMin ? `Swift BRT · Every ${midMin} min all day` : "Swift BRT · Frequent arterial service";
       } else if (r.cat === "peak") {
-        catText = "⚡ Peak Commute Only · Weekday rush hours (dashed line)";
+        catText = "Peak Commute Only · Weekday rush hours (dashed line)";
       } else if (r.cat === "dart") {
-        catText = "🚐 Dial-a-Ride (DART) · Flexible on-demand zone (dashed line)";
+        catText = "Dial-a-Ride (DART) · Flexible on-demand zone (dashed line)";
       } else if (r.cat === "local") {
-        catText = midMin ? `🔷 All-Day Bus · Every ${midMin} min midday` : "🔷 All-Day Bus · Regular 20–60 min service";
+        catText = midMin ? `All-Day Bus · Every ${midMin} min midday` : "All-Day Bus · Regular 20–60 min service";
       } else if (r.cat === "link") {
-        catText = "🚆 Link Light Rail · Frequent rapid transit";
+        catText = "Link Light Rail · Frequent rapid transit";
       } else if (r.cat === "sounder") {
-        catText = "🚂 Sounder Commuter Train · Peak regional rail";
+        catText = "Sounder Commuter Train · Peak regional rail";
       } else if (r.cat === "streetcar") {
-        catText = "🚋 Seattle Streetcar · Neighborhood connector";
+        catText = "Seattle Streetcar · Neighborhood connector";
       } else if (r.cat === "monorail") {
-        catText = "🚝 Seattle Center Monorail · Direct express";
+        catText = "Seattle Center Monorail · Direct express";
       } else if (r.cat === "ferry" || r.cat === "watertaxi") {
-        catText = "⛴️ Ferry · Cross-sound water connection (dashed line)";
+        catText = "Ferry · Cross-sound water connection (dashed line)";
       } else {
         catText = `${CAT_NAME[r.cat] || "Transit route"}`;
       }
@@ -7606,7 +7732,7 @@
             const schedInfo = routeServiceDesc(r);
             const tr = getThroughRouteInfo(r);
             const trInfo = tr && tr.partners.length
-              ? `<span class="tt-tr">🔄 Stay on bus: continues as ${tr.partners.map((p) => routeTitle(p)).join("/")} through Downtown</span>`
+              ? `<span class="tt-tr">${poiIconSVG("transfer", 14)} Stay on bus: continues as ${tr.partners.map((p) => routeTitle(p)).join("/")} through Downtown</span>`
               : "";
             tipShow("tag:" + tg.item.r, `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}${schedInfo}${trInfo}</span>`, "", ev(e, 14));
           } else {
@@ -7633,7 +7759,20 @@
             const dObj = KEY_DESTINATIONS.find((k) => k.id === dp.id);
             const icon = poiIconSVG(dObj ? dObj.kind : "place", 15);
             const kindText = dObj ? poiKindTitle(dObj.kind) : "Point of Interest";
-            tipShow("dest:" + dp.id, `<div class="tt-dest"><span class="tt-dest-name poi-tooltip-name">${icon} ${esc(dp.name || dp.short)}</span><span class="tt-dest-kind">${esc(kindText)}</span>${dp.transit ? `<span class="tt-dest-tr">🚌 ${esc(dp.transit)}</span>` : ""}<span class="tt-more">Tap for destination details & trip planner</span></div>`, "", ev(e));
+            tipShow("dest:" + dp.id, `<div class="tt-dest"><span class="tt-dest-name poi-tooltip-name">${icon} ${esc(dp.name || dp.short)}</span><span class="tt-dest-kind">${esc(kindText)}</span>${dp.transit ? `<span class="tt-dest-tr">${poiIconSVG("bus", 13)} ${esc(dp.transit)}</span>` : ""}<span class="tt-more">Tap for navigation and details</span></div>`, "", ev(e));
+            return;
+          }
+          const basePoiHits = map.queryRenderedFeatures([[e.point.x - 8, e.point.y - 8], [e.point.x + 8, e.point.y + 8]], {
+            layers: BASE_POI_LAYER_IDS.filter((l) => map.getLayer(l))
+          });
+          const basePoi = mapPoiFromFeature(basePoiHits.find((f) => f.properties?.name), e.lngLat);
+          if (basePoi) {
+            const badge = getPlaceBadge(basePoi);
+            cur = { kind: "poi", id: basePoi.id };
+            showLens(null);
+            map.getCanvas().style.cursor = "pointer";
+            highlightStop(null);
+            tipShow("poi:" + basePoi.id, `<div class="tt-dest"><span class="tt-dest-name poi-tooltip-name">${poiIconSVG(badge.iconKind, 15)} ${esc(basePoi.name)}</span><span class="tt-dest-kind">${esc(badge.label)}</span><span class="tt-more">Tap for navigation and details</span></div>`, "", ev(e));
             return;
           }
         }
@@ -7668,7 +7807,7 @@
           const schedInfo = routeServiceDesc(r);
           const tr = getThroughRouteInfo(r);
           const trInfo = tr && tr.partners.length
-            ? `<span class="tt-tr">🔄 Stay on bus: continues as ${tr.partners.map((p) => routeTitle(p)).join("/")} through Downtown</span>`
+            ? `<span class="tt-tr">${poiIconSVG("transfer", 14)} Stay on bus: continues as ${tr.partners.map((p) => routeTitle(p)).join("/")} through Downtown</span>`
             : "";
           tipShow("line:" + rs.map((x) => x.id).join(","), rs.length === 1
             ? `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}${schedInfo}${trInfo}${more}</span>`
@@ -7682,7 +7821,7 @@
           const tp = trailHover[0].properties;
           cur = { kind: "trail", name: tp.name };
           map.getCanvas().style.cursor = "pointer";
-          const icon = tp.facility === "trail" ? "🚲" : tp.facility === "pbl" ? "🛡️" : tp.facility === "greenway" ? "🌿" : tp.facility === "lane" ? "🚲" : tp.facility === "sharrow" ? "🚴" : "🚲";
+          const icon = poiIconSVG(tp.facility === "pbl" ? "shield" : tp.facility === "greenway" ? "park" : "bike", 16);
           const badgeColor = tp.facility === "pbl" || tp.facility === "trail" ? "#047857" : tp.facility === "greenway" ? "#10b981" : tp.facility === "lane" ? "#0891b2" : tp.facility === "sharrow" ? "#15803d" : "#b45309";
           tipShow("trail:" + tp.name, `<span class="tt-trail">${icon} <b>${esc(tp.name)}</b>${tp.length_mi ? ` · ${tp.length_mi} mi` : ""}<br><span style="color:${badgeColor};font-weight:700">${esc(tp.cat_name || "Bike Facility")}</span>${tp.surface === "unpaved" ? " · Gravel" : " · Paved"} · Tap for details</span>`, "", ev(e));
           return;
@@ -7752,9 +7891,17 @@
         if (destHits.length) {
           const dObj = KEY_DESTINATIONS.find((k) => k.id === destHits[0].properties.id);
           if (dObj) {
-            showDestination(dObj);
+            showDestinationPopup(dObj);
             return;
           }
+        }
+        const basePoiHits = map.queryRenderedFeatures([[e.point.x - 10, e.point.y - 10], [e.point.x + 10, e.point.y + 10]], {
+          layers: BASE_POI_LAYER_IDS.filter((l) => map.getLayer(l))
+        });
+        const basePoi = mapPoiFromFeature(basePoiHits.find((f) => f.properties?.name), e.lngLat);
+        if (basePoi) {
+          showMapPoiPopup(basePoi);
+          return;
         }
       }
       // a tap right on a station's circle opens the station, even with a train or bus on top of it
@@ -7810,7 +7957,7 @@
         const tp = trailsHit[0].properties;
         const isUnpaved = tp.surface === "unpaved";
         const catName = tp.cat_name || "Bicycle Facility";
-        const icon = tp.facility === "trail" ? "🚲" : tp.facility === "pbl" ? "🛡️" : tp.facility === "greenway" ? "🌿" : tp.facility === "lane" ? "🚲" : tp.facility === "sharrow" ? "🚴" : "🚲";
+        const icon = poiIconSVG(tp.facility === "pbl" ? "shield" : tp.facility === "greenway" ? "park" : "bike", 16);
         const badgeColor = tp.facility === "pbl" || tp.facility === "trail" ? "#047857" : tp.facility === "greenway" ? "#10b981" : tp.facility === "lane" ? "#0891b2" : tp.facility === "sharrow" ? "#15803d" : "#b45309";
         const statusBadge = tp.status === "UNDERCONS" ? ` · <span class="incline-badge" style="background:#fbbf24;color:#78350f">Under Construction</span>` : "";
         const html = `<div class="pop">
@@ -8145,11 +8292,11 @@
       }
     }
     window.addEventListener("online", () => {
-      showToast("Online: live updates resumed 🟢");
+      showToast("Online: live updates resumed");
       updateLiveUI();
     });
     window.addEventListener("offline", () => {
-      showToast("Offline mode: cached map & timetable available 📱");
+      showToast("Offline mode: cached map & timetable available");
       check();
     });
   }
@@ -8368,7 +8515,7 @@
       return `<div class="nearby-card">
         <div class="nearby-card-head">
           <span class="nearby-stop-name press" data-stop="${esc(s.id)}" role="button" tabindex="0" title="Highlight stop on map">${esc(cleanName)}${bayBadge}</span>
-          <span class="nearby-dist">🚶 ${walkMin} min · ${m} m</span>
+          <span class="nearby-dist">${poiIconSVG("walk", 13)} ${walkMin} min · ${m} m</span>
         </div>
         ${depsHTML}
       </div>`;
