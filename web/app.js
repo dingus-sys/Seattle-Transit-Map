@@ -617,9 +617,9 @@
     theatre: "sight", castle: "sight", monument: "sight", town_hall: "civic", courthouse: "civic", ferry_terminal: "ferry",
   };
   const POI_COLOR = { park: "#3f8f43", school: "#a5672a", museum: "#8a4fb5", zoo: "#2f8f6b", hospital: "#d0213b", stadium: "#3c6fb5",
-    library: "#7a5a2f", sight: "#c2571a", civic: "#5b6475", ferry: "#3c78b4" };
+    library: "#7a5a2f", sight: "#c2571a", civic: "#5b6475", ferry: "#3c78b4", restaurant: "#c2410c", coffee: "#b45309", market: "#db2777", hotel: "#3b82f6" };
   const POI_COLOR_D = { park: "#7fcf7f", school: "#e0a462", museum: "#c89af0", zoo: "#68d3a6", hospital: "#ff6b7f", stadium: "#7fa9ef",
-    library: "#d0ac74", sight: "#f39a5c", civic: "#aab3c4", ferry: "#7aa7d1" };
+    library: "#d0ac74", sight: "#f39a5c", civic: "#aab3c4", ferry: "#7aa7d1", restaurant: "#ea580c", coffee: "#d97706", market: "#f472b6", hotel: "#60a5fa" };
   function poiLayers(P) {
     const dark = theme === "dark", col = dark ? POI_COLOR_D : POI_COLOR;
     const kind = ["match", ["get", "subclass"], ...Object.entries(POI_KIND).flat(), ["match", ["get", "class"], ...Object.entries(POI_KIND).flat(), ""]];
@@ -667,6 +667,18 @@
     else if (kind === "library") { x.fillRect(-0.85, -0.65, 0.75, 1.3); x.fillRect(0.1, -0.65, 0.75, 1.3); }
     else if (kind === "ferry") { P([[-0.9, 0.05], [0.9, 0.05], [0.6, 0.55], [-0.6, 0.55]]); x.fillRect(-0.45, -0.45, 0.8, 0.45); }
     else if (kind === "civic") { P([[0, -0.9], [0.9, -0.35], [-0.9, -0.35]]); x.fillRect(-0.7, -0.25, 1.4, 0.9); }
+    else if (kind === "restaurant") {
+      for (const a of [-0.65, -0.48, -0.31]) x.fillRect(a, -0.85, 0.12, 0.45);
+      x.fillRect(-0.65, -0.5, 0.46, 0.3);
+      x.fillRect(-0.48, -0.2, 0.12, 0.95);
+      x.beginPath(); x.moveTo(0.5, -0.85); x.quadraticCurveTo(0.2, -0.5, 0.5, -0.15); x.lineTo(0.5, -0.85); x.closePath(); x.fill();
+      x.fillRect(0.38, -0.15, 0.12, 0.9);
+    }
+    else if (kind === "coffee") {
+      x.beginPath(); x.moveTo(-0.55, -0.5); x.lineTo(0.35, -0.5); x.lineTo(0.3, 0.35); x.quadraticCurveTo(0.28, 0.55, 0.05, 0.55); x.lineTo(-0.25, 0.55); x.quadraticCurveTo(-0.5, 0.55, -0.52, 0.35); x.closePath(); x.fill();
+      x.lineWidth = 0.14; x.beginPath(); x.arc(0.42, -0.1, 0.22, -Math.PI / 2, Math.PI / 2); x.stroke();
+      x.fillRect(-0.65, 0.7, 1.3, 0.14);
+    }
     else { // a sight: a star
       x.beginPath(); for (let i = 0; i < 10; i++) { const r = i % 2 ? 0.42 : 1, a = -Math.PI / 2 + i * Math.PI / 5; x.lineTo(r * Math.cos(a), r * Math.sin(a)); } x.closePath(); x.fill();
     }
@@ -723,7 +735,7 @@
       airplane: '<path d="m21 16-8-3-3-8-2 1 1 7-6 2v2l7-.5 3 4 2-1.5-2-3 7 1 1-1.3Z"/>',
       marina: '<path d="M4 14h16l-2 5H6l-2-5Zm4-7h8v6H8V7Zm2 2v2h4V9h-4ZM3 21c1.5-1 3-1 4.5 0 1.5-1 3-1 4.5 0 1.5-1 3-1 4.5 0"/>',
       beach: '<path d="M3 16h18M4 20c2-1.4 4-1.4 6 0 2-1.4 4-1.4 6 0M12 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm0-2v1m0 8v1M5.6 4.6l.8.8m11.2 0 .8-.8M4 8h1m14 0h1"/>',
-      dog: '<path d="M7 8.2C4 8.2 2 10.5 2 13.3 2 16 4.3 18 7 18c1.7 0 3.1-.8 4-2.1.9 1.3 2.3 2.1 4 2.1 2.7 0 5-2 5-4.7 0-2.8-2-5.1-5-5.1-1.2 0-2.3.4-3.1 1.1-.8-.7-1.9-1.1-3.1-1.1ZM7 2a2 2 0 1 1 0 4 2 2 0 0 1 0-4Zm10 0a2 2 0 1 1 0 4 2 2 0 0 1 0-4Z"/>',
+      dog: '<path d="M8.5 2.5a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm7 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4ZM5 7.5a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm14 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm-7 2.5c-3.3 0-5.5 2-5.5 4.5 0 2 1.5 3.5 3.2 3.5 1.2 0 1.8-.5 2.3-1 .5.5 1.1 1 2.3 1 1.7 0 3.2-1.5 3.2-3.5 0-2.5-2.2-4.5-5.5-4.5Z"/>',
       golf: '<path d="M6 22h12M8 22V3m0 0h8l-2.6 3L16 9H8M8 15a4 4 0 1 0 8 0 4 4 0 0 0-8 0Z"/>',
       water: '<path d="M3 9c2-2 4-2 6 0s4 2 6 0 4-2 6 0M3 15c2-2 4-2 6 0s4 2 6 0 4-2 6 0M3 20c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/>',
       camp: '<path d="m3 20 8.7-15L21 20H3Zm6-5h6M12 5v10"/>',
@@ -732,10 +744,10 @@
       tower: '<path d="M8 21h8M9 21l1-10h4l1 10M8 11h8l-4-8-4 8Zm3 3h2"/>',
       bridge: '<path d="M2 19h20M4 19V9m16 10V9M4 9c4-5 12-5 16 0M7 19v-5m10 5v-5M2 14h20"/>',
       viewpoint: '<path d="m2 20 7-11 4 6 3-4 6 9H2Zm7-11 1-2 2 3M5 5h4M7 3v4"/>',
-      market: '<path d="M5 8h14l-1 13H6L5 8Zm3 0V6a4 4 0 0 1 8 0v2M9 13h6"/>',
-      hotel: '<path d="M3 19v-7h18v7M5 12V7h6v5m0 0V9h5a3 3 0 0 1 3 3M2 21h20"/>',
-      coffee: '<path d="M4 6h13v9a5 5 0 0 1-10 0V6Zm13 2h2a2 2 0 0 1 0 4h-2M7 2c-1 1.2-1 2.2 0 3.2M11 2c-1 1.2-1 2.2 0 3.2"/>',
-      restaurant: '<path d="M6 3v8m-3-8v5a3 3 0 0 0 6 0V3m8 0v18m0-18c3 2 3 6 0 8"/>',
+      market: '<path d="M5 8h14l-1.2 12.5a1.5 1.5 0 0 1-1.5 1.5H7.7a1.5 1.5 0 0 1-1.5-1.5L5 8Zm4-1a3 3 0 0 1 6 0h2a5 5 0 0 0-10 0h2Zm1 6.5h4v1.5h-4v-1.5Z"/>',
+      hotel: '<path d="M2 19V6h2v8h16V9a3 3 0 0 1 3 3v7h-2v-2H4v2H2Zm4-8a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Zm6-3h6a2 2 0 0 1 2 2v3h-8V8Z"/>',
+      coffee: '<path d="M3 7h13v7a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V7Zm13 2h1.5a2 2 0 0 1 0 4H16v-1.5h1.5a.5.5 0 0 0 0-1H16V9ZM2 19.5a1 1 0 0 1 1-1h14a1 1 0 1 1 0 2H3a1 1 0 0 1-1-1ZM6 2.5a.75.75 0 0 1 .75.75c0 .5.3.7.5.8.3.1.5.3.5.7a.75.75 0 1 1-1.5 0c0-.5-.3-.7-.5-.8-.3-.1-.5-.3-.5-.7a.75.75 0 0 1 .75-.75Zm4 0a.75.75 0 0 1 .75.75c0 .5.3.7.5.8.3.1.5.3.5.7a.75.75 0 0 1-1.5 0c0-.5-.3-.7-.5-.8-.3-.1-.5-.3-.5-.7a.75.75 0 0 1 .75-.75Z"/>',
+      restaurant: '<path d="M5.5 2.5a.75.75 0 0 0-.75.75v5.5c0 1.6 1.2 2.9 2.75 3.2v7.3a1.25 1.25 0 0 0 2.5 0v-7.3c1.55-.3 2.75-1.6 2.75-3.2V3.25a.75.75 0 0 0-1.5 0V8a.25.25 0 0 1-.25.25h-.75a.25.25 0 0 1-.25-.25V3.25a.75.75 0 0 0-1.5 0V8a.25.25 0 0 1-.25.25h-.75a.25.25 0 0 1-.25-.25V3.25a.75.75 0 0 0-.75-.75Zm11.5 0a.75.75 0 0 0-.75.75v8.5a.75.75 0 0 0 .75.75h.25v6.75a1.25 1.25 0 0 0 2.5 0V3.75a1.25 1.25 0 0 0-1.25-1.25h-1.5Z"/>',
       post: '<path d="M3 5h18v14H3V5Zm0 2 9 6 9-6"/>',
       worship: '<path d="M4 21h16M7 21V10l5-6 5 6v11M12 2v5m-2 5h4m-4 4h4"/>',
       pharmacy: '<path d="M9 2h6v7h7v6h-7v7H9v-7H2V9h7V2Z"/>',
@@ -750,7 +762,7 @@
       directions: '<path d="m3 11 18-8-8 18-2-8-8-2Z"/>',
       external: '<path d="M14 4h6v6m0-6-9 9M19 14v5H5V5h5"/>',
       calendar: '<path d="M4 5h16v16H4V5Zm0 5h16M8 2v6m8-6v6"/>',
-      clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+      clock: '<path d="M12 3a9 9 0 1 0 9 9 9 9 0 0 0-9-9Zm0 16.2A7.2 7.2 0 1 1 19.2 12 7.2 7.2 0 0 1 12 19.2Zm.75-11.2h-1.5v4.5l3.5 2.1.75-1.2-2.75-1.65Z"/>',
       night: '<path d="M20 15.5A8 8 0 0 1 8.5 4 8 8 0 1 0 20 15.5Z"/>',
       transfer: '<path d="M7 3 3 7l4 4M3 7h12a4 4 0 0 1 4 4v1M17 21l4-4-4-4m4 4H9a4 4 0 0 1-4-4v-1"/>',
       book: '<path d="M4 4h7a3 3 0 0 1 3 3v13a3 3 0 0 0-3-3H4V4Zm16 0h-7a3 3 0 0 0-3 3v13a3 3 0 0 1 3-3h7V4Z"/>',
@@ -771,6 +783,10 @@
   function poiKindFromBadge(badge) {
     if (badge?.iconKind) return badge.iconKind;
     const text = `${badge?.label || ""}`.toLowerCase();
+    if (/restaurant|dining|food|eatery|bakery|bar|pub/.test(text)) return "restaurant";
+    if (/coffee|café|cafe/.test(text)) return "coffee";
+    if (/market|shopping|store|grocery/.test(text)) return "market";
+    if (/hotel|lodging|motel/.test(text)) return "hotel";
     if (/ferry|marina/.test(text)) return "ferry";
     if (/hospital|medical|pharmacy/.test(text)) return "hospital";
     if (/university|school/.test(text)) return "school";
@@ -783,7 +799,8 @@
 
   const poiKindTitle = (kind) => ({
     school: "College / University", hospital: "Hospital / Medical Center", stadium: "Stadium / Arena", sight: "Major Point of Interest",
-    park: "Park / Recreation", zoo: "Zoo / Aquarium", museum: "Museum / Culture", library: "Public Library", ferry: "Ferry Terminal", civic: "Civic Landmark"
+    park: "Park / Recreation", zoo: "Zoo / Aquarium", museum: "Museum / Culture", library: "Public Library", ferry: "Ferry Terminal", civic: "Civic Landmark",
+    restaurant: "Restaurant / Dining", coffee: "Coffee / Cafe", market: "Market / Shopping", hotel: "Hotel / Lodging"
   })[kind] || "Point of Interest";
 
   const poiColor = (kind) => (theme === "dark" ? POI_COLOR_D : POI_COLOR)[kind] || "#3b82f6";
@@ -4982,11 +4999,11 @@
       return { iconKind: "viewpoint", bg: "#b45309", label: "Viewpoint" };
     }
     // 21. Markets & Shopping
-    if (k === "shop" || v === "marketplace" || v === "mall" || v === "supermarket" || /\b(market|marketplace|pike place|mall|grocery|safeway|qfc|trader joe|whole foods|costco|target|h mart|uwajimaya)\b/i.test(str)) {
+    if (k === "shop" || v === "marketplace" || v === "mall" || v === "supermarket" || v === "convenience" || /\b(market|marketplace|pike place|mall|grocery|safeway|qfc|trader joe|whole foods|costco|target|h mart|uwajimaya)\b/i.test(str)) {
       return { iconKind: "market", bg: "#db2777", label: "Market / Shopping" };
     }
     // 22. Hotels & Lodging
-    if (v === "hotel" || v === "motel" || v === "hostel" || /\b(hotel|motel|inn\b|hostel|resort|marriott|hilton|hyatt|sheraton|westin)\b/i.test(str)) {
+    if (v === "hotel" || v === "motel" || v === "hostel" || v === "guest_house" || /\b(hotel|motel|inn\b|hostel|resort|lodging|marriott|hilton|hyatt|sheraton|westin)\b/i.test(str)) {
       return { iconKind: "hotel", bg: "#3b82f6", label: "Hotel" };
     }
     // 23. Coffee & Bakeries
@@ -4994,7 +5011,7 @@
       return { iconKind: "coffee", bg: "#b45309", label: "Coffee / Cafe" };
     }
     // 24. Restaurants & Dining
-    if (v === "restaurant" || v === "bar" || v === "pub" || /\b(restaurant|grill|bistro|brewery|pub\b|tavern|pizzeria|sushi|diner)\b/i.test(str)) {
+    if (v === "restaurant" || v === "bar" || v === "pub" || v === "fast_food" || v === "food_court" || v === "ice_cream" || /\b(restaurant|grill|bistro|brewery|pub\b|tavern|pizzeria|sushi|diner|food|kitchen|eatery|tacos|burger|ramen|noodle|bbq|cantina|dining|delicatessen|deli)\b/i.test(str)) {
       return { iconKind: "restaurant", bg: "#c2410c", label: "Restaurant" };
     }
     // 25. Post Office
