@@ -4798,7 +4798,7 @@
     if (routes) corridorRoutes = [...new Set(routes.map((r) => r.id))];
     if (quiet && body().querySelector(".corridor-picker")) return;
     panelView = "corridor";
-    setNetDim(0.38);
+    setNetDim(1);
     focusRoutes(corridorRoutes.map((id) => RBY[id]), false, { glow: false, widthScale: 1.35 });
     const query = routes ? "" : $("#corridorQuery")?.value || "";
     const rs = corridorRoutes.map((id) => RBY[id]).filter(Boolean).sort((a, b) =>
@@ -8412,7 +8412,7 @@
     };
     const revert = () => {
       if (panelView === "corridor" && corridorRoutes.length) {
-        setNetDim(0.38);
+        setNetDim(1);
         focusRoutes(corridorRoutes.map((id) => RBY[id]), false, { glow: false, widthScale: 1.35 });
       } else if (selected && selected.type === "route") {
         setNetDim(0.38);
@@ -8813,7 +8813,16 @@
         return;
       }
       const rs = routesAt(e.point, isNarrow() ? 10 : 6);
-      if (rs.length === 1) { selectRoute(rs[0].id, { fit: false }); return; }
+      const hoveredRoute = (cur && cur.kind === "line" && cur.id >= 0) ? LINES[cur.id] : null;
+      const ln = pickLine(e.point);
+      const strandRoute = (hoveredRoute && rs.some((r) => r.id === hoveredRoute.id))
+        ? hoveredRoute
+        : (ln ? (ln.r >= 0 ? LINES[ln.r] : (ln.routes && ln.routes[0])) : (rs.length === 1 ? rs[0] : null));
+
+      if (strandRoute) {
+        selectRoute(strandRoute.id, { fit: false });
+        return;
+      }
       if (rs.length > 1) {
         showCorridor(rs);
         focusRoutes(rs);
