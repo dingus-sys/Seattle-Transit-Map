@@ -58,6 +58,17 @@
           <input id="dirDest" type="text" placeholder="Destination address, stop, or POI" autocomplete="off" spellcheck="false" aria-label="Destination">
           <button class="dir-clear-btn" id="dirDestClear" type="button" aria-label="Clear destination" hidden>✕</button>
         </div>
+        <div class="dir-time" id="dirTime">
+          <div class="dir-time-modes" role="group" aria-label="Trip time">
+            <button class="dir-time-mode is-active" type="button" data-plan-time="leave-now">Leave now</button>
+            <button class="dir-time-mode" type="button" data-plan-time="depart-at">Depart at</button>
+            <button class="dir-time-mode" type="button" data-plan-time="arrive-by">Arrive by</button>
+          </div>
+          <label class="dir-time-input" id="dirTimeInputWrap" hidden>
+            <span id="dirTimeLabel">Depart at</span>
+            <input id="dirTimeInput" type="datetime-local" step="300" aria-label="Choose date and time">
+          </label>
+        </div>
       </div>
       <div class="dir-side-btns">
         <button class="dir-swap-btn press" id="dirSwap" title="Reverse directions" type="button" aria-label="Reverse directions">

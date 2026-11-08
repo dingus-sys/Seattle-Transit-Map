@@ -702,9 +702,36 @@
     if (!map.hasImage(id)) map.addImage(id, { width: W, height: H, data: x.getImageData(0, 0, W, H).data }, { pixelRatio: dpr });
   }
 
-  const poiEmoji = (kind) => ({
-    school: "🎓", hospital: "🏥", stadium: "🏟️", sight: "⭐", park: "🌳", zoo: "🐾", museum: "🏛️", library: "📚", ferry: "⛴️", civic: "🏛️"
-  })[kind] || "📍";
+  // POIs use our own small SVG glyph family.  System emoji vary by platform
+  // (and read as Apple emoji on macOS), so never use them for destination UI.
+  function poiIconSVG(kind, size = 18) {
+    const shapes = {
+      school: '<path d="M2 9 12 4l10 5-10 5L2 9Zm4 3.1V17c2.3 2 7.7 2 12 0v-4.9l-6 3-6-3ZM21 10v6"/>',
+      hospital: '<path d="M9 2h6v7h7v6h-7v7H9v-7H2V9h7V2Z"/>',
+      stadium: '<path d="M3 7h18l-2 13H5L3 7Zm3-4h12v4H6V3Zm2 8h8v2H8v-2Zm-1 4h10v2H7v-2Z"/>',
+      sight: '<path d="m12 2 2.75 5.57L21 8.48l-4.5 4.38 1.06 6.19L12 16.16l-5.56 2.9 1.06-6.19L3 8.48l6.25-.91L12 2Z"/>',
+      park: '<path d="M12 2c-4.2 0-7 3.1-7 6.6 0 2.3 1.3 4.1 3.1 5.2L5 18h14l-3.1-4.2c1.8-1.1 3.1-2.9 3.1-5.2C19 5.1 16.2 2 12 2Zm0 3 1.4 2.5 2.8.5-2 2 .4 2.8-2.6-1.3-2.6 1.3.4-2.8-2-2 2.8-.5L12 5Z"/>',
+      zoo: '<path d="M7 8.2C4 8.2 2 10.5 2 13.3 2 16 4.3 18 7 18c1.7 0 3.1-.8 4-2.1.9 1.3 2.3 2.1 4 2.1 2.7 0 5-2 5-4.7 0-2.8-2-5.1-5-5.1-1.2 0-2.3.4-3.1 1.1-.8-.7-1.9-1.1-3.1-1.1ZM7 2a2 2 0 1 1 0 4 2 2 0 0 1 0-4Zm10 0a2 2 0 1 1 0 4 2 2 0 0 1 0-4Z"/>',
+      museum: '<path d="M2 9 12 3l10 6v2H2V9Zm2 4h3v6H4v2h16v-2h-3v-6h3v-2H4v2Zm6 0h4v6h-4v-6Z"/>',
+      library: '<path d="M4 3h5v18H4V3Zm6 0h4v18h-4V3Zm5 2h5v16h-5V5Z"/>',
+      ferry: '<path d="M3 13h18l-2 6H5l-2-6Zm3-8h12v7H6V5Zm2 2v3h3V7H8Zm5 0v3h3V7h-3ZM4 21c1.3-1 2.7-1 4 0 1.3-1 2.7-1 4 0 1.3-1 2.7-1 4 0"/>',
+      civic: '<path d="M3 9 12 4l9 5v2H3V9Zm2 4h3v6H5v2h14v-2h-3v-6h3v-2H5v2Zm6 0h2v6h-2v-6Z"/>',
+      place: '<path d="M12 2a7 7 0 0 0-7 7c0 5.1 7 13 7 13s7-7.9 7-13a7 7 0 0 0-7-7Zm0 10.2A3.2 3.2 0 1 1 12 5.8a3.2 3.2 0 0 1 0 6.4Z"/>'
+    };
+    return `<svg class="poi-glyph" width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round">${shapes[kind] || shapes.place}</svg>`;
+  }
+
+  function poiKindFromBadge(badge) {
+    const text = `${badge?.label || ""}`.toLowerCase();
+    if (/ferry|marina/.test(text)) return "ferry";
+    if (/hospital|medical|pharmacy/.test(text)) return "hospital";
+    if (/university|school/.test(text)) return "school";
+    if (/stadium|arena/.test(text)) return "stadium";
+    if (/park|garden|camp|golf|zoo|aquarium/.test(text)) return /zoo|aquarium/.test(text) ? "zoo" : "park";
+    if (/museum|theater|arts|civic|government|library/.test(text)) return /library/.test(text) ? "library" : (/civic|government/.test(text) ? "civic" : "museum");
+    if (/landmark|tower|viewpoint|bridge/.test(text)) return "sight";
+    return "place";
+  }
 
   const poiKindTitle = (kind) => ({
     school: "College / University", hospital: "Hospital / Medical Center", stadium: "Stadium / Arena", sight: "Major Point of Interest",
@@ -879,7 +906,7 @@
     const html = `${backBtn}
       <div class="destination-view">
         <div class="hero">
-          <span class="poi-icon-badge ${esc(d.kind)}">${poiEmoji(d.kind)}</span>
+          <span class="poi-icon-badge ${esc(d.kind)}">${poiIconSVG(d.kind, 25)}</span>
           <div>
             <h2>${esc(d.name)}</h2>
             <p>${esc(poiKindTitle(d.kind))}</p>
@@ -2135,12 +2162,15 @@
   // ---- timetable estimates: where each scheduled trip should be right now
   let SCHED = null;
   const PT_FMT = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", weekday: "short", hour: "numeric", minute: "numeric", second: "numeric", hourCycle: "h23" });
-  function pacificNow() {
-    const now = new Date();
-    const parts = Object.fromEntries(PT_FMT.formatToParts(now).map((p) => [p.type, p.value]));
+  function pacificAt(date) {
+    const at = date instanceof Date ? date : new Date();
+    const parts = Object.fromEntries(PT_FMT.formatToParts(at).map((p) => [p.type, p.value]));
     const key = (w) => (w === "Sat" ? "saturday" : w === "Sun" ? "sunday" : "weekday");
     const prev = { Mon: "Sun", Tue: "Mon", Wed: "Tue", Thu: "Wed", Fri: "Thu", Sat: "Fri", Sun: "Sat" }[parts.weekday];
-    return { day: key(parts.weekday), prev: key(prev), secs: (+parts.hour % 24) * 3600 + +parts.minute * 60 + +parts.second + now.getMilliseconds() / 1000 };
+    return { day: key(parts.weekday), prev: key(prev), secs: (+parts.hour % 24) * 3600 + +parts.minute * 60 + +parts.second + at.getMilliseconds() / 1000, date: at };
+  }
+  function pacificNow() {
+    return pacificAt(new Date());
   }
   async function loadSchedule() {
     try {
@@ -4860,7 +4890,8 @@
 
     const el = document.createElement("div");
     el.className = "place-pin-marker";
-    el.innerHTML = `<svg width="36" height="46" viewBox="0 0 24 32" fill="none"><filter id="pin-shd" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="#000" flood-opacity="0.35"/></filter><path d="M12 0C5.373 0 0 5.373 0 12c0 9 12 20 12 20s12-11 12-20c0-6.627-5.373-12-12-12z" fill="${badge.bg}" filter="url(#pin-shd)"/><circle cx="12" cy="11" r="5.5" fill="#ffffff"/><text x="12" y="14" text-anchor="middle" font-size="8.5">${badge.emoji}</text></svg>`;
+    const markerIcon = poiIconSVG(badge.iconKind || poiKindFromBadge(badge), 12);
+    el.innerHTML = `<svg width="36" height="46" viewBox="0 0 24 32" fill="none"><filter id="pin-shd" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="#000" flood-opacity="0.35"/></filter><path d="M12 0C5.373 0 0 5.373 0 12c0 9 12 20 12 20s12-11 12-20c0-6.627-5.373-12-12-12z" fill="${badge.bg}" filter="url(#pin-shd)"/><circle cx="12" cy="11" r="5.5" fill="#ffffff"/><foreignObject x="6" y="5" width="12" height="12"><div xmlns="http://www.w3.org/1999/xhtml" style="display:flex;color:${badge.bg};width:12px;height:12px">${markerIcon}</div></foreignObject></svg>`;
     placeMarker = new maplibregl.Marker({ element: el, anchor: "bottom" })
       .setLngLat([place.lon, place.lat])
       .addTo(map);
@@ -4888,7 +4919,7 @@
 
     let html = `${backBtn}
       <div class="hero stop-hero" style="cursor:default">
-        <span class="stop-glyph big" style="background:${badge.bg};color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:20px" aria-hidden="true">${badge.emoji}</span>
+        <span class="stop-glyph big" style="background:${badge.bg};color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:20px" aria-hidden="true">${poiIconSVG(badge.iconKind || poiKindFromBadge(badge), 18)}</span>
         <div>
           <h2>${esc(placeTitle)}</h2>
           <p>${esc(placeSubtitle)}</p>
@@ -4965,7 +4996,7 @@
         }
         if (it.kind === "dest") {
           const d = it.d;
-          return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true" style="background:${poiColor(d.kind)};color:#fff">${poiEmoji(d.kind)}</span><span class="txt"><span class="name">${esc(d.name)}</span><span class="desc">${esc(poiKindTitle(d.kind))} · ${esc(d.short)}</span></span></button>`;
+          return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="trail-glyph poi-search-glyph" aria-hidden="true" style="background:${poiColor(d.kind)};color:#fff">${poiIconSVG(d.kind, 17)}</span><span class="txt"><span class="name">${esc(d.name)}</span><span class="desc">${esc(poiKindTitle(d.kind))} · ${esc(d.short)}</span></span></button>`;
         }
         if (it.kind === "pr") {
           const pr = it.pr;
@@ -4978,7 +5009,7 @@
         if (it.kind === "address") {
           const p = it.place;
           const badge = p.badge || getPlaceBadge(p);
-          return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true" style="background:${badge.bg};color:#fff">${badge.emoji}</span><span class="txt"><span class="name">${esc(p.name)}</span><span class="desc">${esc(p.desc)} · ${esc(badge.label)}</span></span></button>`;
+          return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="trail-glyph poi-search-glyph" aria-hidden="true" style="background:${badge.bg};color:#fff">${poiIconSVG(badge.iconKind || poiKindFromBadge(badge), 17)}</span><span class="txt"><span class="name">${esc(p.name)}</span><span class="desc">${esc(p.desc)} · ${esc(badge.label)}</span></span></button>`;
         }
         const sub = it.kind === "station" ? "Station" : `Bus stop${it.s.code ? " #" + it.s.code : ""}`;
         return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="stop-glyph${it.kind === "station" ? " big" : ""}" aria-hidden="true"></span><span class="txt"><span class="name">${esc(it.s.name)}</span><span class="desc">${esc(sub)}</span></span></button>`;
@@ -5083,6 +5114,48 @@
   let dirActiveField = null; // "orig" or "dest" or null
   let dirDebounceTimer = null;
   let plannerStopsCache = null;
+  let dirTimeMode = "leave-now";
+  let dirTimeValue = "";
+  const PLANNER_MAX_AHEAD_MS = 48 * 60 * 60 * 1000;
+
+  function localDateTimeValue(date) {
+    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+    return local.toISOString().slice(0, 16);
+  }
+
+  function getDirPlanningTime() {
+    const now = new Date();
+    if (dirTimeMode === "leave-now") return { ...pacificAt(now), mode: dirTimeMode };
+    const selected = new Date(dirTimeValue);
+    const max = now.getTime() + PLANNER_MAX_AHEAD_MS;
+    const date = Number.isFinite(selected.getTime()) ? new Date(Math.min(Math.max(selected.getTime(), now.getTime()), max)) : new Date(now.getTime() + 15 * 60000);
+    return { ...pacificAt(date), mode: dirTimeMode };
+  }
+
+  function plannerTimeLabel(context = getDirPlanningTime()) {
+    if (context.mode === "leave-now") return "Leaving now";
+    const when = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", weekday: "short", hour: "numeric", minute: "2-digit" }).format(context.date);
+    return `${context.mode === "arrive-by" ? "Arrive by" : "Depart at"} ${when}`;
+  }
+
+  function syncDirTimeControls() {
+    const now = new Date();
+    const input = $("#dirTimeInput");
+    const wrap = $("#dirTimeInputWrap");
+    const label = $("#dirTimeLabel");
+    if (!dirTimeValue && dirTimeMode !== "leave-now") dirTimeValue = localDateTimeValue(new Date(now.getTime() + 15 * 60000));
+    if (input) {
+      input.min = localDateTimeValue(now);
+      input.max = localDateTimeValue(new Date(now.getTime() + PLANNER_MAX_AHEAD_MS));
+      input.value = dirTimeValue || localDateTimeValue(new Date(now.getTime() + 15 * 60000));
+    }
+    if (wrap) wrap.hidden = dirTimeMode === "leave-now";
+    if (label) label.textContent = dirTimeMode === "arrive-by" ? "Arrive by" : "Depart at";
+    for (const button of document.querySelectorAll("[data-plan-time]")) {
+      button.classList.toggle("is-active", button.dataset.planTime === dirTimeMode);
+      button.setAttribute("aria-pressed", button.dataset.planTime === dirTimeMode ? "true" : "false");
+    }
+  }
 
   function distMeters(lat1, lon1, lat2, lon2) {
     const R = 6371000;
@@ -5279,7 +5352,7 @@
   }
 
   // Look up actual timetable departure, arrival, and ride duration for a trip between boardStop and alightStop
-  function timetableTripTimes(route, boardStop, alightStop, earliestSec, day, prevDay) {
+  function timetableTripTimes(route, boardStop, alightStop, earliestSec, day, prevDay, planningTime = pacificNow()) {
     if (!SCHED || !DEP || !route || !boardStop || !alightStop) return null;
     const bKeys = [...new Set([boardStop.key, boardStop.id, ...((boardStop.stops || []).map((sid) => stopIndex[sid] && stopIndex[sid].key).filter(Boolean))])].filter(Boolean);
     const aKeys = new Set([...new Set([alightStop.key, alightStop.id, ...((alightStop.stops || []).map((sid) => stopIndex[sid] && stopIndex[sid].key).filter(Boolean))])].filter(Boolean));
@@ -5318,7 +5391,7 @@
                   rideSec,
                   rideMin: Math.max(1, Math.round(rideSec / 60)),
                   waitMin: Math.max(0, Math.round((depTimeSec - earliestSec) / 60)),
-                  clock: CLOCK.format(new Date(Date.now() + Math.max(0, depTimeSec - pacificNow().secs) * 1000)),
+                  clock: CLOCK.format(new Date((planningTime.date instanceof Date ? planningTime.date.getTime() : Date.now()) + (depTimeSec - planningTime.secs) * 1000)),
                 };
               }
             }
@@ -5467,7 +5540,7 @@
   // deliberately separate from the fast one-transfer results so short trips
   // keep their familiar compact choices while regional, cross-water trips are
   // still found and rendered as complete itineraries.
-  function planMultiLegTrips(origStops, destStops, origStopMap, destStopMap, nowSecs, day, prev) {
+  function planMultiLegTrips(origStops, destStops, origStopMap, destStopMap, nowSecs, day, prev, planningTime) {
     const MAX_LEGS = 4;
     const MAX_STATES = 520;
     const destRoutes = new Set();
@@ -5523,7 +5596,7 @@
           // bounded search with the same connection over and over.
           for (const target of targets.slice(0, 12)) {
             const numStops = target.to - from;
-            const scheduled = timetableTripTimes(route, boardStop, target.alightStop, earliestSec, day, prev);
+            const scheduled = timetableTripTimes(route, boardStop, target.alightStop, earliestSec, day, prev, planningTime);
             let waitTime, rideTime, arrSec, schedVerified = state.schedVerified;
             if (scheduled) {
               waitTime = prior ? Math.max(2, Math.round((scheduled.depSec - state.arrSec - boardOption.dist / 80 * 60) / 60)) : scheduled.waitMin;
@@ -5580,7 +5653,7 @@
     }).slice(0, 4);
   }
 
-  function planTransitTrip(orig, dest) {
+  function planTransitTrip(orig, dest, planningTime = pacificNow()) {
     if (!orig || !dest) return null;
     const directWalkDist = distMeters(orig.lat, orig.lon, dest.lat, dest.lon);
     const directWalkTime = Math.round(directWalkDist / 80);
@@ -5607,8 +5680,8 @@
       }
     }
 
-    const { day, prev } = pacificNow();
-    const nowSecs = pacificNow().secs;
+    const { day, prev } = planningTime;
+    const nowSecs = planningTime.secs;
     const directItineraries = [];
 
     for (const r of ROUTES) {
@@ -5665,7 +5738,7 @@
           const walk1Time = bestPair.walk1Time;
           const walk2Time = bestPair.walk2Time;
           const earliestBoardSec = nowSecs + walk1Time * 60;
-          const schedTrip = timetableTripTimes(r, bestPair.boardStop, bestPair.alightStop, earliestBoardSec, day, prev);
+          const schedTrip = timetableTripTimes(r, bestPair.boardStop, bestPair.alightStop, earliestBoardSec, day, prev, planningTime);
 
           let waitTime, rideTime, totalDuration, schedVerified = false;
           if (schedTrip) {
@@ -5699,6 +5772,9 @@
             totalDuration,
             schedTrip,
             schedVerified,
+            planningTime,
+            departSec: schedTrip ? schedTrip.depSec - walk1Time * 60 : nowSecs,
+            arrivalSec: schedTrip ? schedTrip.arrSec + walk2Time * 60 : nowSecs + totalDuration * 60,
             transitDist: bestPair.transitDist,
           });
         }
@@ -5793,7 +5869,7 @@
                   const transferWalkTime = Math.max(1, Math.round(tDist / 80));
 
                   const earliestSec1 = nowSecs + walk1Time * 60;
-                  const leg1 = timetableTripTimes(r1, boardStop, s1, earliestSec1, day, prev);
+                  const leg1 = timetableTripTimes(r1, boardStop, s1, earliestSec1, day, prev, planningTime);
 
                   let leg2 = null;
                   let wait1, wait2, ride1Time = ride1, ride2Time = ride2;
@@ -5803,7 +5879,7 @@
                     wait1 = leg1.waitMin;
                     ride1Time = leg1.rideMin;
                     const earliestSec2 = leg1.arrSec + transferWalkTime * 60 + 120;
-                    leg2 = timetableTripTimes(r2, s2, alightStop, earliestSec2, day, prev);
+                    leg2 = timetableTripTimes(r2, s2, alightStop, earliestSec2, day, prev, planningTime);
                     if (leg2) {
                       const transferWaitMin = Math.round((leg2.depSec - leg1.arrSec - transferWalkTime * 60) / 60);
                       if (transferWaitMin > 60 || transferWaitMin < 0) continue;
@@ -5850,6 +5926,9 @@
                     schedTrip1: leg1,
                     schedTrip2: leg2,
                     schedVerified,
+                    planningTime,
+                    departSec: leg1 ? leg1.depSec - walk1Time * 60 : nowSecs,
+                    arrivalSec: leg2 ? leg2.arrSec + walk2Time * 60 : nowSecs + totalDuration * 60,
                     score: totalDuration - railBonus,
                   });
                   break;
@@ -5875,7 +5954,13 @@
     // Cross-water and regional trips often need two or three transfers (for
     // example, bus → ferry → Vashon shuttle).  Search those after the lighter
     // direct and one-transfer passes, with the same timetable/buffer rules.
-    const multi = planMultiLegTrips(origStops, destStops, origStopMap, destStopMap, nowSecs, day, prev);
+    const multi = planMultiLegTrips(origStops, destStops, origStopMap, destStopMap, nowSecs, day, prev, planningTime);
+    for (const it of multi) {
+      const first = it.legs[0], last = it.legs[it.legs.length - 1];
+      it.planningTime = planningTime;
+      it.departSec = first?.schedTrip ? first.schedTrip.depSec - it.walk1Time * 60 : nowSecs;
+      it.arrivalSec = last?.schedTrip ? last.schedTrip.arrSec + it.walk2Time * 60 : nowSecs + it.totalDuration * 60;
+    }
 
     let directWalk = null;
     if (directWalkDist <= 2500) {
@@ -5883,6 +5968,9 @@
         type: "walk",
         dist: directWalkDist,
         totalDuration: directWalkTime,
+        planningTime,
+        departSec: nowSecs,
+        arrivalSec: nowSecs + directWalkTime * 60,
       };
     }
 
@@ -5936,13 +6024,15 @@
     const stop = it.boardStop;
     if (!route || !stop) return null;
 
+    const planningTime = it.planningTime || pacificNow();
+    const isFuturePlan = planningTime.date && planningTime.date.getTime() > Date.now() + 90 * 1000;
     const sIds = stopIdsOf(stop);
     const vehWord = currentVehWord(route);
     const walk1Min = it.walk1Time || 0;
-    const minEarliestSec = pacificNow().secs + walk1Min * 60;
+    const minEarliestSec = planningTime.secs + walk1Min * 60;
 
     // 1. Live departures check from agency
-    const live = liveDepartures(sIds, 30);
+    const live = isFuturePlan ? [] : liveDepartures(sIds, 30);
     if (live && live.length) {
       const match = live.find((d) => d.r && (d.r.id === route.id || d.r === route) && (d.t >= walk1Min * 60 - 60));
       if (match) {
@@ -5965,11 +6055,11 @@
     }
 
     // 2. Timetable schedule departures check
-    const schedTrip = it.schedTrip || (it.type === "transfer" && it.schedTrip1) || (it.type === "multi" && it.legs?.[0]?.schedTrip) || timetableTripTimes(route, it.boardStop, it.type === "direct" ? it.alightStop : (it.transferStop1 || it.transferStop), minEarliestSec, pacificNow().day, pacificNow().prev);
+    const schedTrip = it.schedTrip || (it.type === "transfer" && it.schedTrip1) || (it.type === "multi" && it.legs?.[0]?.schedTrip) || timetableTripTimes(route, it.boardStop, it.type === "direct" ? it.alightStop : (it.transferStop1 || it.transferStop), minEarliestSec, planningTime.day, planningTime.prev, planningTime);
     if (schedTrip) {
       const waitMin = schedTrip.waitMin;
       const clockStr = schedTrip.clock;
-      const text = waitMin === 0 ? "Due now" : `in ${waitMin} min`;
+      const text = isFuturePlan ? "Departs" : (waitMin === 0 ? "Due now" : `in ${waitMin} min`);
       return {
         type: "sched",
         vehWord,
@@ -5978,7 +6068,7 @@
         text,
         clock: clockStr,
         routeLabel: route.short || route.label,
-        desc: waitMin === 0 ? `Scheduled ${vehWord} now (${clockStr})` : `Soonest ${vehWord} in ${waitMin} min (${clockStr})`
+        desc: isFuturePlan ? `Scheduled ${vehWord} departure at ${clockStr}` : (waitMin === 0 ? `Scheduled ${vehWord} now (${clockStr})` : `Soonest ${vehWord} in ${waitMin} min (${clockStr})`)
       };
     }
 
@@ -6008,19 +6098,19 @@
     const origPt = [dirOrigin.lon, dirOrigin.lat];
     const destPt = [dirDest.lon, dirDest.lat];
 
-    const origBadge = dirOrigin.isLocation ? { emoji: "📍", bg: "#10b981", label: "Start" } : (dirOrigin.badge || getPlaceBadge(dirOrigin));
+    const origBadge = dirOrigin.isLocation ? { bg: "#10b981", label: "Start" } : (dirOrigin.badge || getPlaceBadge(dirOrigin));
     const destBadge = dirDest.badge || getPlaceBadge(dirDest);
 
     ptFeatures.push({
       type: "Feature",
       geometry: { type: "Point", coordinates: origPt },
-      properties: { role: "orig", color: origBadge.bg || "#10b981", label: origBadge.emoji ? `${origBadge.emoji} ${origBadge.label || "Start"}` : "A" }
+      properties: { role: "orig", color: origBadge.bg || "#10b981", label: origBadge.label || "Start" }
     });
 
     ptFeatures.push({
       type: "Feature",
       geometry: { type: "Point", coordinates: destPt },
-      properties: { role: "dest", color: destBadge.bg || "#ef4444", label: destBadge.emoji ? `${destBadge.emoji} ${destBadge.label || "Destination"}` : "B" }
+      properties: { role: "dest", color: destBadge.bg || "#ef4444", label: destBadge.label || "Destination" }
     });
 
     const allCoords = [origPt, destPt];
@@ -6247,13 +6337,30 @@
     dirActiveField = null;
     $("#dirOrig")?.blur();
     $("#dirDest")?.blur();
-    const plan = planTransitTrip(dirOrigin, dirDest);
-    const allItins = [];
-    if (plan) {
-      if (plan.direct && plan.direct.length) allItins.push(...plan.direct);
-      if (plan.transfer && plan.transfer.length) allItins.push(...plan.transfer);
-      if (plan.multi && plan.multi.length) allItins.push(...plan.multi);
-      if (plan.directWalk) allItins.push(plan.directWalk);
+    const requestedTime = getDirPlanningTime();
+    // For arrive-by, search forward from up to three hours before the requested
+    // arrival, then keep only schedule-feasible itineraries that meet the time.
+    // This preserves the same all-mode planner and its transfer buffers.
+    const searchTime = requestedTime.mode === "arrive-by"
+      ? { ...pacificAt(new Date(Math.max(Date.now(), requestedTime.date.getTime() - 3 * 60 * 60 * 1000))), mode: "arrive-by" }
+      : requestedTime;
+    const collect = (plan) => {
+      const itins = [];
+      if (!plan) return itins;
+      if (plan.direct?.length) itins.push(...plan.direct);
+      if (plan.transfer?.length) itins.push(...plan.transfer);
+      if (plan.multi?.length) itins.push(...plan.multi);
+      if (plan.directWalk) itins.push(plan.directWalk);
+      return itins;
+    };
+    let allItins = collect(planTransitTrip(dirOrigin, dirDest, searchTime));
+    if (requestedTime.mode === "arrive-by") {
+      allItins = allItins.filter((it) => it.arrivalSec == null || it.arrivalSec <= requestedTime.secs + 30);
+      for (const it of allItins) {
+        it.planningTime = requestedTime;
+        it.arriveBy = true;
+        it.requestedArrivalSec = requestedTime.secs;
+      }
     }
     allItins.sort((a, b) => {
       const aDur = a.totalDuration - (a.type === "direct" ? 3 : 0);
@@ -6375,10 +6482,10 @@
       </button>`;
     }).join("");
 
-    const origBadge = dirOrigin.isLocation ? { emoji: "📍", bg: "#2563eb", label: "Your location" } : (dirOrigin.badge || getPlaceBadge(dirOrigin));
+    const origBadge = dirOrigin.isLocation ? { bg: "#2563eb", label: "Your location" } : (dirOrigin.badge || getPlaceBadge(dirOrigin));
     const destBadge = dirDest.badge || getPlaceBadge(dirDest);
-    const origIconHtml = `<span class="step-icon" style="background:${origBadge.bg};color:#fff;font-size:14px">${origBadge.emoji}</span>`;
-    const destIconHtml = `<span class="step-icon" style="background:${destBadge.bg};color:#fff;font-size:14px">${destBadge.emoji}</span>`;
+    const origIconHtml = `<span class="step-icon" style="background:${origBadge.bg};color:#fff;font-size:14px">${poiIconSVG(origBadge.iconKind || poiKindFromBadge(origBadge), 15)}</span>`;
+    const destIconHtml = `<span class="step-icon" style="background:${destBadge.bg};color:#fff;font-size:14px">${poiIconSVG(destBadge.iconKind || poiKindFromBadge(destBadge), 15)}</span>`;
 
     let stepsHtml = "";
     if (cur.type === "walk") {
@@ -6535,7 +6642,7 @@
             <button class="planner-reverse-btn press" id="planRevBtn" type="button">Reverse ⇄</button>
           </div>
         </div>
-        <p class="planner-sub">From ${esc(origTitle)} to ${esc(destTitle)}</p>
+        <p class="planner-sub">From ${esc(origTitle)} to ${esc(destTitle)} · ${esc(plannerTimeLabel(cur.planningTime))}</p>
       </div>
       <h3 class="section">Trip Options</h3>
       ${cardsHtml}
@@ -6659,6 +6766,7 @@
     $("#dirPanel").hidden = false;
     if (orig) dirOrigin = orig;
     if (dest) dirDest = dest;
+    syncDirTimeControls();
     updateDirInputs();
     panelView = "directions";
     openSheet("half");
@@ -6865,7 +6973,7 @@
       } else if (it.kind === "pr") {
         results.push({ kind: "pr", name: it.pr.name, desc: `Park & Ride (${it.pr.stalls} stalls)`, lat: it.pr.lat, lon: it.pr.lon });
       } else if (it.kind === "dest") {
-        results.push({ kind: "poi", name: it.d.name, desc: poiKindTitle(it.d.kind), lat: it.d.coords[1], lon: it.d.coords[0], badge: { emoji: poiEmoji(it.d.kind), bg: poiColor(it.d.kind), label: poiKindTitle(it.d.kind) } });
+        results.push({ kind: "poi", name: it.d.name, desc: poiKindTitle(it.d.kind), lat: it.d.coords[1], lon: it.d.coords[0], badge: { iconKind: it.d.kind, bg: poiColor(it.d.kind), label: poiKindTitle(it.d.kind) } });
       } else if (it.kind === "trail") {
         const coords = [];
         const getC = (c) => { if (typeof c[0] === "number") coords.push(c); else c.forEach(getC); };
@@ -6912,11 +7020,11 @@
       else if (it.kind === "trail") { glyph = "🚲"; bg = "#059669"; }
       else {
         const badge = it.badge || getPlaceBadge(it);
-        glyph = badge.emoji;
+        glyph = poiIconSVG(badge.iconKind || poiKindFromBadge(badge), 16);
         bg = badge.bg;
       }
       return `<button type="button" class="result" data-sug-idx="${idx}">
-        <span class="trail-glyph" aria-hidden="true" style="background:${bg};color:#fff">${glyph}</span>
+        <span class="trail-glyph${it.kind === "poi" ? " poi-search-glyph" : ""}" aria-hidden="true" style="background:${bg};color:#fff">${glyph}</span>
         <span class="txt"><span class="name">${esc(it.name)}</span><span class="desc">${esc(it.desc)}</span></span>
       </button>`;
     }).join("") + `<div class="dir-provider-note" style="padding:6px 12px;font-size:11px;color:var(--text-sub);border-top:1px solid var(--border,#e2e8f0);text-align:center">Address suggestions via Photon · OpenStreetMap data</div>`;
@@ -7057,6 +7165,21 @@
     $("#dirBackIcon")?.addEventListener("click", closeTripPlanner);
     $("#dirSwap")?.addEventListener("click", swapDirections);
     $("#dirOrigLoc")?.addEventListener("click", setOriginToCurrentLocation);
+    for (const button of document.querySelectorAll("[data-plan-time]")) {
+      button.addEventListener("click", () => {
+        dirTimeMode = button.dataset.planTime;
+        if (dirTimeMode !== "leave-now" && !dirTimeValue) {
+          dirTimeValue = localDateTimeValue(new Date(Date.now() + 15 * 60 * 1000));
+        }
+        syncDirTimeControls();
+        if (dirOrigin && dirDest) executeTripPlan();
+      });
+    }
+    $("#dirTimeInput")?.addEventListener("change", (event) => {
+      dirTimeValue = event.target.value;
+      syncDirTimeControls();
+      if (dirOrigin && dirDest) executeTripPlan();
+    });
     $("#dirOrigClear")?.addEventListener("click", () => {
       dirOrigin = null;
       clearTripMap();
@@ -7149,7 +7272,7 @@
     });
 
     document.addEventListener("click", (e) => {
-      if (!e.target.closest(".dir-field") && !e.target.closest("#dirSuggestions") && !e.target.closest("#planTripBtn")) {
+      if (!e.target.closest(".dir-field") && !e.target.closest(".dir-time") && !e.target.closest("#dirSuggestions") && !e.target.closest("#planTripBtn")) {
         hideDirSuggestionsBox();
       }
     });
@@ -7479,9 +7602,9 @@
             map.getCanvas().style.cursor = "pointer";
             highlightStop(null);
             const dObj = KEY_DESTINATIONS.find((k) => k.id === dp.id);
-            const emoji = dObj ? poiEmoji(dObj.kind) : "📍";
+            const icon = poiIconSVG(dObj ? dObj.kind : "place", 15);
             const kindText = dObj ? poiKindTitle(dObj.kind) : "Point of Interest";
-            tipShow("dest:" + dp.id, `<div class="tt-dest"><span class="tt-dest-name">${emoji} ${esc(dp.name || dp.short)}</span><span class="tt-dest-kind">${esc(kindText)}</span>${dp.transit ? `<span class="tt-dest-tr">🚌 ${esc(dp.transit)}</span>` : ""}<span class="tt-more">Tap for destination details & trip planner</span></div>`, "", ev(e));
+            tipShow("dest:" + dp.id, `<div class="tt-dest"><span class="tt-dest-name poi-tooltip-name">${icon} ${esc(dp.name || dp.short)}</span><span class="tt-dest-kind">${esc(kindText)}</span>${dp.transit ? `<span class="tt-dest-tr">🚌 ${esc(dp.transit)}</span>` : ""}<span class="tt-more">Tap for destination details & trip planner</span></div>`, "", ev(e));
             return;
           }
         }

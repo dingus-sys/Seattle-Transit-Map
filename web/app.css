@@ -235,6 +235,14 @@ button, input { font: inherit; color: inherit; letter-spacing: inherit; }
 .dir-field input:focus {
   background: var(--fill-2); outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
 }
+.dir-time { display:flex; flex-direction:column; gap:5px; padding-top:1px; }
+.dir-time-modes { display:flex; gap:4px; min-width:0; }
+.dir-time-mode { flex:1 1 0; min-width:0; height:25px; padding:0 6px; border:0; border-radius:8px; background:var(--fill); color:var(--muted); font:600 10.5px/1 var(--font); cursor:pointer; white-space:nowrap; }
+.dir-time-mode:hover { color:var(--ink); background:var(--fill-2); }
+.dir-time-mode.is-active { color:#fff; background:var(--accent); box-shadow:0 1px 2px color-mix(in srgb, var(--accent) 38%, transparent); }
+.dir-time-input { display:flex; align-items:center; gap:7px; min-height:28px; padding:0 7px; border-radius:9px; background:var(--fill); color:var(--muted); font:600 10px/1 var(--font); }
+.dir-time-input input { min-width:0; flex:1; height:25px; border:0; padding:0; background:transparent; color:var(--ink); font:600 11px/1 var(--font); }
+.dir-time-input input:focus { outline:0; }
 .dir-loc-btn, .dir-clear-btn {
   position: absolute; right: 5px; width: 24px; height: 24px; border: 0; background: transparent;
   color: var(--muted); display: flex; align-items: center; justify-content: center; cursor: pointer;
@@ -255,7 +263,7 @@ button, input { font: inherit; color: inherit; letter-spacing: inherit; }
 .dir-close-btn:hover { color: var(--ink); background: var(--fill-2); transform: scale(1.05); }
 .dir-close-btn:active { transform: scale(0.94); }
 .dir-suggestions {
-  position: absolute; left: 0; right: 0; top: 82px; z-index: 50; max-height: 48vh; overflow-y: auto;
+  position: absolute; left: 0; right: 0; top: 122px; z-index: 50; max-height: 48vh; overflow-y: auto;
   border-radius: 18px; padding: 6px; animation: jelly-pop .25s var(--spring) both;
   background: var(--dropdown-bg) !important;
   -webkit-backdrop-filter: none !important;
@@ -853,6 +861,8 @@ td.sched-cell-now {
   width: 28px; height: 28px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center;
   background: color-mix(in srgb, #059669 16%, transparent); font-size: 15px; flex-shrink: 0;
 }
+.poi-glyph { display:inline-block; flex:0 0 auto; vertical-align:-.16em; }
+.poi-search-glyph .poi-glyph { vertical-align:middle; }
 :root[data-dark="1"] .trail-glyph { background: color-mix(in srgb, #2dd4bf 22%, transparent); }
 .tt-trail { color: var(--ink-2); line-height: 1.3; }
 .tt-trail b { color: var(--ink); font-weight: 600; }
@@ -1753,6 +1763,7 @@ td.sched-cell-now {
   font-size: 13px;
   color: var(--ink);
 }
+.poi-tooltip-name { display:flex; align-items:center; gap:5px; }
 .tt-dest-kind {
   font-size: 11px;
   font-weight: 600;
