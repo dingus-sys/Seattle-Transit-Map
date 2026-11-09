@@ -524,33 +524,33 @@
     for (const l of L) if (l.source === "net" && l.type === "line") l.paint["line-opacity-transition"] = { duration: 260 };
     return L;
   }
-  function areaLayers(P) {
-    const acc = theme === "dark" ? "#bf9cf5" : "#7b5cc4";
-    const trailCol = theme === "dark" ? "#2dd4bf" : "#047857";
-    const trailGreenway = theme === "dark" ? "#86efac" : "#16a34a";
-    const trailLane = theme === "dark" ? "#67e8f9" : "#0284c7";
-    const trailSharrow = theme === "dark" ? "#d9f99d" : "#65a30d";
-    const trailHalo = theme === "dark" ? "#090d16" : "#ffffff";
-    const trailText = theme === "dark" ? "#5eead4" : "#065f46";
-    const trailCase = theme === "dark" ? "#041d16" : "#ffffff";
+  function areaLayers(P, th = theme) {
+    const acc = th === "dark" ? "#bf9cf5" : "#7b5cc4";
+    const trailCol = th === "dark" ? "#2dd4bf" : "#047857";
+    const trailGreenway = th === "dark" ? "#86efac" : "#16a34a";
+    const trailLane = th === "dark" ? "#67e8f9" : "#0284c7";
+    const trailSharrow = th === "dark" ? "#d9f99d" : "#65a30d";
+    const trailHalo = th === "dark" ? "#090d16" : "#ffffff";
+    const trailText = th === "dark" ? "#5eead4" : "#065f46";
+    const trailCase = th === "dark" ? "#041d16" : "#ffffff";
     return [
       { id: "mask", type: "fill", source: "mask", paint: { "fill-color": P.mask, "fill-opacity": 0.55 } },
       { id: "access-fill", type: "fill", source: "access", paint: { "fill-color": acc, "fill-opacity": 0.08 } },
       { id: "access-line", type: "line", source: "access", paint: { "line-color": acc, "line-width": 1.4, "line-dasharray": [3, 2], "line-opacity": 0.8 } },
-      { id: "dart-fill", type: "fill", source: "dart", paint: { "fill-color": LINE[theme].dart, "fill-opacity": 0.1 } },
-      { id: "dart-line", type: "line", source: "dart", paint: { "line-color": LINE[theme].dart, "line-width": 1.2, "line-dasharray": [2, 2] } },
-      { id: "flex-fill", type: "fill", source: "flex", paint: { "fill-color": FLEX[theme], "fill-opacity": theme === "dark" ? 0.12 : 0.09 } },
-      { id: "flex-line", type: "line", source: "flex", paint: { "line-color": FLEX[theme], "line-opacity": 0.85,
+      { id: "dart-fill", type: "fill", source: "dart", paint: { "fill-color": LINE[th].dart, "fill-opacity": 0.1 } },
+      { id: "dart-line", type: "line", source: "dart", paint: { "line-color": LINE[th].dart, "line-width": 1.2, "line-dasharray": [2, 2] } },
+      { id: "flex-fill", type: "fill", source: "flex", paint: { "fill-color": FLEX[th], "fill-opacity": th === "dark" ? 0.12 : 0.09 } },
+      { id: "flex-line", type: "line", source: "flex", paint: { "line-color": FLEX[th], "line-opacity": 0.85,
         "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1, 13, 2, 16, 2.6] } },
       // Glowing highlight layers for hovered / selected DART service area
-      { id: "dart-hl-fill", type: "fill", source: "darthl", paint: { "fill-color": LINE[theme].dart, "fill-opacity": theme === "dark" ? 0.35 : 0.28 } },
+      { id: "dart-hl-fill", type: "fill", source: "darthl", paint: { "fill-color": LINE[th].dart, "fill-opacity": th === "dark" ? 0.35 : 0.28 } },
       { id: "dart-hl-casing", type: "line", source: "darthl", paint: { "line-color": "#ffffff", "line-width": 5.0, "line-opacity": 0.95 } },
-      { id: "dart-hl-line", type: "line", source: "darthl", paint: { "line-color": LINE[theme].dart, "line-width": 3.0, "line-dasharray": [3, 1.5], "line-opacity": 1.0 } },
+      { id: "dart-hl-line", type: "line", source: "darthl", paint: { "line-color": LINE[th].dart, "line-width": 3.0, "line-dasharray": [3, 1.5], "line-opacity": 1.0 } },
       // 1. Casing for multi-use trails and protected bike lanes
       { id: "trail-case", type: "line", source: "trails",
         filter: ["in", ["get", "facility"], ["literal", ["trail", "pbl"]]],
         paint: {
-          "line-color": trailCase, "line-opacity": theme === "dark" ? 0.95 : 0.9,
+          "line-color": trailCase, "line-opacity": th === "dark" ? 0.95 : 0.9,
           "line-width": ["interpolate", ["linear"], ["zoom"], 9, 3.2, 11, 4.4, 13, 5.8, 15, 7.2, 17, 8.5],
         } },
       // 2. Multi-use trails and Protected Bike Lanes (PBL) - solid emerald line
@@ -591,7 +591,7 @@
       { id: "trail-dash", type: "line", source: "trails",
         filter: ["==", ["get", "surface"], "unpaved"],
         paint: {
-          "line-color": theme === "dark" ? "#fbbf24" : "#b45309",
+          "line-color": th === "dark" ? "#fbbf24" : "#b45309",
           "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1.8, 11, 2.2, 13, 2.8, 15, 3.6, 17, 4.5],
           "line-dasharray": [3, 2],
           "line-opacity": 0.92,
@@ -627,8 +627,8 @@
     library: "#7a5a2f", sight: "#c2571a", civic: "#5b6475", ferry: "#0d9488", ferry_terminal: "#0d9488", pr: "#0284c7", transit_center: "#7c3aed", station: "#059669", restaurant: "#c2410c", coffee: "#b45309", market: "#db2777", hotel: "#3b82f6" };
   const POI_COLOR_D = { park: "#7fcf7f", school: "#e0a462", museum: "#c89af0", zoo: "#68d3a6", hospital: "#ff6b7f", stadium: "#7fa9ef",
     library: "#d0ac74", sight: "#f39a5c", civic: "#aab3c4", ferry: "#2dd4bf", ferry_terminal: "#2dd4bf", pr: "#38bdf8", transit_center: "#a78bfa", station: "#34d399", restaurant: "#ea580c", coffee: "#d97706", market: "#f472b6", hotel: "#60a5fa" };
-  function poiLayers(P) {
-    const dark = theme === "dark", col = dark ? POI_COLOR_D : POI_COLOR;
+  function poiLayers(P, th = theme) {
+    const dark = th === "dark", col = dark ? POI_COLOR_D : POI_COLOR;
     const kind = ["match", ["get", "subclass"], ...Object.entries(POI_KIND).flat(), ["match", ["get", "class"], ...Object.entries(POI_KIND).flat(), ""]];
     const color = ["match", kind, ...Object.entries(col).flat(), P.label];
     // How soon each kind of place shows as you zoom in: landmarks first, then parks and colleges, then
@@ -922,8 +922,8 @@
   // every custom POI, including a label or glyph that MapLibre has collided out.
   const DESTINATION_LAYER_IDS = ["destinations-hit", "destinations-major-icon", "destinations-major-label", "destinations-icon", "destinations-label"];
 
-  function destLayers(P) {
-    const dark = theme === "dark";
+  function destLayers(P, th = theme) {
+    const dark = th === "dark";
     const major = [">=", ["get", "rank"], 2];
     const detail = ["<", ["get", "rank"], 2];
     return [
@@ -1172,7 +1172,7 @@
         paint: { "text-color": ["get", "tc"], "text-halo-color": P.halo, "text-halo-width": 2 } },
     ];
   }
-  function stopLayers(P) {
+  function stopLayers(P, th = theme) {
     const k = THICK[settings.thickness]; // stops grow and shrink with the lines
     const zr = (stops) => ["interpolate", ["linear"], ["zoom"], ...stops.flatMap(([z, v]) => [z, typeof v === "number" ? v * k : ["*", v, k]])];
     // MapLibre allows exactly one camera (zoom) expression per paint value. Keep
@@ -1213,7 +1213,7 @@
       { id: "flex", type: "symbol", source: "flexlabels", minzoom: 10,
         layout: { "text-field": ["concat", "Metro Flex\n", ["get", "name"]], "text-font": F_BOLD,
           "text-size": ["interpolate", ["linear"], ["zoom"], 10, 10.5, 14, 12.5], "text-max-width": 10, "text-padding": 4 },
-        paint: { "text-color": theme === "dark" ? "#e3b4ff" : "#6a2593", "text-halo-color": P.halo, "text-halo-width": 1.8 } },
+        paint: { "text-color": (th || theme) === "dark" ? "#e3b4ff" : "#6a2593", "text-halo-color": P.halo, "text-halo-width": 1.8 } },
       ...stopGroup("hov", "hoverstops", P), ...stopGroup("sel", "selstops", P), ...stopGroup("hl", "stophl", P, 1.8),
       { id: "badges", type: "symbol", source: "netlabels", minzoom: 9,
         layout: { "icon-image": ["concat", "b:", ["get", "k"]], "icon-padding": 4, "symbol-sort-key": ["get", "p"] } },
@@ -1232,10 +1232,10 @@
     ];
   }
 
-  function tripLayers(P) {
-    const walkCase = theme === "dark" ? "#0f172a" : "#ffffff";
-    const walkColor = theme === "dark" ? "#38bdf8" : "#0284c7";
-    const lineCase = theme === "dark" ? "#0b1120" : "#ffffff";
+  function tripLayers(P, th = theme) {
+    const walkCase = th === "dark" ? "#0f172a" : "#ffffff";
+    const walkColor = th === "dark" ? "#38bdf8" : "#0284c7";
+    const lineCase = th === "dark" ? "#0b1120" : "#ffffff";
     return [
       { id: "trip-line-glow", type: "line", source: "tripline",
         layout: { "line-cap": "round", "line-join": "round" },
@@ -1708,26 +1708,58 @@
   }
 
   // ---------------------------------------------------------------- theme
+  let themePendingStyle = false;
   function applyTheme() {
     theme = themeName();
     document.documentElement.setAttribute("data-dark", theme === "dark" ? "1" : "0");
-    if (!map || !map.isStyleLoaded()) return;
+    if (!map || !map.style) {
+      themePendingStyle = true;
+      return;
+    }
     const P = BASE[theme];
     netDim = 1; // the loop below resets every layer to its normal look
-    for (const set of [baseLayers(P), transitLayers(P), areaLayers(P), poiLayers(P), destLayers(P), stopLayers(P), tripLayers(P), liveLayers(P)]) {
+    for (const set of [baseLayers(P), transitLayers(P), areaLayers(P, theme), poiLayers(P, theme), destLayers(P, theme), stopLayers(P, theme), tripLayers(P, theme), liveLayers(P)]) {
       for (const L of set) {
-        if (!map.getLayer(L.id)) continue;
-        for (const [k, v] of Object.entries(L.paint || {})) map.setPaintProperty(L.id, k, v);
+        try {
+          if (!map.getLayer(L.id)) continue;
+          for (const [k, v] of Object.entries(L.paint || {})) {
+            try { map.setPaintProperty(L.id, k, v); } catch {}
+          }
+        } catch {}
       }
     }
-    for (const L of poiLayers(P)) if (map.getLayer(L.id) && L.layout && L.layout["icon-image"]) map.setLayoutProperty(L.id, "icon-image", L.layout["icon-image"]);
-    for (const L of destLayers(P)) if (map.getLayer(L.id) && L.layout && L.layout["icon-image"]) map.setLayoutProperty(L.id, "icon-image", L.layout["icon-image"]);
-    if (map.getSource("destinations")) map.getSource("destinations").setData(destinationsGeoJSON());
-    refreshStations();
-    rebuild();
-    applySelectionStyle();
-    renderFilterBar();
-    if (!selected) showHome(panelView !== "corridor");
+    for (const L of poiLayers(P, theme)) {
+      try {
+        if (map.getLayer(L.id) && L.layout && L.layout["icon-image"]) map.setLayoutProperty(L.id, "icon-image", L.layout["icon-image"]);
+      } catch {}
+    }
+    for (const L of destLayers(P, theme)) {
+      try {
+        if (map.getLayer(L.id) && L.layout && L.layout["icon-image"]) map.setLayoutProperty(L.id, "icon-image", L.layout["icon-image"]);
+      } catch {}
+    }
+    try { if (map.getSource("destinations")) map.getSource("destinations").setData(destinationsGeoJSON()); } catch {}
+    try { refreshStations(); } catch {}
+    try { rebuild(); } catch {}
+    try { applySelectionStyle(); } catch {}
+    try { renderFilterBar(); } catch {}
+    try {
+      if (!selected) {
+        showHome(panelView !== "corridor");
+      } else if (selected.type === "route") {
+        showRoute(selected.id);
+      } else if (selected.type === "stop") {
+        showStop(selected.id);
+      }
+    } catch {}
+
+    if (!map.isStyleLoaded() && !themePendingStyle) {
+      themePendingStyle = true;
+      map.once("styledata", () => {
+        themePendingStyle = false;
+        applyTheme();
+      });
+    }
   }
 
   // ---------------------------------------------------------------- live vehicles
@@ -9767,6 +9799,12 @@
       else if (e.id.startsWith("b:")) drawBadge(e.id);
       else if (e.id.startsWith("arr:")) drawArrow(e.id);
     });
+    map.on("styledata", () => {
+      if (themePendingStyle) {
+        themePendingStyle = false;
+        applyTheme();
+      }
+    });
     map.on("load", () => {
       // Native line layers remain as a fallback for a GPU/driver that rejects the shader.
       // The mesh needs no tile rebuilds for camera motion and uses a handful of draw calls.
@@ -10129,7 +10167,6 @@
     setupLiveHud();
     setupTripPlanner();
     const tb = $("#themeBtn");
-    const cycle = { "": "dark", dark: "light", light: "" };
     const label = () => {
       const t = document.documentElement.getAttribute("data-theme") || "";
       tb.setAttribute("aria-label", t ? `Appearance: ${t}. Change appearance` : "Appearance: automatic. Change appearance");
@@ -10140,13 +10177,20 @@
     label();
     tb.addEventListener("click", () => {
       const cur = document.documentElement.getAttribute("data-theme") || "";
-      const next = cycle[cur];
+      let next;
+      if (!cur) {
+        next = mq.matches ? "light" : "dark";
+      } else if (cur === (mq.matches ? "light" : "dark")) {
+        next = mq.matches ? "dark" : "light";
+      } else {
+        next = "";
+      }
       if (next) document.documentElement.setAttribute("data-theme", next); else document.documentElement.removeAttribute("data-theme");
       store.set("theme", next);
       label();
     });
-    mq.addEventListener("change", applyTheme);
-    new MutationObserver(() => { if (themeName() !== theme) applyTheme(); }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    mq.addEventListener("change", () => { label(); applyTheme(); });
+    new MutationObserver(() => { label(); applyTheme(); }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
     window.addEventListener("hashchange", applyHash);
     window.addEventListener("popstate", () => applyHash(true));
     if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
