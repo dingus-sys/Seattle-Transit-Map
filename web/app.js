@@ -1225,6 +1225,13 @@
           "text-font": F_BOLD, "text-size": ["interpolate", ["linear"], ["zoom"], 11, 11, 15, 12.5], "text-max-width": 11,
           "text-variable-anchor": ["left", "right", "top", "bottom"], "text-radial-offset": 1.1, "text-justify": "auto", "text-padding": 2 },
         paint: { "text-color": P.label, "text-halo-color": P.halo, "text-halo-width": 2 } },
+    ];
+  }
+
+  // City and town names are the last thing drawn, above stops, stations and vehicles: a bus or
+  // station marker may pass behind a name (the halo keeps it readable) but never cuts through it.
+  function topLabelLayers(P) {
+    return [
       { id: "place-city", type: "symbol", source: "base", "source-layer": "place", maxzoom: 13,
         filter: ["in", ["get", "class"], ["literal", ["city", "town"]]],
         layout: { "text-field": ["get", "name"], "text-font": F_BOLD, "text-size": ["interpolate", ["linear"], ["zoom"], 8, 12, 12, 16], "text-max-width": 8 },
@@ -1714,7 +1721,7 @@
     if (!map || !map.style) return;
     const P = BASE[theme];
     netDim = 1; // the loop below resets every layer to its normal look
-    for (const set of [baseLayers(P), transitLayers(P), areaLayers(P, theme), poiLayers(P, theme), destLayers(P, theme), stopLayers(P, theme), tripLayers(P, theme), liveLayers(P)]) {
+    for (const set of [baseLayers(P), transitLayers(P), areaLayers(P, theme), poiLayers(P, theme), destLayers(P, theme), stopLayers(P, theme), tripLayers(P, theme), liveLayers(P), topLabelLayers(P)]) {
       for (const L of set) {
         try {
           if (!map.getLayer(L.id)) continue;
@@ -9835,7 +9842,7 @@
           destinations: { type: "geojson", data: destinationsGeoJSON() },
           mask: { type: "geojson", data: maskGeoJSON() },
         },
-        layers: [...baseLayers(P), ...areaLayers(P), ...transitLayers(P), ...poiLayers(P), ...destLayers(P), ...stopLayers(P), ...tripLayers(P), ...liveLayers(P)],
+        layers: [...baseLayers(P), ...areaLayers(P), ...transitLayers(P), ...poiLayers(P), ...destLayers(P), ...stopLayers(P), ...tripLayers(P), ...liveLayers(P), ...topLabelLayers(P)],
       },
       bounds: narrow ? [[-122.42, 47.54], [-122.17, 47.72]] : [[-122.44, 47.50], [-122.10, 47.77]],
       fitBoundsOptions: { padding: narrow ? { top: 20, bottom: 150, left: 10, right: 10 } : { top: 30, bottom: 30, left: 420, right: 80 } },
