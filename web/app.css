@@ -171,6 +171,9 @@ button, input { font: inherit; color: inherit; letter-spacing: inherit; }
 /* Filter bar: one chip per kind of service */
 .filter-bar { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: -2px -16px 0; padding: 0 16px 2px; }
 .filter-bar::-webkit-scrollbar { display: none; }
+.more-right:is(.filter-bar, .bike-filter-pills, .cal-presets, .cal-quick-times) { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 34px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 34px), transparent); }
+.more-left:is(.filter-bar, .bike-filter-pills, .cal-presets, .cal-quick-times) { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 34px), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 34px), transparent); }
+.more-left.more-right:is(.filter-bar, .bike-filter-pills, .cal-presets, .cal-quick-times) { -webkit-mask-image: linear-gradient(to right, transparent, #000 34px, #000 calc(100% - 34px), transparent); mask-image: linear-gradient(to right, transparent, #000 34px, #000 calc(100% - 34px), transparent); }
 .fchip {
   flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 7px 11px 7px 9px; border-radius: 99px;
   border: 0; background: var(--fill); color: var(--muted); font: 600 13px/1 var(--font); cursor: pointer;
@@ -459,7 +462,8 @@ button, input { font: inherit; color: inherit; letter-spacing: inherit; }
 }
 .row:hover { background: var(--fill); }
 .txt { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.txt .name { font-weight: 600; font-size: 15px; display: flex; align-items: baseline; gap: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.txt .name { font-weight: 600; font-size: 15px; display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.txt .name > * { margin-left: 6px; }
 .txt .desc { color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .count { font-weight: 500; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .icon { width: 30px; height: 30px; border-radius: 8px; background: var(--fill); display: grid; place-items: center; }
@@ -538,8 +542,8 @@ button, input { font: inherit; color: inherit; letter-spacing: inherit; }
   background: #059669; color: #fff; font-size: 15px;
 }
 .through-routes-home .txt { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
-.through-routes-home .name { font-size: 13px; font-weight: 700; }
-.through-routes-home .desc { color: var(--ink-2); font-size: 11.5px; line-height: 1.28; }
+.through-routes-home .name { font-size: 13px; font-weight: 700; white-space: normal; line-height: 1.22; }
+.through-routes-home .desc { color: var(--ink-2); font-size: 11.5px; line-height: 1.28; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .through-routes-home-badges { display: flex; align-items: center; gap: 3px; white-space: nowrap; }
 .through-routes-home-badges .badge { transform: scale(.82); margin: -2px; }
 .through-routes-home-arrow { color: var(--muted); font-size: 11px; }
@@ -1100,7 +1104,7 @@ td.sched-cell-now {
   .titles p { font-size: 12px; }
   .results { max-height: 40vh; }
   .controls { top: calc(10px + env(safe-area-inset-top, 0px)); }
-  .maplibregl-ctrl-bottom-right { bottom: calc(150px + env(safe-area-inset-bottom, 0px)); }
+  .maplibregl-ctrl-bottom-right { top: calc(10px + env(safe-area-inset-top, 0px)); bottom: auto; right: auto; left: 10px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
@@ -1171,8 +1175,10 @@ td.sched-cell-now {
 /* ---------- Live Vehicle HUD Pill (Item E) ---------- */
 .live-hud {
   position: fixed; z-index: 4;
-  top: calc(14px + env(safe-area-inset-top, 0px));
-  right: max(14px, env(safe-area-inset-right, 0px));
+  /* sits just left of the zoom stack (44px wide, 12px from the edge, 12px gap), centered on its first row */
+  top: calc(17px + env(safe-area-inset-top, 0px));
+  right: calc(max(12px, env(safe-area-inset-right, 0px)) + 56px);
+  max-width: calc(100vw - 92px);
   display: inline-flex; align-items: center; gap: 8px;
   padding: 8px 14px 8px 12px; border-radius: 99px;
   cursor: pointer; user-select: none; font: 600 13px/1 var(--font);
@@ -1184,7 +1190,8 @@ td.sched-cell-now {
   background: var(--on); box-shadow: 0 0 8px var(--on);
   animation: pulse-ring 2s infinite ease-out;
 }
-.live-hud-text { font-variant-numeric: tabular-nums; }
+.live-hud-text { font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.live-hud-dot { flex: none; }
 .live-hud-pop {
   position: absolute; top: calc(100% + 8px); right: 0;
   width: 230px; padding: 14px; border-radius: 18px;

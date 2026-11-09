@@ -27,7 +27,7 @@ async function open(browser, viewport, hash = '', scheme = 'light') {
 const idle = (page) => page.evaluate(() => new Promise((res) => { const m = window.__map; let d = false; const f = () => { if (!d) { d = true; setTimeout(res, 200); } }; if (m.loaded() && !m.isMoving()) f(); else { m.once('idle', f); setTimeout(f, 5000); } }));
 
 (async () => {
-  const browser = await chromium.launch({ proxy: { server: process.env.HTTPS_PROXY, bypass: '127.0.0.1,localhost' } });
+  const browser = await chromium.launch({ ...(process.env.HTTPS_PROXY ? { proxy: { server: process.env.HTTPS_PROXY, bypass: '127.0.0.1,localhost' } } : {}) });
 
   // ---------- desktop
   let page = await open(browser, { width: 1280, height: 820 });

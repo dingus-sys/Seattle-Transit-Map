@@ -660,7 +660,7 @@
     const color = (th === "d" ? POI_COLOR_D : POI_COLOR)[kind] || "#777";
     const dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1)), S = Math.round(20 * dpr), c = S / 2, R = 8.6 * dpr;
     const cv = document.createElement("canvas"); cv.width = cv.height = S;
-    const x = cv.getContext("2d");
+    const x = cv.getContext("2d", { willReadFrequently: true });
     x.save(); x.translate(c, c); x.scale(R * 0.72, R * 0.72); x.fillStyle = color; x.strokeStyle = color; x.lineCap = "round"; x.lineJoin = "round";
     x.shadowColor = th === "d" ? "rgba(0,0,0,.9)" : "rgba(255,255,255,.96)"; x.shadowBlur = 1.8 * dpr;
     const P = (pts) => { x.beginPath(); x.moveTo(pts[0][0], pts[0][1]); for (const q of pts.slice(1)) x.lineTo(q[0], q[1]); x.closePath(); x.fill(); };
@@ -731,7 +731,7 @@
     const w = Math.max(net === "us-state" ? 26 : 22, tw + (net === "us-state" ? 12 : 9)), h = net === "us-state" ? 17 : 21;
     const W = Math.ceil((w + 4) * dpr), H = Math.ceil((h + 4) * dpr);
     const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
-    const x = cv.getContext("2d");
+    const x = cv.getContext("2d", { willReadFrequently: true });
     x.scale(dpr, dpr); x.translate(2, 2);
     const shield = () => { x.beginPath(); x.moveTo(0, 2); x.quadraticCurveTo(w / 2, -1.5, w, 2); x.lineTo(w, h * 0.5); x.quadraticCurveTo(w, h * 0.85, w / 2, h); x.quadraticCurveTo(0, h * 0.85, 0, h * 0.5); x.closePath(); };
     x.shadowColor = "rgba(0,0,0,.25)"; x.shadowBlur = 2; x.shadowOffsetY = 0.5;
@@ -1398,7 +1398,7 @@
     drawStats.applied++;
     lastFeats = m.feats;
     lastSelFeats = m.selFeats;
-    vehIx = vehIxSel = hitIx = null;
+    vehIx = vehIxSel = hitIx = null; snapMemo.clear();
     lastBuildMs = m.ms || 0;
     if (ribbons) {
       ribbons.update("net", m.mesh || KCTMRibbons.compile(m.feats));
@@ -1445,7 +1445,7 @@
     if (!builtView) { rebuild(); return; }
     const v = viewBox(0.05);
     if (needsRebuild || Math.abs(map.getZoom() - lastZ) > 0.005 || v[0] < builtView[0] || v[1] < builtView[1] || v[2] > builtView[2] || v[3] > builtView[3]) rebuild();
-    renderLive();
+    requestAnimationFrame(() => renderLive()); // its own frame, so the settle after a gesture isn't one long task
   }
 
   // Ask for the lines of the current view. Only one request is in the worker at a time; while
@@ -1527,7 +1527,7 @@
     const dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
     const h = 15 * dpr, pad = 4.5 * dpr, sep = 7 * dpr, gap = 2 * dpr, halo = 1.5 * dpr, rad = 3.5 * dpr;
     const cv = document.createElement("canvas");
-    const ctx = cv.getContext("2d");
+    const ctx = cv.getContext("2d", { willReadFrequently: true });
     const font = `650 ${10.5 * dpr}px ${FONT}`;
     ctx.font = font;
     for (const g of groups) {
@@ -2464,8 +2464,11 @@
     const x = P[lo][0] + (P[hi][0] - P[lo][0]) * t, y = P[lo][1] + (P[hi][1] - P[lo][1]) * t;
     return { pos: [LON0 + x / KX, LAT0 + y / KY], b: (Math.atan2(P[hi][0] - P[lo][0], P[hi][1] - P[lo][1]) * 180 / Math.PI + 360) % 360 };
   }
+  let estCache = { at: -1, out: [] };
   function estVehicles() {
     if (!SCHED) return [];
+    const nowS = Math.floor(Date.now() / 100); // 100 ms buckets: smooth glide, one computation per bucket
+    if (estCache.at === nowS) return estCache.out;
     const { day, prev, secs } = pacificNow(), out = [];
     const add = (list, t, tag) => {
       if (!list) return;
@@ -2479,6 +2482,7 @@
     };
     add(SCHED.days[day], secs, "e");
     add(SCHED.days[prev], secs + 86400, "p"); // trips that started before midnight
+    estCache = { at: nowS, out };
     return out;
   }
 
@@ -2515,7 +2519,7 @@
     const tier = Math.min(tierFor(z), z >= 12.5 ? 2 : z >= 11.5 ? 1 : 0);
     const feats = [], markerGrid = new Map(), spacing = 38;
     const priority = (v) => v.r ? CAT[dkey(v.r)]?.prio ?? 99 : 99;
-    const ordered = sel ? list : list.slice().sort((a, b) => Number(!!a.est) - Number(!!b.est) || priority(a) - priority(b) || a.id.localeCompare(b.id));
+    const ordered = sel ? list : list.slice().sort((a, b) => Number(!!a.est) - Number(!!b.est) || priority(a) - priority(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     const anyCatOn = LAYERS.some((l) => enabled.has(l.key) && KEY_NAME[l.key]);
     for (const v of ordered) {
       const r = v.r;
@@ -2558,6 +2562,9 @@
   // vehicle is moved onto its own route's line (the nearest point of that line, if it's close)
   // and turned to follow it.
   let vehIx = null, vehIxSel = null;
+  // A vehicle moves a fraction of a pixel per frame, so its snapped spot is remembered and reused
+  // until it has moved half a pixel (or the layout, selection or zoom step changes).
+  const snapMemo = new Map();
   function onLine(r, pos, b) {
     const i = LINEIDX[r.id], key = dkey(r);
     const isWater = CAT[key]?.group === "water";
@@ -2566,11 +2573,19 @@
     const ix = sel ? (vehIxSel = vehIxSel || segIndex(lastSelFeats)) : (vehIx = vehIx || segIndex(lastFeats));
     if (!ix) return isWater ? [pos, b] : null;
     const mpp = MPP0 / 2 ** map.getZoom();
+    const pm = toM(pos[0], pos[1]), q = Math.max(0.5, mpp * 0.5);
+    const memoKey = r.id + "|" + (sel ? 1 : 0) + "|" + Math.round(Math.log2(mpp) * 4) + "|" + Math.round(pm[0] / q) + "," + Math.round(pm[1] / q) + "|" + (b < 0 ? -1 : Math.round(b / 15));
+    if (snapMemo.has(memoKey)) return snapMemo.get(memoKey);
+    if (snapMemo.size > 6000) snapMemo.clear();
+    const out = onLineCalc(r, pos, b, i, key, isWater, isRail, sel, ix, mpp, pm);
+    snapMemo.set(memoKey, out);
+    return out;
+  }
+  function onLineCalc(r, pos, b, i, key, isWater, isRail, sel, ix, mpp, pm) {
     // a boat only ever sails its own lane, so it goes onto it from any distance (a position report
     // can be a long way off the drawn line, which put boats in open water); on land, only when close
     const reach = isWater ? 8000 : Math.max(50, 26 * mpp);
-    const hit = nearestOn(ix, toM(pos[0], pos[1]), reach,
-      sel ? null : (pr) => (pr.r >= 0 ? pr.r === i : pr.cat === key && EDGES[pr.e] && EDGES[pr.e].l.includes(i)));
+    const hit = sel ? nearestOn(ix, pm, reach, null) : nearestOn(ix, pm, reach, null, routeGrid(ix, i, key));
     if (!hit) return isWater ? [pos, b] : null;
     if (isWater) return [toLonLat(hit.q), b];
     let finalB = b;
@@ -2709,7 +2724,9 @@
     liveAnimRaf = 0;
     if (!enabled.has("live") || document.hidden || !map || !map.getSource("vehicles")) return;
     lastActiveTime = Date.now();
-    if (now - lastAnimMs >= 35) {
+    // ~28 fps normally; while a pan or pinch is under way the camera gets the frame, so the
+    // markers refresh at ~8 fps (they are world-anchored, and settle fully on moveend)
+    if (now - lastAnimMs >= (map.isMoving() ? 120 : 35)) {
       lastAnimMs = now;
       renderVehicles(now);
     }
@@ -2777,7 +2794,7 @@
     const dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
     const S = Math.round(VEH_PX * dpr), cv = document.createElement("canvas");
     cv.width = cv.height = S;
-    const ctx = cv.getContext("2d"), c = S / 2, R = VEH_R * dpr;
+    const ctx = cv.getContext("2d", { willReadFrequently: true }), c = S / 2, R = VEH_R * dpr;
     if (kind === "vdir") {
       // The point of a pin: drawn over the badge, so the badge's white border runs out into the
       // point and its color fills it, one outline around circle and point together (the layer
@@ -2986,20 +3003,62 @@
     }
     return { cell, grid, segs, loose };
   }
-  function nearestOn(ix, p, maxD, accept) {
+  // The segments each route may snap to, as its own small grid (built on first use, once per
+  // layout): a route's own lines, or the shared corridor lines it is part of. A vehicle then only
+  // looks at its route's geometry instead of every route's in a crowded downtown cell.
+  function routeGrid(ix, i, key) {
+    if (!ix.parts) {
+      const parts = new Map(), add = (k, n) => { const a = parts.get(k); if (a) a.push(n); else parts.set(k, [n]); };
+      ix.segs.forEach((sg, n) => {
+        const pr = sg[2];
+        if (pr.r >= 0) add("r" + pr.r, n);
+        else { const e = EDGES[pr.e]; if (e) for (const l of e.l) add(l + "|" + pr.cat, n); }
+      });
+      ix.parts = parts; ix.rgrids = new Map();
+    }
+    const gk = i + "|" + key;
+    let g = ix.rgrids.get(gk);
+    if (g) return g;
+    g = new Map();
+    for (const list of [ix.parts.get("r" + i), ix.parts.get(gk)]) {
+      if (!list) continue;
+      for (const n of list) {
+        const [a, b] = ix.segs[n];
+        for (let gx = Math.floor(Math.min(a[0], b[0]) / ix.cell); gx <= Math.floor(Math.max(a[0], b[0]) / ix.cell); gx++)
+          for (let gy = Math.floor(Math.min(a[1], b[1]) / ix.cell); gy <= Math.floor(Math.max(a[1], b[1]) / ix.cell); gy++) {
+            const k = gx + "," + gy, c = g.get(k);
+            if (c) { if (c[c.length - 1] !== n && !c.includes(n)) c.push(n); } else g.set(k, [n]);
+          }
+      }
+    }
+    ix.rgrids.set(gk, g);
+    return g;
+  }
+  function nearestOn(ix, p, maxD, accept, grid = ix.grid) {
     let best = null, bd = maxD, dir = null, bp = null;
-    const r = Math.ceil(maxD / ix.cell), gx = Math.floor(p[0] / ix.cell), gy = Math.floor(p[1] / ix.cell), seen = new Set();
-    for (let dx = -r; dx <= r; dx++) for (let dy = -r; dy <= r; dy++) {
-      for (const n of ix.grid.get((gx + dx) + "," + (gy + dy)) || []) {
+    const R = Math.ceil(maxD / ix.cell), gx = Math.floor(p[0] / ix.cell), gy = Math.floor(p[1] / ix.cell), seen = new Set();
+    const scan = (cx, cy) => {
+      const list = grid.get(cx + "," + cy);
+      if (!list) return;
+      for (const n of list) {
         if (seen.has(n)) continue;
         seen.add(n);
         const [a, b, props] = ix.segs[n];
         if (accept && !accept(props)) continue;
         const vx = b[0] - a[0], vy = b[1] - a[1], L2 = vx * vx + vy * vy || 1;
         const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / L2));
-        const q = [a[0] + t * vx, a[1] + t * vy], d = Math.hypot(q[0] - p[0], q[1] - p[1]);
-        if (d < bd) { bd = d; best = q; dir = [vx, vy]; bp = props; }
+        const qx = a[0] + t * vx, qy = a[1] + t * vy, d = Math.hypot(qx - p[0], qy - p[1]);
+        if (d < bd) { bd = d; best = [qx, qy]; dir = [vx, vy]; bp = props; }
       }
+    };
+    // Rings of grid cells around the point, nearest first. Anything in ring r+1 or beyond is at
+    // least r cells away, so once the best hit is closer than that, the search is over. (The old
+    // square sweep read every cell within the reach, thousands of them for a boat.)
+    for (let r = 0; r <= R; r++) {
+      if (best && bd <= (r - 1) * ix.cell) break;
+      if (r === 0) { scan(gx, gy); continue; }
+      for (let dx = -r; dx <= r; dx++) { scan(gx + dx, gy - r); scan(gx + dx, gy + r); }
+      for (let dy = -r + 1; dy <= r - 1; dy++) { scan(gx - r, gy + dy); scan(gx + r, gy + dy); }
     }
     return best ? { q: best, d: bd, dir, props: bp } : null;
   }
@@ -3606,7 +3665,7 @@
     const dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
     const w = Math.round(14 * dpr), h = Math.round(12 * dpr), cv = document.createElement("canvas");
     cv.width = w; cv.height = h;
-    const ctx = cv.getContext("2d");
+    const ctx = cv.getContext("2d", { willReadFrequently: true });
     ctx.lineJoin = "round"; ctx.lineCap = "round";
     const path = () => { ctx.beginPath(); ctx.moveTo(3 * dpr, 2.5 * dpr); ctx.lineTo(10.5 * dpr, 6 * dpr); ctx.lineTo(3 * dpr, 9.5 * dpr); };
     path(); ctx.strokeStyle = "#fff"; ctx.lineWidth = 4.2 * dpr; ctx.stroke();
@@ -3946,6 +4005,23 @@
     { key: "snow", label: "Snow Routes", color: () => "#00c7be" },
   ];
   const filterMemory = {};
+
+  // Any row that scrolls sideways (filter chips, bike pills, calendar presets) fades on the side
+  // where more is hidden, so nothing looks sliced off at the panel edge.
+  const FADE_ROWS = ".filter-bar, .bike-filter-pills, .cal-presets, .cal-quick-times";
+  function fadeEdges(el) {
+    el.classList.toggle("more-left", el.scrollLeft > 4);
+    el.classList.toggle("more-right", el.scrollLeft + el.clientWidth < el.scrollWidth - 4);
+  }
+  function fadeAll(root = document) { for (const el of root.querySelectorAll(FADE_ROWS)) fadeEdges(el); }
+  document.addEventListener("scroll", (e) => { if (e.target.matches && e.target.matches(FADE_ROWS)) fadeEdges(e.target); }, { capture: true, passive: true });
+  window.addEventListener("resize", () => fadeAll());
+  {
+    let fadeRaf = 0;
+    const schedule = () => { if (!fadeRaf) fadeRaf = requestAnimationFrame(() => { fadeRaf = 0; fadeAll(); }); };
+    new MutationObserver(schedule).observe(document.querySelector("aside") || document.body, { childList: true, subtree: true });
+    schedule();
+  }
   function renderFilterBar() {
     const bar = $("#filterBar");
     if (!bar) return;
