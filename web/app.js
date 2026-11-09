@@ -1708,14 +1708,10 @@
   }
 
   // ---------------------------------------------------------------- theme
-  let themePendingStyle = false;
   function applyTheme() {
     theme = themeName();
     document.documentElement.setAttribute("data-dark", theme === "dark" ? "1" : "0");
-    if (!map || !map.style) {
-      themePendingStyle = true;
-      return;
-    }
+    if (!map || !map.style) return;
     const P = BASE[theme];
     netDim = 1; // the loop below resets every layer to its normal look
     for (const set of [baseLayers(P), transitLayers(P), areaLayers(P, theme), poiLayers(P, theme), destLayers(P, theme), stopLayers(P, theme), tripLayers(P, theme), liveLayers(P)]) {
@@ -1752,14 +1748,7 @@
         showStop(selected.id);
       }
     } catch {}
-
-    if (!map.isStyleLoaded() && !themePendingStyle) {
-      themePendingStyle = true;
-      map.once("styledata", () => {
-        themePendingStyle = false;
-        applyTheme();
-      });
-    }
+    map.triggerRepaint();
   }
 
   // ---------------------------------------------------------------- live vehicles
@@ -9798,12 +9787,6 @@
       else if (e.id.startsWith("shield:")) drawShield(e.id);
       else if (e.id.startsWith("b:")) drawBadge(e.id);
       else if (e.id.startsWith("arr:")) drawArrow(e.id);
-    });
-    map.on("styledata", () => {
-      if (themePendingStyle) {
-        themePendingStyle = false;
-        applyTheme();
-      }
     });
     map.on("load", () => {
       // Native line layers remain as a fallback for a GPU/driver that rejects the shader.

@@ -22,10 +22,13 @@ assert(!applyThemeBody.includes("if (!map || !map.isStyleLoaded()) return;"),
 assert(applyThemeBody.includes("if (!map || !map.style)"),
   "applyTheme must check for map and map.style existence");
 
-assert(applyThemeBody.includes("themePendingStyle"),
-  "applyTheme must track themePendingStyle to re-apply once styledata fires");
+assert(!applyThemeBody.includes("styledata"),
+  "applyTheme must NOT register styledata listeners, as setPaintProperty fires styledata and causes an infinite lockup loop");
 
-console.log("PASS 1: applyTheme does not bail silently on !map.isStyleLoaded()");
+assert(applyThemeBody.includes("map.triggerRepaint()"),
+  "applyTheme must trigger an immediate repaint to ensure layers redraw cleanly");
+
+console.log("PASS 1: applyTheme executes cleanly without styledata recursion loop");
 
 // 2. Verify all base layers and custom layers are updated via setPaintProperty
 assert(applyThemeBody.includes("baseLayers(P)"), "applyTheme must update baseLayers with active theme palette");
