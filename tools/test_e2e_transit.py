@@ -477,15 +477,20 @@ class TestTier1FeatureCoverage(E2EBaseTestCase):
         self.assertGreater(sched.get("sunday", {}).get("trips", 0), 0)
 
     def test_t1_f9_02_part_time_routes_lack_weekend_service(self):
-        """F9: Part-time peak routes operate weekday only."""
-        peak_route = next((r for r in self.routes_data if r.get("cat") == "peak"), None)
-        self.assertIsNotNone(peak_route)
-        sched = peak_route.get("sched", {})
-        w_trips = (sched.get("weekday") or {}).get("trips", 0)
-        sa_trips = (sched.get("saturday") or {}).get("trips", 0)
-        su_trips = (sched.get("sunday") or {}).get("trips", 0)
-        is_everyday = bool(w_trips > 0 and sa_trips > 0 and su_trips > 0)
-        self.assertFalse(is_everyday)
+        """F9: Some part-time peak routes operate weekday only.
+
+        Checks across all peak routes rather than the first one: the list order follows
+        agency and route number, so a new agency's route can come first without being
+        weekday-only (Jefferson 1 runs weekends).
+        """
+        peak_routes = [r for r in self.routes_data if r.get("cat") == "peak"]
+        self.assertTrue(peak_routes)
+
+        def everyday(r):
+            sched = r.get("sched", {})
+            return all((sched.get(d) or {}).get("trips", 0) > 0 for d in ("weekday", "saturday", "sunday"))
+
+        self.assertTrue(any(not everyday(r) for r in peak_routes))
 
     def test_t1_f9_03_suspended_badge_css_classes(self):
         """F9: CSS defines suspended badge and banner styles."""

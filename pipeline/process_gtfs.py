@@ -19,6 +19,7 @@ from collections import Counter, defaultdict
 
 import numpy as np
 import pandas as pd
+from pandas.tseries.holiday import USFederalHolidayCalendar
 from shapely.geometry import LineString, box
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -83,11 +84,24 @@ NAME_FIX = {
     ("Westlake Hub", "rail"): "Westlake Hub (Streetcar)",
 }
 
+def is_holiday(day):
+    return len(USFederalHolidayCalendar().holidays(pd.Timestamp(day), pd.Timestamp(day))) > 0
+
+
 def sample_days(today=None):
-    """Next Wednesday, Saturday and Sunday (today counts), used as typical service days."""
+    """Next Wednesday, Saturday and Sunday (today counts) that aren't a federal holiday, used as
+    typical service days. Holiday timetables drop weekday-only routes (Kitsap's commuter and school
+    runs, Metro's peak-only routes), so a holiday sample day would take them off the map: on
+    Veterans Day 2026 that dropped 47 Kitsap and 6 Metro routes."""
     today = today or dt.date.today()
-    nxt = lambda wd: today + dt.timedelta(days=(wd - today.weekday()) % 7)
-    return {"weekday": nxt(2).strftime("%Y%m%d"), "saturday": nxt(5).strftime("%Y%m%d"), "sunday": nxt(6).strftime("%Y%m%d")}
+
+    def nxt(wd):
+        d = today + dt.timedelta(days=(wd - today.weekday()) % 7)
+        while is_holiday(d):
+            d += dt.timedelta(days=7)
+        return d.strftime("%Y%m%d")
+
+    return {"weekday": nxt(2), "saturday": nxt(5), "sunday": nxt(6)}
 
 
 DAYS = sample_days()
