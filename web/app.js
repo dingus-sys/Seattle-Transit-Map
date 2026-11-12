@@ -533,7 +533,7 @@
     const trailHalo = th === "dark" ? "#090d16" : "#ffffff";
     const trailText = th === "dark" ? "#5eead4" : "#065f46";
     const trailCase = th === "dark" ? "#041d16" : "#ffffff";
-    return [
+    const L = [
       { id: "mask", type: "fill", source: "mask", paint: { "fill-color": P.mask, "fill-opacity": 0.55 } },
       { id: "access-fill", type: "fill", source: "access", paint: { "fill-color": acc, "fill-opacity": 0.08 } },
       { id: "access-line", type: "line", source: "access", paint: { "line-color": acc, "line-width": 1.4, "line-dasharray": [3, 2], "line-opacity": 0.8 } },
@@ -608,6 +608,13 @@
           "text-color": trailText, "text-halo-color": trailHalo, "text-halo-width": 1.8, "text-opacity": 0.95,
         } },
     ];
+    // smooth, not a pop: the bike legend bolds/dims these on hover
+    for (const l of L) {
+      if (l.source !== "trails") continue;
+      if (l.type === "line") l.paint["line-width-transition"] = l.paint["line-opacity-transition"] = { duration: 220 };
+      else if (l.type === "symbol") l.paint["text-opacity-transition"] = { duration: 220 };
+    }
+    return L;
   }
   const VEH_SIZE = ["interpolate", ["linear"], ["zoom"], 9, 0.34, 11, 0.44, 12.5, 0.58, 14, 0.78, 15.5, 0.95, 18, 1.08];
   // what a vehicle is, for its badge
@@ -4361,6 +4368,8 @@
         applyLayerToggles();
         showHome(true);
       });
+      btn.addEventListener("mouseenter", () => { if (panelView === "home") setBikeLegendHover(btn.dataset.bikeCat || null); });
+      btn.addEventListener("mouseleave", () => { if (panelView === "home") setBikeLegendHover(null); });
     });
   }
 
@@ -8846,6 +8855,13 @@
 
   // ---------------------------------------------------------------- layer toggles
   let bikeFacilityFilter = null;
+  const TRAIL_CAT_LAYERS = {
+    pbl: ["trail-case", "trail-pbl", "trail-labels"],
+    greenway: ["trail-greenway"],
+    lane: ["trail-lane"],
+    sharrow: ["trail-sharrow"],
+    unpaved: ["trail-dash"],
+  };
   function applyLayerToggles() {
     if (!map) return;
     const dartOn = enabled.has("dart") && specialFilter !== "snow";
@@ -8862,13 +8878,7 @@
     } else if (!bikeFacilityFilter) {
       trailLayers.forEach((id) => map.getLayer(id) && map.setLayoutProperty(id, "visibility", "visible"));
     } else {
-      const allowed = {
-        pbl: ["trail-case", "trail-pbl", "trail-labels"],
-        greenway: ["trail-greenway"],
-        lane: ["trail-lane"],
-        sharrow: ["trail-sharrow"],
-        unpaved: ["trail-dash"],
-      }[bikeFacilityFilter] || trailLayers;
+      const allowed = TRAIL_CAT_LAYERS[bikeFacilityFilter] || trailLayers;
       trailLayers.forEach((id) => map.getLayer(id) && map.setLayoutProperty(id, "visibility", allowed.includes(id) ? "visible" : "none"));
     }
     vis("stops", ["stops", "stop-name"]);
@@ -8878,6 +8888,45 @@
     if (map.getSource("stations")) refreshStations();
     renderFilterBar();
     rebuild();
+  }
+
+  // Legend-driven highlight only: hovering a row in the bike legend bolds that facility type
+  // on the map and dims the rest, mirroring route hover. Hovering the trail itself on the map
+  // does not trigger this — only the legend does.
+  const TRAIL_LINE_LAYERS = ["trail-case", "trail-pbl", "trail-greenway", "trail-lane", "trail-sharrow", "trail-dash"];
+  const trailBasePaint = {};
+  function trailBase(id, prop) {
+    const key = id + ":" + prop;
+    if (!(key in trailBasePaint)) trailBasePaint[key] = map.getPaintProperty(id, prop);
+    return trailBasePaint[key];
+  }
+  // a zoom expression may only sit at the top of its own interpolate, so scale the stops
+  // in place rather than nesting the expression inside a "*"
+  function scaleWidthExpr(expr, factor) {
+    if (typeof expr === "number") return expr * factor;
+    if (Array.isArray(expr) && expr[0] === "interpolate") {
+      const out = expr.slice();
+      for (let i = 4; i < out.length; i += 2) out[i] = out[i] * factor;
+      return out;
+    }
+    return expr;
+  }
+  let trailHoverCat = null;
+  function setBikeLegendHover(cat) {
+    if (!map || !map.getLayer("trail-pbl") || trailHoverCat === cat) return;
+    trailHoverCat = cat;
+    const active = cat ? new Set(TRAIL_CAT_LAYERS[cat] || []) : null;
+    for (const id of TRAIL_LINE_LAYERS) {
+      if (!map.getLayer(id)) continue;
+      const baseW = trailBase(id, "line-width"), baseO = trailBase(id, "line-opacity");
+      if (!active) { map.setPaintProperty(id, "line-width", baseW); map.setPaintProperty(id, "line-opacity", baseO); }
+      else if (active.has(id)) { map.setPaintProperty(id, "line-width", scaleWidthExpr(baseW, 1.6)); map.setPaintProperty(id, "line-opacity", 1); }
+      else { map.setPaintProperty(id, "line-width", baseW); map.setPaintProperty(id, "line-opacity", baseO * 0.22); }
+    }
+    if (map.getLayer("trail-labels")) {
+      const baseTO = trailBase("trail-labels", "text-opacity");
+      map.setPaintProperty("trail-labels", "text-opacity", !active ? baseTO : active.has("trail-labels") ? baseTO : baseTO * 0.22);
+    }
   }
 
   // ---------------------------------------------------------------- interaction
