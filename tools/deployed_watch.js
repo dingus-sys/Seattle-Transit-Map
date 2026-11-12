@@ -2,7 +2,7 @@
 // (Playwright is preinstalled in the cloud sandbox: NODE_PATH=$(npm root -g) node tools/deployed_watch.js)
 const { chromium } = require('playwright');
 (async () => {
-  const browser = await chromium.launch({ proxy: { server: process.env.HTTPS_PROXY } });
+  const browser = await chromium.launch({ ...(process.env.HTTPS_PROXY ? { proxy: { server: process.env.HTTPS_PROXY } } : {}) });
   const page = await (await browser.newContext({ viewport: { width: 1200, height: 800 } })).newPage();
   page.on('pageerror', (e) => console.log('pageerror', e.message));
   page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') console.log('console', m.type(), m.text().slice(0, 200)); });

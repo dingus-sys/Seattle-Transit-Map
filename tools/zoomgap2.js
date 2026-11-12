@@ -5,7 +5,7 @@ const SITE = process.env.SITE || 'http://127.0.0.1:8765'; // the served site: py
 require('fs').mkdirSync('shots', { recursive: true });
 const { chromium } = require('playwright');
 (async () => {
-  const browser = await chromium.launch({ proxy: { server: process.env.HTTPS_PROXY, bypass: '127.0.0.1,localhost' } });
+  const browser = await chromium.launch({ ...(process.env.HTTPS_PROXY ? { proxy: { server: process.env.HTTPS_PROXY, bypass: '127.0.0.1,localhost' } } : {}) });
   const ctx = await browser.newContext({ viewport: { width: 640, height: 640 }, deviceScaleFactor: 2 });
   await ctx.addInitScript(() => { try { localStorage.clear(); } catch (e) {} });
   const page = await ctx.newPage();
