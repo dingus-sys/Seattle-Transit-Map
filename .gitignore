@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 .cache/
 .venv/
+node_modules/
 pipeline/local_secrets.json
 *.zip
 # the page, built from web/ by pipeline/build_site.py (the Pages workflow builds it on deploy)
