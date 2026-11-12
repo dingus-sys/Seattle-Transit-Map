@@ -45,6 +45,7 @@ jobs:
         run: python3 pipeline/build_site.py
       - name: Run Playwright browser test sweep
         run: |
+          npm install --no-save playwright
           npx playwright install --with-deps chromium
           python3 -m http.server -d site 8765 &
           sleep 2
