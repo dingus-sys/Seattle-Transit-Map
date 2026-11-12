@@ -59,13 +59,13 @@ The data under `site/data/` is committed, so UI work never needs `build_all.py`.
 Run them from the repo root with the site served on :8765:
 
 ```bash
-export NODE_PATH=$(npm root -g)               # if the sandbox can't reach the CDN for maplibre-gl.js,
-export MAPLIBRE_JS=/path/to/maplibre-gl.js    #   set this to a local copy
+export NODE_PATH=$(npm root -g)               # or npm _npx cache path if Playwright isn't global;
+export MAPLIBRE_JS=/path/to/maplibre-gl.js    #   set this if the sandbox can't reach CDN for maplibre-gl.js
 node tools/sweep.js                           # 51 checks: expect "51/51 passed"
 node tools/close.js '[["name",[-122.3365,47.6085],16]]'   # screenshot views to shots/c-name.png
 node tools/bench.js                           # layout time per zoom (worker 5-260 ms is normal)
 node tools/zoomgap2.js tag                    # pinch-zoom check (lines must stay together)
-node tools/strandorder.js                     # strand swaps at junctions (42 in the November 5 network)
+node tools/strandorder.js                     # strand swaps at junctions (0 current; 42 in November 5 network)
 node tools/geometry_check.js                  # all routes/zoom levels, selection/hover agreement
 python3 tools/check_repair.py                 # omitted branches, anchored repairs, direction metadata
 node tools/deployed_watch.js https://dingus-sys.github.io/Seattle-Transit-Map/   # live data on the real site
@@ -105,7 +105,7 @@ one file for the artifact):
   in the one-file artifact, from that script's inline text). `?noworker` forces it onto the page. It turns the network into what one view draws: each route is a
   continuous route path; the overview draws one solid band per service type, growing gently
   with route count (at most 2.6 single-route widths). Individual lanes are kept for route selection and preview through
-  junctions by sliding whole bundles sideways; strands are ordered to minimize swaps. The 1 and 2 Lines
+  junctions by sliding whole bundles sideways; `optimizeBundleGraph()` orders strands via barycenter sweeps, exact small-component search, and component-preserving local refinements to eliminate swaps (`0` on the current network). The 1 and 2 Lines
   on shared track are one line, green and blue halves. Boats are one line per crossing.
 - `app.js` has the MapLibre layers (street stack, then the rail stack on top, each with shadow,
   casing and line; strand dividers; places; stops; vehicles), hover and click, tags, the panel, live
@@ -169,7 +169,7 @@ the map tiles; the bundled tiles keep only named places of the kinds in `POI_KEE
    and `WSDOT_KEY` work: live vessel locations, ferry bulletins, terminal notes, vehicle-space
    reports and WSDOT highway alerts all returned valid lists with HTTP 200. The browser also
    received live vehicles, ferry conditions and highway reports. Never print key values.
-2. The November 5 geometry changes reduce the previous 287 strand swaps to 42, clip small offset
+2. `optimizeBundleGraph()` in `web/geom.js` plus the Gorst pipeline fixes reduced junction strand swaps from 697 initial (and the November 5 historical baseline of 42) to 0, enforced by a `<= 8` CI gate in `tools/test_e2e_transit.py`. Earlier November 5 geometry changes also clipped small offset
    folds, and restore substantial source-path omissions, including the shared 201/202/513 stretch
    on I-5 in South Everett. Keep real crossings and rail/surface separations. Some routes can still list
    stops served only by trip variants below the 15% drawing threshold (e.g. 21, 4, 7, 906); adding

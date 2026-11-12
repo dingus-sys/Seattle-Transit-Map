@@ -35,13 +35,13 @@ const idle = (page) => page.evaluate(() => new Promise((res) => { const m = wind
   check('title', (await page.title()) === 'King County Transit Map', await page.title());
   check('home is simple (no switches)', (await page.locator('.layer').count()) === 0 && (await page.locator('#openLayers').count()) === 1);
   check('map key lists visible line types', (await page.locator('.key-grid li').count()) >= 8, String(await page.locator('.key-grid li').count()));
-  check('filter bar has 4 chips', (await page.locator('.fchip').count()) === 4);
+  check('filter bar has 8 chips', (await page.locator('.fchip').count()) === 8, String(await page.locator('.fchip').count()));
   await page.click('.fchip[data-f="Buses"]'); await page.waitForTimeout(400);
   check('Buses chip hides buses', !(await page.evaluate(() => ['rapid', 'frequent', 'local'].some((k) => document.querySelector('.fchip[data-f="Buses"]').classList.contains('on')))));
   await page.click('.fchip[data-f="Buses"]'); await page.waitForTimeout(400);
   check('Buses chip brings them back', await page.locator('.fchip[data-f="Buses"].on').count() === 1);
   await page.click('#openLayers'); await page.waitForTimeout(500);
-  check('legend rows', (await page.locator('.layer').count()) === 14, String(await page.locator('.layer').count()));
+  check('legend rows', (await page.locator('.layer').count()) === 16, String(await page.locator('.layer').count()));
   check('display settings (4)', (await page.locator('.settings > li').count()) === 4);
   await page.click('.settings li[data-s="tags"] button[data-v="more"]'); await page.waitForTimeout(400);
   check('setting saved', await page.evaluate(() => JSON.parse(localStorage.getItem('kctm:settings') || localStorage.getItem('settings') || '{}').tags === 'more' || Object.keys(localStorage).some((k) => (localStorage.getItem(k) || '').includes('"tags":"more"'))));
@@ -74,14 +74,22 @@ const idle = (page) => page.evaluate(() => new Promise((res) => { const m = wind
   check('direction tab switches', (await page.locator('.segmented button').nth(1).getAttribute('aria-selected')) === 'true');
   await page.screenshot({ path: path.join(OUT, 'sweep-route.png') });
 
-  // stop from list
+  // stop from list (updates active boarding stop, then opens full stop card via All departures)
   await page.locator('#stoplist button').nth(3).click();
+  await page.waitForTimeout(300);
+  await page.locator('#rdAllDepsBtn').click();
   await idle(page);
   check('stop card from route stop list', /stop here/.test(await page.locator('.view').innerText()));
   await page.locator('#back').click();
-  await page.waitForTimeout(200);
-  check('back returns to layers', (await page.locator('.layer').count()) === 14);
+  await page.waitForTimeout(300);
+  check('back returns from stop card', /Route 49/.test(await page.locator('.hero h2').innerText().catch(() => '')));
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(250);
   check('hash cleared', (await page.evaluate(() => location.hash)) === '');
+  if ((await page.locator('.layer').count()) === 0) {
+    await page.click('#openLayers');
+    await page.waitForTimeout(300);
+  }
 
   // layer toggle
   await page.locator('.layer[data-key="peak"]').click();
@@ -104,7 +112,7 @@ const idle = (page) => page.evaluate(() => new Promise((res) => { const m = wind
   await idle(page);
   const pt = await page.evaluate(() => {
     const m = window.__map;
-    const fs = m.queryRenderedFeatures({ layers: ['line-bus'] }).filter((f) => f.properties.cat === 'frequent');
+    const fs = m.getSource('net')._data.features.filter((f) => f.properties.cat === 'frequent');
     for (const f of fs) {
       const c = f.geometry.coordinates[Math.floor(f.geometry.coordinates.length / 2)];
       const p = m.project(c);
@@ -125,7 +133,7 @@ const idle = (page) => page.evaluate(() => new Promise((res) => { const m = wind
         if (!f) return null; const p = m.project(f.geometry.coordinates); return [p.x, p.y]; });
       if (tg) {
         await page.mouse.move(tg[0] - 4, tg[1]); await page.waitForTimeout(700);
-        check('pointing at a tag number lifts it and shows that route', !(await page.locator('#lens').isHidden()) && (await page.evaluate(() => window.__map.getSource('hover')._data.features.length)) > 0);
+        check('pointing at a tag number lifts it and shows that route', !(await page.locator('#lens').isHidden()) && (await page.evaluate(() => window.__map.getSource('hover')._data.features.length + window.__map.getSource('hover2')._data.features.length)) > 0);
         await page.mouse.move(3, 3); await page.waitForTimeout(400);
       } else check('found a tag to point at', false);
     }
@@ -142,7 +150,7 @@ const idle = (page) => page.evaluate(() => new Promise((res) => { const m = wind
     }
     await page.keyboard.press('Escape');
     await page.waitForTimeout(300);
-    check('Escape clears selection', (await page.locator('.layer').count()) === 14);
+    check('Escape clears selection', (await page.locator('#openLayers').count()) === 1 && (await page.evaluate(() => location.hash)) === '');
   }
 
   // click a station

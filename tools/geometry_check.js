@@ -30,7 +30,7 @@ check('network has valid route memberships, coordinates and directions', () => {
 });
 check('route ordering removes crossings without adding new ones', () => {
   assert(engine.strandStats.after <= engine.strandStats.before);
-  assert(engine.strandStats.after < 100, JSON.stringify(engine.strandStats));
+  assert(engine.strandStats.after <= 10, JSON.stringify(engine.strandStats));
 });
 for (const z of [10, 12, 14, 16, 18]) check(`all routes draw with finite, usable geometry at zoom ${z}`, () => {
   const b = engine.build(params(z));

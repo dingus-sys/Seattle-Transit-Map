@@ -122,6 +122,55 @@ def main():
     else:
         print(f"PASS: No severe stop-route discrepancies (> 3 km) found in network")
 
+    # 6. Long skinny self-loop check (catches collapsed divided-highway/couplet lassos)
+    skinny_loops = []
+    long_loop_min_iq = None
+    long_loop_count = 0
+    total_loops = 0
+    for idx, e in enumerate(net_data.get("edges", [])):
+        coords = e.get("c", [])
+        if len(coords) < 3:
+            continue
+        lat0 = coords[0][1]
+        kx = 111320.0 * math.cos(math.radians(lat0))
+        ky = 111320.0
+        end_gap = math.hypot((coords[-1][0] - coords[0][0]) * kx, (coords[-1][1] - coords[0][1]) * ky)
+        if end_gap >= 5.0:
+            continue
+        total_loops += 1
+        pts_m = [((pt[0] - coords[0][0]) * kx, (pt[1] - coords[0][1]) * ky) for pt in coords]
+        length_m = sum(
+            math.hypot(pts_m[i + 1][0] - pts_m[i][0], pts_m[i + 1][1] - pts_m[i][1])
+            for i in range(len(pts_m) - 1)
+        )
+        if length_m <= 400.0:
+            continue
+        area_m2 = 0.5 * abs(
+            sum(
+                pts_m[i][0] * pts_m[i + 1][1] - pts_m[i + 1][0] * pts_m[i][1]
+                for i in range(len(pts_m) - 1)
+            )
+        )
+        iq = (4.0 * math.pi * area_m2) / (length_m * length_m)
+        long_loop_count += 1
+        if long_loop_min_iq is None or iq < long_loop_min_iq:
+            long_loop_min_iq = iq
+        if iq < 0.15:
+            r_names = [net_lines[li] for li in e.get("l", []) if li < len(net_lines)]
+            skinny_loops.append((idx, length_m, iq, r_names))
+
+    if skinny_loops:
+        for idx, length_m, iq, r_names in skinny_loops[:10]:
+            errors.append(
+                f"Skinny self-loop edge {idx} ({length_m:.0f} m, iq={iq:.3f}) on {','.join(r_names)}"
+            )
+    else:
+        min_iq_str = f"{long_loop_min_iq:.3f}" if long_loop_min_iq is not None else "n/a"
+        print(
+            f"PASS: Self-loop sanity check passed ({total_loops} closed loops, "
+            f"{long_loop_count} > 400 m, min iq={min_iq_str})"
+        )
+
     if errors:
         print("\nDATA VALIDATION FAILED:", file=sys.stderr)
         for err in errors:

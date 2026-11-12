@@ -507,20 +507,15 @@ class TestTier1FeatureCoverage(E2EBaseTestCase):
 
     # --- Feature F10: Zero-Crossing Strand Optimization ---
     def test_t1_f10_01_strand_swaps_under_100(self):
-        """F10: Total network junction strand swaps are strictly bounded (<= 60)."""
+        """F10: Total network junction strand swaps are strictly bounded (<= 8)."""
         res = run_node_script(ROOT / "tools" / "geometry_check.js")
         self.assertIn("strand swaps", res.stdout)
         swaps_match = re.search(r"strand swaps \d+ → (\d+)", res.stdout)
         self.assertIsNotNone(swaps_match)
         swaps = int(swaps_match.group(1))
-        # Raised from 40 after a GTFS refresh (unrelated to any code change here — verified
-        # by rerunning the unpatched, previously-shipped build_graph.py against the same
-        # refreshed data, which reproduces the same jump) added real route complexity at a
-        # ~13-route Kitsap Transit interchange near Gorst (SR-3/SR-16): correctly-matched
-        # shapes that genuinely converge there, not a pipeline bug. Bringing this back near
-        # the old ~26 baseline needs the strand-ordering algorithm in web/geom.js to handle a
-        # dense multi-route convergence better — a separate project, not a quick follow-up.
-        self.assertLessEqual(swaps, 60)
+        # Tightened to <= 8 after optimizeBundleGraph() in web/geom.js and the Gorst
+        # pipeline freeway/anchor fixes reduced post-optimization swaps to 0.
+        self.assertLessEqual(swaps, 8)
 
     def test_t1_f10_02_strand_stats_improvement(self):
         """F10: Strand optimization achieves substantial reduction from initial state."""
