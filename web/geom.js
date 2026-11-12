@@ -426,8 +426,10 @@ const KCTMGeom = (() => {
       }
       return n / 2;
     }
+    const snapshot = () => EDGES.map((E) => new Map([...E.byKey].map(([v, l]) => [v, l.slice()])));
+    const restore = (s) => EDGES.forEach((E, k) => { for (const [v, l] of s[k]) E.byKey.set(v, l); });
     const before = swaps();
-    let best = before, snap = EDGES.map((E) => new Map([...E.byKey].map(([v, l]) => [v, l.slice()])));
+    let best = before, snap = snapshot();
     for (let pass = 0; pass < 8 && best > 0; pass++) {
       for (const E of EDGES) {
         for (const [v, list] of E.byKey) {
@@ -442,9 +444,9 @@ const KCTMGeom = (() => {
         }
       }
       const n = swaps();
-      if (n < best) { best = n; snap = EDGES.map((E) => new Map([...E.byKey].map(([v, l]) => [v, l.slice()]))); }
+      if (n < best) { best = n; snap = snapshot(); }
     }
-    EDGES.forEach((E, k) => { for (const [v, l] of snap[k]) E.byKey.set(v, l); });
+    restore(snap);
     // Averages can put a route between two neighbors it crosses at both ends. Minimize
     // actual inversions instead: move a strand only when the total at its joins falls.
     // Alternating direction avoids favoring whichever end was visited first.
@@ -522,6 +524,248 @@ const KCTMGeom = (() => {
       if (!changed) break;
     }
     best = swaps();
+    // Long multi-route trunks can still trap deadlocks between disagreeing ends when
+    // single-strand and adjacent-pair moves see zero net gain. Model each (edge, service)
+    // bundle as a graph node and resolve each nonzero-swap component by peeling tree
+    // branches off its cyclic 2-core, running BFS barycenter + insertion (+ bounded ILS
+    // on small 2-cores), and extending the 2-core order cleanly back down the trees.
+    function optimizeBundleGraph() {
+      const nodes = [], nodeIdx = new Map(), arcs = [];
+      for (const E of EDGES) {
+        for (const [v, list] of E.byKey) {
+          if (list.length < 2) continue;
+          nodeIdx.set(`${E.k}|${v}`, nodes.length);
+          nodes.push({ e: E.k, v, list: list.slice(), adj: [] });
+        }
+      }
+      for (const E of EDGES) {
+        const groups = new Map();
+        for (const c of CONT[E.k]) {
+          const k = `${c.F}|${c.f}|${keyOf(c.i)}`;
+          if (!groups.has(k)) groups.set(k, []);
+          groups.get(k).push(c);
+        }
+        for (const list of groups.values()) {
+          const F = list[0].F, f = list[0].f, v = keyOf(list[0].i);
+          if (E.k > F || list.length < 2) continue;
+          const u = nodeIdx.get(`${E.k}|${v}`), w = nodeIdx.get(`${F}|${v}`);
+          if (u === undefined || w === undefined) continue;
+          const routes = [...new Set(list.map((c) => c.i))];
+          if (routes.length < 2) continue;
+          const ai = arcs.length;
+          arcs.push({ u, w, f, routes, routeSet: new Set(routes) });
+          nodes[u].adj.push({ to: w, ai });
+          if (u !== w) nodes[w].adj.push({ to: u, ai });
+        }
+      }
+      const arcSwaps = (ai) => {
+        const { u, w, f, routes } = arcs[ai];
+        const pu = new Map(nodes[u].list.map((r, j) => [r, j]));
+        const pw = new Map(nodes[w].list.map((r, j) => [r, j]));
+        let n = 0;
+        for (let a = 0; a < routes.length; a++) for (let b = a + 1; b < routes.length; b++) {
+          const r1 = routes[a], r2 = routes[b];
+          if ((pu.get(r1) - pu.get(r2)) * f * (pw.get(r1) - pw.get(r2)) < 0) n++;
+        }
+        return n;
+      };
+      const extendOrder = (list, parentList, f, shared) => {
+        const pOrd = new Map(parentList.map((r, j) => [r, f > 0 ? j : -j]));
+        const sorted = [...shared].sort((a, b) => pOrd.get(a) - pOrd.get(b));
+        let k = 0;
+        return list.map((r) => (shared.has(r) ? sorted[k++] : r));
+      };
+      const bfsSpan = (root, inSet) => {
+        const bfs = [root], vis = new Set([root]), pa = new Map();
+        for (let i = 0; i < bfs.length; i++) for (const nb of nodes[bfs[i]].adj) {
+          if (inSet.has(nb.to) && !vis.has(nb.to)) {
+            vis.add(nb.to); bfs.push(nb.to); pa.set(nb.to, { parent: bfs[i], ai: nb.ai });
+          }
+        }
+        return { bfs, pa };
+      };
+      const baryAndInsert = (bfs, inSet) => {
+        for (let pass = 0; pass < 12; pass++) {
+          let changed = false;
+          const scan = pass % 2 ? bfs.slice().reverse() : bfs;
+          for (const u of scan) {
+            const list = nodes[u].list;
+            if (list.length < 2) continue;
+            const cur = new Map(list.map((r, j) => [r, j]));
+            const nbPos = nodes[u].adj.filter((nb) => inSet.has(nb.to))
+              .map((nb) => ({ arc: arcs[nb.ai], pw: new Map(nodes[nb.to].list.map((r, j) => [r, j])), len: nodes[nb.to].list.length }));
+            const want = new Map();
+            for (const r of list) {
+              let sum = 0, cnt = 0;
+              for (const { arc, pw, len } of nbPos) {
+                if (!arc.routeSet.has(r)) continue;
+                sum += arc.f * ((pw.get(r) + 0.5) / len - 0.5);
+                cnt++;
+              }
+              want.set(r, cnt ? sum / cnt : (cur.get(r) + 0.5) / list.length - 0.5);
+            }
+            const next = list.slice().sort((a, b) => (want.get(a) - want.get(b)) || (cur.get(a) - cur.get(b)));
+            if (next.some((r, j) => r !== list[j])) { nodes[u].list = next; changed = true; }
+          }
+          if (!changed) break;
+        }
+        for (let pass = 0; pass < 20; pass++) {
+          let changed = false;
+          const scan = pass % 2 ? bfs.slice().reverse() : bfs;
+          for (const u of scan) {
+            const list = nodes[u].list;
+            if (list.length < 2) continue;
+            const votes = new Map(list.map((r) => [r, new Map()]));
+            for (const { to, ai } of nodes[u].adj) {
+              if (!inSet.has(to)) continue;
+              const { f, routes } = arcs[ai], pw = new Map(nodes[to].list.map((r, j) => [r, j]));
+              for (let a = 0; a < routes.length; a++) for (let b = a + 1; b < routes.length; b++) {
+                const r1 = routes[a], r2 = routes[b];
+                if (f * (pw.get(r1) - pw.get(r2)) > 0) votes.get(r1).set(r2, (votes.get(r1).get(r2) || 0) + 1);
+                else votes.get(r2).set(r1, (votes.get(r2).get(r1) || 0) + 1);
+              }
+            }
+            for (let j = 0; j < list.length; j++) {
+              const r = list[j], rest = list.filter((x) => x !== r);
+              const costs = [rest.reduce((n, x) => n + (votes.get(r).get(x) || 0), 0)];
+              for (const x of rest) costs.push(costs[costs.length - 1] - (votes.get(r).get(x) || 0) + (votes.get(x).get(r) || 0));
+              let at = j;
+              for (let q = 0; q < costs.length; q++) if (costs[q] < costs[at]) at = q;
+              if (at !== j) { list.splice(j, 1); list.splice(at, 0, r); changed = true; }
+            }
+          }
+          if (!changed) break;
+        }
+      };
+      const alignSpan = (bfs, pa) => {
+        for (let i = 1; i < bfs.length; i++) {
+          const u = bfs[i], { parent, ai } = pa.get(u);
+          nodes[u].list = extendOrder(nodes[u].list, nodes[parent].list, arcs[ai].f, arcs[ai].routeSet);
+        }
+      };
+      const solveTree = (comp) => {
+        const inComp = new Set(comp);
+        const { bfs, pa } = bfsSpan(comp[0], inComp);
+        const children = new Map(comp.map((u) => [u, []]));
+        for (let i = 1; i < bfs.length; i++) children.get(pa.get(bfs[i]).parent).push(bfs[i]);
+        const wt = new Map();
+        for (let i = bfs.length - 1; i >= 0; i--) {
+          const u = bfs[i], m = nodes[u].list.length;
+          let w = m * (m - 1) / 2;
+          for (const c of children.get(u)) w += wt.get(c);
+          wt.set(u, w);
+        }
+        // Root at pair-weighted centroid so small disagreeing branches adapt to the trunk
+        let cent = bfs[0], totW = wt.get(cent), moved = true;
+        while (moved) {
+          moved = false;
+          for (const c of children.get(cent)) if (wt.get(c) * 2 > totW) { cent = c; moved = true; break; }
+        }
+        const { bfs: bfsC, pa: paC } = bfsSpan(cent, inComp);
+        alignSpan(bfsC, paC);
+      };
+      const solveCore = (alive, coreArcs) => {
+        const core = [...alive];
+        const coreCost = () => coreArcs.reduce((s, ai) => s + arcSwaps(ai), 0);
+        let root = core[0];
+        for (const u of core) if (nodes[u].list.length > nodes[root].list.length) root = u;
+        let bestCore = coreCost(), bestSnap = new Map(core.map((u) => [u, nodes[u].list.slice()]));
+        const saveIfBetter = () => {
+          const c = coreCost();
+          if (c < bestCore) { bestCore = c; bestSnap = new Map(core.map((u) => [u, nodes[u].list.slice()])); }
+        };
+        const { bfs: bfs0, pa: pa0 } = bfsSpan(root, alive);
+        baryAndInsert(bfs0, alive);
+        saveIfBetter();
+        if (bestCore > 0) {
+          for (const u of core) nodes[u].list = bestSnap.get(u).slice();
+          alignSpan(bfs0, pa0);
+          baryAndInsert(bfs0, alive);
+          saveIfBetter();
+        }
+        if (bestCore > 0 && core.length <= 200) {
+          for (let trial = 0; trial < 40 && bestCore > 0; trial++) {
+            for (const u of core) nodes[u].list = bestSnap.get(u).slice();
+            const badArcs = coreArcs.filter((ai) => arcSwaps(ai) > 0);
+            if (!badArcs.length) break;
+            const ba = arcs[badArcs[trial % badArcs.length]];
+            const pu = new Map(nodes[ba.u].list.map((r, j) => [r, j]));
+            const pw = new Map(nodes[ba.w].list.map((r, j) => [r, j]));
+            const badPairs = [];
+            for (let x = 0; x < ba.routes.length; x++) for (let y = x + 1; y < ba.routes.length; y++) {
+              const r1 = ba.routes[x], r2 = ba.routes[y];
+              if ((pu.get(r1) - pu.get(r2)) * ba.f * (pw.get(r1) - pw.get(r2)) < 0) badPairs.push([r1, r2]);
+            }
+            if (!badPairs.length) break;
+            const [rA, rB] = badPairs[Math.floor(trial / 4) % badPairs.length];
+            const target = trial % 2 ? ba.u : ba.w, l = nodes[target].list;
+            const ia = l.indexOf(rA), ib = l.indexOf(rB);
+            [l[ia], l[ib]] = [l[ib], l[ia]];
+            const rNode = trial % 3 === 0 ? core[trial % core.length] : target;
+            const { bfs: bfs2, pa: pa2 } = bfsSpan(rNode, alive);
+            if (trial % 3 === 0 || trial % 4 >= 2) alignSpan(bfs2, pa2);
+            baryAndInsert(bfs2, alive);
+            saveIfBetter();
+          }
+        }
+        for (const u of core) nodes[u].list = bestSnap.get(u);
+      };
+
+      const seen = new Uint8Array(nodes.length);
+      for (let start = 0; start < nodes.length; start++) {
+        if (seen[start]) continue;
+        const comp = [start];
+        seen[start] = 1;
+        for (let i = 0; i < comp.length; i++) for (const nb of nodes[comp[i]].adj) {
+          if (!seen[nb.to]) { seen[nb.to] = 1; comp.push(nb.to); }
+        }
+        const compArcSet = new Set();
+        for (const u of comp) for (const nb of nodes[u].adj) compArcSet.add(nb.ai);
+        const compArcs = [...compArcSet];
+        const compBefore = compArcs.reduce((s, ai) => s + arcSwaps(ai), 0);
+        if (compBefore === 0) continue;
+
+        const compSnap = new Map(comp.map((u) => [u, nodes[u].list.slice()]));
+        const alive = new Set(comp);
+        const deg = new Map(comp.map((u) => [u, nodes[u].adj.reduce((d, nb) => d + (nb.to === u ? 2 : 1), 0)]));
+        const peelStack = [], peelQ = [];
+        for (const u of comp) if (deg.get(u) <= 1) peelQ.push(u);
+        for (let i = 0; i < peelQ.length; i++) {
+          const u = peelQ[i];
+          if (!alive.has(u)) continue;
+          let parentEdge = null;
+          for (const nb of nodes[u].adj) if (alive.has(nb.to)) { parentEdge = nb; break; }
+          alive.delete(u);
+          peelStack.push({ u, parentEdge });
+          if (parentEdge) {
+            const p = parentEdge.to;
+            deg.set(p, deg.get(p) - 1);
+            if (deg.get(p) <= 1) peelQ.push(p);
+          }
+        }
+        if (alive.size === 0) {
+          solveTree(comp);
+        } else {
+          const coreArcSet = new Set();
+          for (const u of alive) for (const nb of nodes[u].adj) if (alive.has(nb.to)) coreArcSet.add(nb.ai);
+          solveCore(alive, [...coreArcSet]);
+          for (let i = peelStack.length - 1; i >= 0; i--) {
+            const { u, parentEdge } = peelStack[i];
+            if (parentEdge) nodes[u].list = extendOrder(nodes[u].list, nodes[parentEdge.to].list, arcs[parentEdge.ai].f, arcs[parentEdge.ai].routeSet);
+          }
+        }
+        if (compArcs.reduce((s, ai) => s + arcSwaps(ai), 0) >= compBefore) {
+          for (const u of comp) nodes[u].list = compSnap.get(u);
+        }
+      }
+      for (const n of nodes) EDGES[n.e].byKey.set(n.v, n.list);
+    }
+    if (best > 0) {
+      const baseSnap = snapshot();
+      optimizeBundleGraph();
+      const n = swaps();
+      if (n < best) best = n; else restore(baseSnap);
+    }
     const strandStats = { before, after: best };
 
     const runsIn = (lay, steps, key) => {
