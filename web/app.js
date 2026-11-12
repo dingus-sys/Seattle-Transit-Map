@@ -528,8 +528,12 @@
     const acc = th === "dark" ? "#bf9cf5" : "#7b5cc4";
     const trailCol = th === "dark" ? "#2dd4bf" : "#047857";
     const trailGreenway = th === "dark" ? "#86efac" : "#16a34a";
-    const trailLane = th === "dark" ? "#67e8f9" : "#0284c7";
-    const trailSharrow = th === "dark" ? "#d9f99d" : "#65a30d";
+    // Bike lane: rose, not blue — the bus network already owns every shade of blue, so a blue
+    // bike lane line vanished into the frequent/swift/local bus lines sharing the same street.
+    const trailLane = th === "dark" ? "#f472b6" : "#db2777";
+    // Sharrows: gold, not olive — olive sat too close to the unpaved trail's brown at a glance,
+    // especially once both thin out at a low zoom.
+    const trailSharrow = th === "dark" ? "#fde047" : "#ca8a04";
     const trailHalo = th === "dark" ? "#090d16" : "#ffffff";
     const trailText = th === "dark" ? "#5eead4" : "#065f46";
     const trailCase = th === "dark" ? "#041d16" : "#ffffff";
@@ -578,23 +582,24 @@
           "line-width": ["interpolate", ["linear"], ["zoom"], 9.8, 1.2, 11.5, 1.6, 13, 2.4, 15, 3.2, 17, 4.0],
           "line-opacity": 0.9,
         } },
-      // 5. Sharrows & Shared Streets - dotted bike green stroke
+      // 5. Sharrows & Shared Streets - dotted gold stroke
       { id: "trail-sharrow", type: "line", source: "trails", minzoom: 11,
         filter: ["==", ["get", "facility"], "sharrow"],
         paint: {
           "line-color": trailSharrow,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 11, 1.1, 13, 1.5, 15, 2.0, 17, 2.6],
+          "line-width": ["interpolate", ["linear"], ["zoom"], 11, 1.4, 13, 1.9, 15, 2.5, 17, 3.2],
           "line-dasharray": [1.2, 3],
-          "line-opacity": 0.85,
+          "line-opacity": 0.92,
         } },
-      // 6. Unpaved / gravel trails
+      // 6. Unpaved / gravel trails - dashed rust stroke, bolder at low zoom so it reads as a
+      // regional corridor rather than fading into the basemap when you're zoomed out
       { id: "trail-dash", type: "line", source: "trails",
         filter: ["==", ["get", "surface"], "unpaved"],
         paint: {
-          "line-color": th === "dark" ? "#fbbf24" : "#b45309",
-          "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1.8, 11, 2.2, 13, 2.8, 15, 3.6, 17, 4.5],
+          "line-color": th === "dark" ? "#fb923c" : "#9a3412",
+          "line-width": ["interpolate", ["linear"], ["zoom"], 9, 2.2, 11, 2.8, 13, 3.4, 15, 4.2, 17, 5.2],
           "line-dasharray": [3, 2],
-          "line-opacity": 0.92,
+          "line-opacity": 0.95,
         } },
       // 7. Labels along major trails and protected bike lanes
       { id: "trail-labels", type: "symbol", source: "trails", minzoom: 11,
@@ -4763,9 +4768,9 @@
   function bikeSwatch(type) {
     const trailCol = theme === "dark" ? "#2dd4bf" : "#047857";
     const trailGreenway = theme === "dark" ? "#86efac" : "#16a34a";
-    const trailLane = theme === "dark" ? "#67e8f9" : "#0284c7";
-    const trailSharrow = theme === "dark" ? "#d9f99d" : "#65a30d";
-    const trailDash = theme === "dark" ? "#fbbf24" : "#b45309";
+    const trailLane = theme === "dark" ? "#f472b6" : "#db2777";
+    const trailSharrow = theme === "dark" ? "#fde047" : "#ca8a04";
+    const trailDash = theme === "dark" ? "#fb923c" : "#9a3412";
     const trailCase = theme === "dark" ? "#041d16" : "#ffffff";
     if (type === "pbl") {
       return `<svg viewBox="0 0 46 32" aria-hidden="true"><path d="M4 16 H42" stroke="${trailCase}" stroke-width="9" stroke-linecap="round"/><path d="M4 16 H42" stroke="${trailCol}" stroke-width="5" stroke-linecap="round"/><path d="M7 16 H39" stroke="#fff" stroke-opacity=".34" stroke-width="1.1" stroke-linecap="round"/></svg>`;
@@ -5610,7 +5615,7 @@
     const isUnpaved = p.surface === "unpaved";
     const catName = p.cat_name || "Bicycle Facility";
     const icon = poiIconSVG(p.facility === "pbl" ? "shield" : p.facility === "greenway" ? "park" : "bike", 17);
-    const badgeColor = p.facility === "pbl" || p.facility === "trail" ? "#047857" : p.facility === "greenway" ? "#10b981" : p.facility === "lane" ? "#0891b2" : p.facility === "sharrow" ? "#15803d" : "#b45309";
+    const badgeColor = p.facility === "pbl" || p.facility === "trail" ? "#047857" : p.facility === "greenway" ? "#10b981" : p.facility === "lane" ? "#db2777" : p.facility === "sharrow" ? "#a16207" : "#9a3412";
     const statusBadge = p.status === "UNDERCONS" ? ` · <span class="incline-badge" style="background:#fbbf24;color:#78350f">Under Construction</span>` : "";
     const html = `<div class="pop">
       <div style="display:flex;align-items:center;gap:6px;margin:2px 0 6px">
@@ -9331,7 +9336,7 @@
           cur = { kind: "trail", name: tp.name };
           map.getCanvas().style.cursor = "pointer";
           const icon = poiIconSVG(tp.facility === "pbl" ? "shield" : tp.facility === "greenway" ? "park" : "bike", 16);
-          const badgeColor = tp.facility === "pbl" || tp.facility === "trail" ? "#047857" : tp.facility === "greenway" ? "#10b981" : tp.facility === "lane" ? "#0891b2" : tp.facility === "sharrow" ? "#15803d" : "#b45309";
+          const badgeColor = tp.facility === "pbl" || tp.facility === "trail" ? "#047857" : tp.facility === "greenway" ? "#10b981" : tp.facility === "lane" ? "#db2777" : tp.facility === "sharrow" ? "#a16207" : "#9a3412";
           tipShow("trail:" + tp.name, `<span class="tt-trail">${icon} <b>${esc(tp.name)}</b>${tp.length_mi ? ` · ${tp.length_mi} mi` : ""}<br><span style="color:${badgeColor};font-weight:700">${esc(tp.cat_name || "Bike Facility")}</span>${tp.surface === "unpaved" ? " · Gravel" : " · Paved"} · Tap for details</span>`, "", ev(e));
           return;
         }
@@ -9492,7 +9497,7 @@
         const isUnpaved = tp.surface === "unpaved";
         const catName = tp.cat_name || "Bicycle Facility";
         const icon = poiIconSVG(tp.facility === "pbl" ? "shield" : tp.facility === "greenway" ? "park" : "bike", 16);
-        const badgeColor = tp.facility === "pbl" || tp.facility === "trail" ? "#047857" : tp.facility === "greenway" ? "#10b981" : tp.facility === "lane" ? "#0891b2" : tp.facility === "sharrow" ? "#15803d" : "#b45309";
+        const badgeColor = tp.facility === "pbl" || tp.facility === "trail" ? "#047857" : tp.facility === "greenway" ? "#10b981" : tp.facility === "lane" ? "#db2777" : tp.facility === "sharrow" ? "#a16207" : "#9a3412";
         const statusBadge = tp.status === "UNDERCONS" ? ` · <span class="incline-badge" style="background:#fbbf24;color:#78350f">Under Construction</span>` : "";
         const html = `<div class="pop">
           <div style="display:flex;align-items:center;gap:6px;margin:2px 0 6px">
