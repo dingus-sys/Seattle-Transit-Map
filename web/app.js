@@ -3782,7 +3782,7 @@
   function selectRoute(id, { fit = true, push = true } = {}) {
     const r = RBY[id];
     if (!r) return;
-    if (trailHlName) setTrailSelection(null);
+    if (trailHlCat) setTrailSelection(null);
     selected = { type: "route", id };
     setHash("route-" + id, push);
     rebuild();
@@ -3797,7 +3797,7 @@
   function selectStop(id, { fly = true, push = true } = {}) {
     const s = stopIndex[id];
     if (!s) return;
-    if (trailHlName) setTrailSelection(null);
+    if (trailHlCat) setTrailSelection(null);
     selected = { type: s.kind === "stop" ? "stop" : "station", id };
     setHash((s.kind === "stop" ? "stop-" : "station-") + id, push);
     rebuild();
@@ -3809,7 +3809,7 @@
   }
   function clearSelection({ push = false } = {}) {
     if (panelView === "directions") return;
-    if (trailHlName) setTrailSelection(null);
+    if (trailHlCat) setTrailSelection(null);
     selected = null; activeRouteStop = null; activeRouteObj = null;
     panelView = "home"; corridorRoutes = [];
     setHash("", push);
@@ -5612,7 +5612,7 @@
       store.set("layers3", [...enabled]);
       applyLayerToggles();
     }
-    setTrailSelection(f.properties?.name || null);
+    setTrailSelection(trailCatOf(f.properties));
     const coords = [];
     const getCoords = (c) => {
       if (typeof c[0] === "number") coords.push(c);
@@ -8974,24 +8974,29 @@
     const match = ["==", ["get", "name"], name];
     return typeof expr === "number" ? ["case", match, 1, expr * mul] : expr;
   }
-  let trailHoverCat = null, trailHlName = null, trailHoverName = null;
+  // The facility type a trail belongs to, matching the layer it is drawn on (TRAIL_CAT_LAYERS).
+  function trailCatOf(p) {
+    if (!p) return null;
+    if (p.surface === "unpaved") return "unpaved";
+    if (p.facility === "greenway" || p.facility === "lane" || p.facility === "sharrow") return p.facility;
+    return "pbl";
+  }
+  let trailHoverCat = null, trailHlCat = null, trailHoverName = null;
   function refreshTrailPaint() {
     if (!map || !map.getLayer("trail-pbl")) return;
-    const active = trailHoverCat ? new Set(TRAIL_CAT_LAYERS[trailHoverCat] || []) : null;
-    // A click-selected trail wins over a plain hover, same as a selected route suppresses
-    // hovering a different one; a bare hover just bolds that trail without dimming the rest
+    // A hovered legend row, or a clicked trail, highlights its whole facility type (every trail
+    // of that kind, not just one): those layers bold and the rest of the trails dim.
+    const selCat = trailHoverCat || trailHlCat;
+    const active = selCat ? new Set(TRAIL_CAT_LAYERS[selCat] || []) : null;
+    // A plain hover just bolds the trail under the pointer without dimming the rest
     // (mirrors plain route hover: "nothing else on the map changes").
-    const dimName = trailHlName;
-    const boldOnlyName = !dimName ? trailHoverName : null;
+    const boldOnlyName = !selCat ? trailHoverName : null;
     for (const id of TRAIL_LINE_LAYERS) {
       if (!map.getLayer(id)) continue;
       const baseW = trailBase(id, "line-width"), baseO = trailBase(id, "line-opacity");
       if (active) {
         map.setPaintProperty(id, "line-width", active.has(id) ? scaleWidthExpr(baseW, 1.6) : baseW);
         map.setPaintProperty(id, "line-opacity", active.has(id) ? 1 : baseO * 0.22);
-      } else if (dimName) {
-        map.setPaintProperty(id, "line-width", boldByName(baseW, dimName, 1.7));
-        map.setPaintProperty(id, "line-opacity", dimByName(baseO, dimName, 0.3));
       } else if (boldOnlyName) {
         map.setPaintProperty(id, "line-width", boldByName(baseW, boldOnlyName, 1.5));
         map.setPaintProperty(id, "line-opacity", baseO);
@@ -9003,7 +9008,7 @@
     if (map.getLayer("trail-labels")) {
       const baseTO = trailBase("trail-labels", "text-opacity");
       map.setPaintProperty("trail-labels", "text-opacity",
-        active ? (active.has("trail-labels") ? baseTO : baseTO * 0.22) : dimName ? dimByName(baseTO, dimName, 0.3) : baseTO);
+        active ? (active.has("trail-labels") ? baseTO : baseTO * 0.22) : baseTO);
     }
   }
   // Hovering a trail directly on the map bolds it (no dimming of anything else), like plain
@@ -9019,16 +9024,17 @@
     trailHoverCat = cat;
     // Dim transit (and its vehicle badges) slightly so the hovered trail type reads clearly
     // against the rest of the map, without hiding the streets it runs alongside.
-    setNetDim(cat ? 0.55 : (trailHlName ? 0.38 : 1));
+    setNetDim(cat ? 0.55 : (trailHlCat ? 0.38 : 1));
     refreshTrailPaint();
   }
-  // Click-select a trail by name (its whole path, even split across several segments). Clears
-  // any route/stop selection first so only one kind of line is ever focused at a time.
-  function setTrailSelection(name) {
-    if (!map || !map.getLayer("trail-pbl") || trailHlName === name) return;
-    if (name && selected) clearSelection();
-    trailHlName = name;
-    setNetDim(name ? 0.38 : 1);
+  // Click-select a trail: highlights every trail of its facility type (cat from trailCatOf), not
+  // just the one clicked. Clears any route/stop selection first so only one kind of line is
+  // ever focused at a time.
+  function setTrailSelection(cat) {
+    if (!map || !map.getLayer("trail-pbl") || trailHlCat === cat) return;
+    if (cat && selected) clearSelection();
+    trailHlCat = cat;
+    setNetDim(cat ? 0.38 : 1);
     refreshTrailPaint();
   }
 
@@ -9572,7 +9578,7 @@
       });
       if (trailsHit.length) {
         const tp = trailsHit[0].properties;
-        setTrailSelection(tp.name);
+        setTrailSelection(trailCatOf(tp));
         const isUnpaved = tp.surface === "unpaved";
         const catName = tp.cat_name || "Bicycle Facility";
         const icon = poiIconSVG(tp.facility === "pbl" ? "shield" : tp.facility === "greenway" ? "park" : "bike", 16);
@@ -9633,7 +9639,7 @@
       if (e.key !== "Escape" || e.target.closest("input")) return;
       if (popup) closePopup();
       else if (selected) clearSelection();
-      else if (trailHlName) setTrailSelection(null);
+      else if (trailHlCat) setTrailSelection(null);
       else if (panelView !== "home") { panelView = "home"; focusOff(); showHome(); }
     });
   }
