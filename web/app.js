@@ -617,6 +617,11 @@
     return L;
   }
   const VEH_SIZE = ["interpolate", ["linear"], ["zoom"], 9, 0.34, 11, 0.44, 12.5, 0.58, 14, 0.78, 15.5, 0.95, 18, 1.08];
+  // The route-number label sits to the right of the badge. Its anchor offset is in ems of its
+  // own (fixed) text size, so it has to grow with VEH_SIZE's stops too, or the badge outgrows
+  // the gap at high zoom and the number crowds into it.
+  const VEH_LABEL_OFFX = ["interpolate", ["linear"], ["zoom"], 9, ["literal", [0.69, 0]], 11, ["literal", [0.77, 0]], 12.5, ["literal", [0.9, 0]],
+    14, ["literal", [1.07, 0]], 15.5, ["literal", [1.22, 0]], 18, ["literal", [1.33, 0]]];
   // what a vehicle is, for its badge
   const vehKind = (r) => (["link", "sounder", "amtrak"].includes(r.cat) ? "rail" : ["streetcar", "monorail"].includes(r.cat) ? "tram"
     : ["ferry", "watertaxi"].includes(r.cat) ? "boat" : "bus");
@@ -1174,7 +1179,7 @@
           "icon-allow-overlap": true, "icon-ignore-placement": true, "icon-size": VEH_SIZE, "symbol-sort-key": ["get", "s"] },
         paint: { "icon-opacity": ["case", ["==", ["get", "est"], 1], 0.82, 1] } },
       { id: "veh-label", type: "symbol", source: "vehicles", minzoom: 14.5,
-        layout: { "text-field": ["get", "lab"], "text-font": F_BOLD, "text-size": 11.5, "text-anchor": "left", "text-offset": [1.05, 0],
+        layout: { "text-field": ["get", "lab"], "text-font": F_BOLD, "text-size": 11.5, "text-anchor": "left", "text-offset": VEH_LABEL_OFFX,
           "text-optional": true, "text-padding": 1 },
         paint: { "text-color": ["get", "tc"], "text-halo-color": P.halo, "text-halo-width": 2 } },
     ];
@@ -2386,11 +2391,13 @@
             const isRail = isRailRoute(r);
             let from = (snap || isBackward) ? (isBackward ? (prev.to || to) : to) : rawFrom;
             let targetTo = isBackward ? from : to;
-            let b = prev.b;
-            if (v.bearing != null && v.bearing >= 0) {
-              b = v.bearing;
-            } else if (isRail && !snap) {
-              // For rail vehicles, track movement along the track geometry to prevent perpendicular GPS drift
+            // Where the vehicle actually went (or, for rail, the track it's on), trusted over a
+            // reported heading: agencies' GPS bearing fields are often stale, noisy or just the
+            // last compass reading, and taking that blindly is what pointed buses and trains
+            // across the street instead of along it. Computed first, not as a fallback, so a bad
+            // reported bearing never wins outright.
+            let moveB = null;
+            if (isRail && !snap) {
               const sFrom = onLine(r, from, -1);
               const sTo = onLine(r, targetTo, -1);
               if (sFrom && sTo) {
@@ -2401,21 +2408,25 @@
                 } else {
                   from = sFrom[0];
                   targetTo = sTo[0];
-                  const moveB = geoBearing(from, targetTo);
-                  const sMove = onLine(r, targetTo, moveB);
-                  b = sMove && sMove[1] >= 0 ? sMove[1] : moveB;
-                }
-              } else if (d > 12 && !isBackward) {
-                const moveB = geoBearing(from, targetTo);
-                if (prev.b == null || prev.b < 0 || Math.abs(((moveB - prev.b + 540) % 360) - 180) <= 100) {
-                  b = moveB;
+                  const mb = geoBearing(from, targetTo);
+                  const sMove = onLine(r, targetTo, mb);
+                  moveB = sMove && sMove[1] >= 0 ? sMove[1] : mb;
                 }
               }
-            } else if (d > 12 && !isBackward) {
-              const moveB = geoBearing(from, targetTo);
-              if (prev.b == null || prev.b < 0 || Math.abs(((moveB - prev.b + 540) % 360) - 180) <= 100) {
-                b = moveB;
+            }
+            if (moveB == null && d > 12 && !isBackward) {
+              const mb = geoBearing(from, targetTo);
+              if (prev.b == null || prev.b < 0 || Math.abs(((mb - prev.b + 540) % 360) - 180) <= 100) {
+                moveB = mb;
               }
+            }
+            let b = prev.b;
+            if (v.bearing != null && v.bearing >= 0) {
+              // A reported heading that flatly contradicts where the vehicle actually moved (or
+              // the track it's on) isn't trustworthy; fall back to the computed one instead.
+              b = (moveB != null && Math.abs(((v.bearing - moveB + 540) % 360) - 180) > 100) ? moveB : v.bearing;
+            } else if (moveB != null) {
+              b = moveB;
             }
             const b0 = snap ? b : (prev.curB != null ? prev.curB : (prev.b != null && prev.b >= 0 ? prev.b : b));
             const occ = occCode(v.occ);
@@ -2862,6 +2873,15 @@
           live.vehicles.delete(id);
         }
       }
+      if (live.timer) {
+        // pollLive fetches and rate-limits one agency at a time, committing each as it lands;
+        // rendering through that would show returning vehicles pop into their real position
+        // one agency's worth at a time. Stay frozen until the whole catch-up poll is in, so
+        // they all jump together instead of visibly scattering into place.
+        stopAnim();
+        pollLive().finally(startAnim);
+        return;
+      }
     }
     if (live.timer) pollLive();
     startAnim();
@@ -2876,6 +2896,14 @@
   });
   window.addEventListener("focus", () => {
     if (!document.hidden) onTabResumed();
+  });
+  // Switching to another application window doesn't always flip document.visibilityState
+  // (the tab can stay "visible" while simply unfocused, and some browsers only throttle its
+  // rendering rather than pausing it) — pin the away time on blur too, so onTabResumed's
+  // elapsed-time check is reliable instead of depending on how aggressively that was throttled.
+  window.addEventListener("blur", () => {
+    lastActiveTime = Date.now();
+    stopAnim();
   });
   setInterval(updateLiveUI, 3000);
 
