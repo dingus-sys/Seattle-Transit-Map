@@ -3384,7 +3384,7 @@
     const susp = stopIsSuspended(s.id);
     let h = `<div class="sc"><div class="sc-name">${esc(s.name)}${susp ? ` <span class="stop-susp-pill">${poiIconSVG("alert", 12)} Closed</span>` : ""}</div><div class="sc-sub">${susp ? `<span style="color:#d0213b;font-weight:600">Service Suspended</span> · ` : ""}${kind} · ${rs.length} route${rs.length === 1 ? "" : "s"}${end === 2 ? " · <b>End of the line</b>" : end === 1 ? " · <b>Trips start here</b>" : ""}</div>`;
     if (susp) h += `<div class="stop-susp-banner" style="margin:4px 0 6px;padding:6px 8px;font-size:11.5px"><span class="susp-icon" style="font-size:14px">${poiIconSVG("alert", 14)}</span><span><strong>Stop Closed</strong> · Regular transit service is currently suspended</span></div>`;
-    if (rs.length) h += `<div class="sc-badges">${rs.slice(0, 10).map((r) => badgeHTML(r)).join("")}${rs.length > 10 ? `<span class="sc-more">+${rs.length - 10}</span>` : ""}</div>`;
+    if (rs.length) h += `<div class="sc-badges">${rs.slice(0, 10).map((r) => `<span class="tip-r" data-route="${esc(r.id)}" role="button" tabindex="0" title="Show ${esc(routeTitle(r))} on the map">${badgeHTML(r)}</span>`).join("")}${rs.length > 10 ? `<span class="sc-more">+${rs.length - 10}</span>` : ""}</div>`;
     h += alertTeaser(stopAlerts(stopIds));
     h += `<div id="scDeps">${depRowsHTML(keys, stopIds)}</div>`;
     // the timetable is on screen already; ask the agency what it actually predicts
@@ -9199,7 +9199,7 @@
       const all = streetRoutes(f);
       return { f, r: pr.r < 0 ? all[0] : pr.r, routes: all.map((i) => LINES[i]).filter(Boolean).sort(tagOrder), n: pr.n || 1 };
     };
-    const ev = (e, dy = 0) => ({ clientX: e.originalEvent.clientX, clientY: e.originalEvent.clientY + dy });
+    const ev = (e, dy = 0) => ({ clientX: e.originalEvent.clientX, clientY: e.originalEvent.clientY + dy, ax: e.originalEvent.clientX, ay: e.originalEvent.clientY });
     function routeServiceDesc(r) {
       if (!r) return "";
       if (isRouteSuspended(r)) {
@@ -9250,6 +9250,11 @@
         moveRaf = 0;
         if (!lastMoveEvent || map.isMoving()) return;
         const e = lastMoveEvent;
+        if (inTipBridge(e.originalEvent.clientX, e.originalEvent.clientY)) {
+          clearTimeout(tipOut);
+          $("#tip").classList.remove("tip-leaving");
+          return;
+        }
         // Independent of whatever wins the cursor/tooltip below, bold whichever trail is
         // directly under the pointer (or none) so it always reflects the current position.
         const trailAtPoint = map.queryRenderedFeatures([[e.point.x - 6, e.point.y - 6], [e.point.x + 6, e.point.y + 6]], {
@@ -9295,21 +9300,24 @@
             tipShow("tag:" + tg.item.r, `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}${schedInfo}${trInfo}</span>`, "", ev(e, 14));
           } else {
             cur = { kind: "tag", id: "more" };
-            if (tg.item.more?.length) {
-              focusRoutes(tg.item.more.map((i) => LINES[i]), false, { glow: true, widthScale: 1.65 });
+            const allRoutes = (tg.item.more || []).map((i) => LINES[i]).filter(Boolean);
+            const overflowRoutes = ((tg.item.overflow && tg.item.overflow.length) ? tg.item.overflow : tg.item.more || []).map((i) => LINES[i]).filter(Boolean);
+            const groupList = allRoutes.slice().sort(tagOrder);
+            if (groupList.length) {
+              focusRoutes(groupList, false, { glow: true, widthScale: 1.65 });
             } else {
               setHover(null);
             }
-            const allRoutes = (tg.item.more || []).map((i) => LINES[i]).filter(Boolean);
-            const overflowRoutes = ((tg.item.overflow && tg.item.overflow.length) ? tg.item.overflow : tg.item.more || []).map((i) => LINES[i]).filter(Boolean);
-            const badgeList = overflowRoutes.slice(0, 10).map((r) => badgeHTML(r)).join("");
+            const badgeList = overflowRoutes.slice(0, 12).map((r) => `<span class="tip-r" data-route="${esc(r.id)}" role="button" tabindex="0" title="Show ${esc(routeTitle(r))} on the map">${badgeHTML(r)}</span>`).join("");
             tipShow(
               "more:" + tg.item.more.join("."),
-              `<span class="tip-badges">${badgeList}</span>`
-              + `<span class="tt-more">${allRoutes.length} routes share this street · Click to view all</span>`,
-              "",
-              ev(e, 14)
+              `<div class="tip-more"><div class="tip-badges">${badgeList}</div>`
+              + `<span class="tt-more">${allRoutes.length} routes share this street · Click to view all</span></div>`,
+              "tip-live",
+              ev(e, 10)
             );
+            tipLiveFeat = null; tipGroup = groupList;
+            tipClick = () => { showCorridor(groupList); focusRoutes(groupList, false, { glow: true, widthScale: 1.65 }); };
           }
           return;
         }
@@ -9354,11 +9362,12 @@
           } else {
             highlightStop(st);
             const end = lid === "sel-stops" || lid === "hov-stops" ? p.end : 0;
-            tipShow(`stop:${p.id}:${end}`, stopCard(p.id, end, p.ids), "tip-card", ev(e));
+            tipShow(`stop:${p.id}:${end}`, stopCard(p.id, end, p.ids), "tip-card tip-live", ev(e));
+            tipLiveFeat = st; tipGroup = null; tipClick = () => selectStop(p.id, { fly: false });
           }
           return;
         }
-        highlightStop(null);
+        if (!tipLive) highlightStop(null);
         const ln = pickLine(e.point);
         if (ln) {
           const strandRoute = ln.r >= 0 ? LINES[ln.r] : (ln.routes && ln.routes[0]);
@@ -9452,11 +9461,13 @@
         cur = null;
         map.getCanvas().style.cursor = "";
         tipHide();
-        setHover(null);
+        if (!tipLive) setHover(null);
       });
     });
-    map.getCanvas().addEventListener("mouseleave", () => {
+    map.getCanvas().addEventListener("mouseleave", (e) => {
       if (moveRaf) { cancelAnimationFrame(moveRaf); moveRaf = 0; }
+      // onto the card that's open: keep everything as it is, the card takes over
+      if (tipLive && e.relatedTarget && $("#tip").contains(e.relatedTarget)) { lastMoveEvent = null; return; }
       cur = null; tipHide(true); setHover(null); highlightStop(null); showLens(null);
       setTrailHoverName(null);
       if (!(selected && selected.type === "route" && RBY[selected.id]?.cat === "dart")) {
@@ -9637,6 +9648,7 @@
     map.on("moveend", onMoveEnd);
     document.addEventListener("keydown", (e) => {
       if (e.key !== "Escape" || e.target.closest("input")) return;
+      if (!$("#tip").hidden && tipLive) { tipHide(true); focusOff(); return; }
       if (popup) closePopup();
       else if (selected) clearSelection();
       else if (trailHlCat) setTrailSelection(null);
@@ -9810,12 +9822,47 @@
   // The pointer's tooltip. It glides after the pointer, changes shape smoothly from one card to
   // the next (a route, a stop's departures, a bus), and fades in and out instead of popping.
   let tipKey = "", tipOut = 0, tipRAF = 0, tipMorph = 0;
+  // A "live" card (a stop's, or the list of routes sharing a street) can be reached with the
+  // pointer: it stays where it appeared instead of following, waits a moment before closing,
+  // and its route numbers light their route on the map when pointed at. tipLiveFeat is the stop
+  // kept lit while the card is open; tipGroup the routes kept lit for a "+N" card.
+  let tipLive = false, tipLiveFeat = null, tipGroup = null, tipClick = null, tipLock = false, tipInside = false, tipEntered = false, tipChip = null, tipAnchor = null, tipRestore = 0, tipWired = false;
   const tipPos = { x: 0, y: 0, tx: 0, ty: 0, on: false };
   const calm = () => window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  function tipAim(ev) {
+  function clearTipLive() {
+    clearTimeout(tipRestore);
+    tipLive = false; tipLiveFeat = null; tipGroup = null; tipClick = null;
+    tipLock = false; tipInside = false; tipEntered = false; tipChip = null; tipAnchor = null;
+  }
+  function inTipBridge(px, py) {
+    if (!tipLive || tipEntered || !tipAnchor) return false;
     const tip = $("#tip");
-    tipPos.tx = Math.max(8, Math.min(ev.clientX + 16, window.innerWidth - tip.offsetWidth - 8));
-    tipPos.ty = Math.max(8, Math.min(ev.clientY + 16, window.innerHeight - tip.offsetHeight - 8));
+    if (tip.hidden) return false;
+    const r = tip.getBoundingClientRect();
+    const pad = 12;
+    const x0 = Math.min(r.left, tipPos.tx) - pad;
+    const y0 = Math.min(r.top, tipPos.ty) - pad;
+    const x1 = Math.max(r.right, tipPos.tx + tip.offsetWidth) + pad;
+    const y1 = Math.max(r.bottom, tipPos.ty + tip.offsetHeight) + pad;
+    if (px >= x0 && px <= x1 && py >= y0 && py <= y1) return true;
+    const ax = tipAnchor.x, ay = tipAnchor.y;
+    if (Math.hypot(px - ax, py - ay) <= 10) return true;
+    const inTri = (xA, yA, xB, yB, xC, yC) => {
+      const d1 = (px - xB) * (yA - yB) - (xA - xB) * (py - yB);
+      const d2 = (px - xC) * (yB - yC) - (xB - xC) * (py - yC);
+      const d3 = (px - xA) * (yC - yA) - (xC - xA) * (py - yA);
+      return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0));
+    };
+    return inTri(ax, ay, x0, y0, x1, y0)
+      || inTri(ax, ay, x1, y0, x1, y1)
+      || inTri(ax, ay, x1, y1, x0, y1)
+      || inTri(ax, ay, x0, y1, x0, y0);
+  }
+  function tipAim(ev, off = 16) {
+    const tip = $("#tip");
+    if (tipLock) return;
+    tipPos.tx = Math.max(8, Math.min(ev.clientX + off, window.innerWidth - tip.offsetWidth - 8));
+    tipPos.ty = Math.max(8, Math.min(ev.clientY + off, window.innerHeight - tip.offsetHeight - 8));
     if (!tipPos.on || calm()) { tipPos.x = tipPos.tx; tipPos.y = tipPos.ty; }
     tipPos.on = true;
     if (!tipRAF) tipRAF = requestAnimationFrame(tipStep);
@@ -9827,11 +9874,79 @@
     tip.style.transform = `translate3d(${tipPos.x.toFixed(1)}px, ${tipPos.y.toFixed(1)}px, 0)`;
     tipRAF = Math.abs(tipPos.tx - tipPos.x) + Math.abs(tipPos.ty - tipPos.y) > 0.3 ? requestAnimationFrame(tipStep) : 0;
   }
+  // route numbers on a live card: pointing at one shows that route on the map, leaving them
+  // brings back what the card was showing; clicking opens the route (or the stop, or the list)
+  function tipWire() {
+    if (tipWired) return;
+    tipWired = true;
+    const tip = $("#tip");
+    const chipOf = (t) => (t && t.closest ? t.closest("[data-route]") : null);
+    const focusChip = (el) => {
+      const r = el && RBY[el.dataset.route];
+      if (r && LINEIDX[r.id] != null) focusRoutes([r], false, { glow: true, widthScale: 1.85 });
+    };
+    const activateTip = (t) => {
+      if (!tipLive) return;
+      const el = chipOf(t);
+      const id = el && el.dataset.route;
+      if (id && RBY[id]) { tipHide(true); focusOff(); selectRoute(id, { fit: true }); return; }
+      const go = tipClick;
+      if (go) { tipHide(true); go(); }
+    };
+    tip.addEventListener("mouseenter", () => {
+      if (!tipLive) return;
+      tipInside = true; tipEntered = true;
+      showLens(null);
+      clearTimeout(tipOut); clearTimeout(hoverTimer); clearTimeout(tipRestore);
+      tip.classList.remove("tip-leaving");
+      if (tipLiveFeat) highlightStop(tipLiveFeat);
+      if (tipGroup) focusRoutes(tipGroup, false, { glow: true, widthScale: 1.65 });
+    });
+    tip.addEventListener("mouseover", (e) => {
+      if (!tipLive) return;
+      const el = chipOf(e.target);
+      if (el === tipChip) return;
+      tipChip = el;
+      clearTimeout(tipRestore); clearTimeout(hoverTimer);
+      if (el) { focusChip(el); return; }
+      // off the numbers: back to the whole group (or nothing, for a stop)
+      tipRestore = setTimeout(() => { if (tipGroup) focusRoutes(tipGroup, false, { glow: true, widthScale: 1.65 }); else if (hoverKey) setHover(null); }, 90);
+    });
+    tip.addEventListener("mouseleave", (e) => {
+      tipInside = false; tipChip = null;
+      if (!tipLive) return;
+      clearTimeout(tipRestore);
+      tipHide();
+      if (!e.relatedTarget || !map.getCanvas().contains(e.relatedTarget)) setHover(null);
+    });
+    tip.addEventListener("click", (e) => activateTip(e.target));
+    tip.addEventListener("keydown", (e) => {
+      if (!tipLive) return;
+      if (e.key === "Enter" || e.key === " ") {
+        const el = chipOf(e.target);
+        if (el) { e.preventDefault(); activateTip(el); }
+      }
+    });
+    // the card sits over the map: let the wheel still zoom it
+    tip.addEventListener("wheel", (e) => {
+      if (!tipLive) return;
+      e.preventDefault();
+      map.getCanvas().dispatchEvent(new WheelEvent("wheel", e));
+    }, { passive: false });
+  }
   function tipShow(key, html, cls, ev) {
     const tip = $("#tip");
+    tipWire();
     clearTimeout(tipOut);
     tip.classList.remove("tip-leaving");
-    if (key === tipKey && !tip.hidden) { tipAim(ev); return; }
+    const live = /\btip-live\b/.test(cls || "");
+    if (key === tipKey && !tip.hidden) { tipAim(ev, live ? 8 : 16); return; }
+    clearTimeout(tipRestore);
+    if (tipLive && !live) { clearTipLive(); highlightStop(null); }
+    tipLive = live; tipChip = null; tipEntered = false;
+    tipAnchor = live ? { x: ev.ax ?? ev.clientX, y: ev.ay ?? ev.clientY } : null;
+    tipLock = false;
+    const aimNew = () => { tipAim(ev, live ? 8 : 16); tipLock = live; };
     const was = !tip.hidden && tipKey;
     tipKey = key;
     if (!was) {
@@ -9839,7 +9954,7 @@
       tip.innerHTML = `<div class="tip-in">${html}</div>`;
       tip.hidden = false;
       tipPos.on = false;
-      tipAim(ev);
+      aimNew();
       tip.classList.remove("tip-enter"); void tip.offsetWidth; tip.classList.add("tip-enter");
       return;
     }
@@ -9850,7 +9965,7 @@
     tip.className = "tip glass" + (cls ? " " + cls : "");
     tip.innerHTML = `<div class="tip-in tip-swap">${html}</div>`;
     const r1 = tip.getBoundingClientRect();
-    tipAim(ev);
+    aimNew();
     if (calm() || (Math.abs(r1.width - r0.width) < 2 && Math.abs(r1.height - r0.height) < 2)) return;
     clearTimeout(tipMorph);
     tip.classList.add("tip-morph");
@@ -9863,13 +9978,19 @@
     const tip = $("#tip");
     clearTimeout(tipOut);
     if (tip.hidden) return;
-    const gone = () => { tip.hidden = true; tipKey = ""; tip.classList.remove("tip-leaving"); };
+    const gone = () => {
+      tip.hidden = true; tipKey = ""; tip.classList.remove("tip-leaving");
+      if (tipLive) { clearTipLive(); highlightStop(null); setHover(null); showLens(null); }
+    };
     if (now) { gone(); return; }
-    // a short grace, so crossing the gap between two lines doesn't blink the card
+    if (tipInside) return; // the pointer is on the card
+    // a short grace, so crossing the gap between two lines doesn't blink the card; a card you can
+    // reach waits longer so there's time to get to it
     tipOut = setTimeout(() => {
+      if (tipInside) return;
       tip.classList.add("tip-leaving");
       tipOut = setTimeout(gone, 170);
-    }, 160);
+    }, tipLive ? 480 : 160);
   }
 
   // ---------------------------------------------------------------- phone sheet (peek / half / full)

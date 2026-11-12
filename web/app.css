@@ -943,8 +943,20 @@ td.sched-cell-now {
   position: fixed; left: 0; top: 0; z-index: 6; pointer-events: none; border-radius: 14px; padding: 7px 11px; font-size: 13px;
   max-width: 280px; will-change: transform; transform-origin: 0 0; box-sizing: border-box;
 }
+.tip.tip-live { pointer-events: auto; }
+.tip.tip-live.tip-leaving { pointer-events: none; }
+.tip.tip-live .tip-r { display: inline-flex; cursor: pointer; border-radius: 7px; transform-origin: 50% 60%;
+  transition: transform .16s cubic-bezier(.2, .9, .25, 1), filter .16s ease; }
+.tip.tip-live .tip-r:hover, .tip.tip-live .sc-row:hover .badge { transform: scale(1.18); filter: drop-shadow(0 3px 6px rgba(0, 0, 0, .28)); }
+.tip.tip-live .tip-r:focus-visible, .tip.tip-live .sc-row:focus-visible { outline: 2px solid CanvasText; outline-offset: 2px; }
+.tip.tip-live .sc-row { cursor: pointer; border-radius: 8px; }
+.tip.tip-live .sc-row .badge { transition: transform .16s cubic-bezier(.2, .9, .25, 1), filter .16s ease; }
+.tip.tip-live .sc-name, .tip.tip-live .tt-more { cursor: pointer; }
+.tip.tip-live .sc-name:hover { text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); text-underline-offset: 2px; }
+.tip.tip-live .tt-more:hover { color: var(--ink-2); }
 .tip-in { display: flex; gap: 8px; align-items: center; }
 .tip.tip-card .tip-in { display: block; }
+.tip-more { display: flex; flex-direction: column; gap: 4px; }
 .tip-enter { animation: tip-enter .26s cubic-bezier(.2, .9, .25, 1) both; }
 .tip-leaving { opacity: 0; scale: .97; transition: opacity .17s ease, scale .17s ease; }
 .tip-swap { animation: tip-swap .24s ease both; }
@@ -954,9 +966,9 @@ td.sched-cell-now {
 .vs-sub { display: block; margin-top: 1px; color: var(--muted); font-size: 12px; }
 .vs-sub b { color: var(--ink-2); font-weight: 600; }
 .tt-more { display: block; margin-top: 2px; color: var(--muted); font-size: 11.5px; }
-@media (prefers-reduced-motion: reduce) { .tip-enter, .tip-swap { animation: none; } .tip-morph, .tip-leaving { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .tip-enter, .tip-swap { animation: none; } .tip-morph, .tip-leaving, .tip.tip-live .tip-r, .tip.tip-live .sc-row .badge { transition: none; } }
 .tip .tt { color: var(--ink-2); line-height: 1.3; }
-.tip-badges { display: flex; flex-wrap: wrap; gap: 4px; max-width: 220px; }
+.tip-badges { display: flex; flex-wrap: wrap; gap: 4px; max-width: 244px; }
 .tip .tt b { color: var(--ink); font-weight: 600; }
 /* vehicle status: on time / late / early, and when the position was updated */
 .vs-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 7px; margin-top: 3px; }
@@ -988,24 +1000,24 @@ td.sched-cell-now {
   100% { transform: scale(1.22) translateY(-2px); opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .lens-in { animation: none; transform: scale(1.22); } }
 /* stop card: name, routes, next departures */
-.tip.tip-card { display: block; padding: 11px 13px 10px; width: 264px; max-width: 264px; border-radius: 18px; }
-.sc-name { font: 650 14.5px/1.25 var(--font-display); color: var(--ink); letter-spacing: -.01em; }
+.tip.tip-card { display: block; padding: 9px 11px 8px; width: 252px; max-width: 252px; border-radius: 16px; }
+.sc-name { font: 650 14px/1.22 var(--font-display); color: var(--ink); letter-spacing: -.01em; }
 .sc-sub { margin-top: 2px; color: var(--muted); font-size: 12px; }
 .sc-sub b { color: var(--ink-2); font-weight: 600; }
-.sc-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; align-items: center; }
+.sc-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; align-items: center; }
 .sc-badges .badge, .sc-row .badge { height: 20px; min-width: 24px; font-size: 12px; padding: 0 6px; border-radius: 5px; }
 .sc-badges .badge.round, .sc-row .badge.round { width: 22px; min-width: 22px; height: 22px; padding: 0; }
 .sc-more { color: var(--muted); font-size: 12px; font-weight: 600; }
-.sc-next { margin-top: 9px; padding-top: 8px; border-top: .5px solid var(--hairline); display: grid; gap: 5px; }
+.sc-next { margin-top: 7px; padding-top: 6px; border-top: .5px solid var(--hairline); display: grid; gap: 3px; }
 .sc-row {
-  display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 8px; font-size: 12.5px;
-  padding: 5px 6px; margin: 0 -6px; border-radius: 8px; cursor: pointer;
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 7px; font-size: 12px;
+  padding: 3.5px 5px; margin: 0 -5px; border-radius: 8px; cursor: pointer;
   transition: background-color .15s ease;
 }
 .sc-row:hover { background: var(--fill); }
 .sc-to { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sc-t { color: var(--ink); font-weight: 650; font-variant-numeric: tabular-nums; }
-.sc-foot { margin-top: 7px; color: var(--muted); font-size: 11px; }
+.sc-foot { margin-top: 5px; color: var(--muted); font-size: 11px; }
 /* a departure the agency is predicting right now, and how busy that bus is expected to be */
 .sc-live { display: inline-block; width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: #1f9d55;
   vertical-align: middle; animation: sc-pulse 2s ease-in-out infinite; }
