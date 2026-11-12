@@ -9559,7 +9559,7 @@
         : (ln ? (ln.r >= 0 ? LINES[ln.r] : (ln.routes && ln.routes[0])) : (rs.length === 1 ? rs[0] : null));
 
       if (strandRoute) {
-        selectRoute(strandRoute.id, { fit: false });
+        selectRoute(strandRoute.id, { fit: true });
         return;
       }
       if (rs.length > 1) {
