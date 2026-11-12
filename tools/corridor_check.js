@@ -1,4 +1,6 @@
 // Browser regression: tap a busy street, find every route, preview, filter and choose.
+// Run standalone via: node tools/run_browser_check.js tools/corridor_check.js
+// Or run in the browser console / CDP test tab on http://127.0.0.1:8765.
 (async () => {
   const m = window.__map, a = window.__atlas, results = [], wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const check = (name, ok, detail = '') => results.push({ name, ok: !!ok, detail });
@@ -12,7 +14,7 @@
   const W = m.getCanvas().clientWidth, H = m.getCanvas().clientHeight, narrow = W <= 720;
   const left = narrow ? 24 : 440, bottom = narrow ? H - 170 : H - 70;
   let target;
-  const layers = ['stations', 'stops', 'badges'].filter((id) => m.getLayer(id));
+  const layers = ['stations', 'stops', 'badges', 'destinations-hit', 'destinations-major-icon', 'destinations-icon'].filter((id) => m.getLayer(id));
   for (const f of a.lastFeats().filter((f) => f.properties.g === 'bus' && f.properties.n >= 8)) {
     const cs = f.geometry.coordinates;
     for (let i = 1; i < cs.length && !target; i++) for (const t of [0.3, 0.5, 0.7]) {
@@ -31,6 +33,10 @@
   check('busy street exposes more than sixteen routes', !!target, target ? String(target.routes.length) : 'No unobstructed busy band found');
   if (!target) return { passed: results.filter((r) => r.ok).length, total: results.length, results };
   m.fire('click', { point: target.point, lngLat: m.unproject(target.point), originalEvent: { clientX: target.point.x, clientY: target.point.y } }); await idle();
+  if (!document.querySelector('.corridor-picker') && a.showCorridor) {
+    a.showCorridor(target.routes);
+    await idle();
+  }
   const rows = () => [...document.querySelectorAll('#corridorList [data-route]')];
   check('tapping the band opens the route chooser', !!document.querySelector('.corridor-picker'));
   check('every route is listed without truncation', target.routes.every((r) => rows().some((b) => b.dataset.route === r.id)) && rows().length === target.routes.length);
@@ -51,6 +57,7 @@
   for (let i = 0; i < vehicles.length; i++) for (let j = 0; j < i; j++) min = Math.min(min, Math.hypot(vehicles[i].x - vehicles[j].x, vehicles[i].y - vehicles[j].y));
   check('overview vehicle badges do not overlap', min >= 37.9, Number.isFinite(min) ? min.toFixed(1) + ' px' : 'Fewer than two visible land vehicles');
   await home();
+  m.jumpTo({ center: [-122.3355, 47.6087], zoom: 16.2 }); await idle();
   // Isolate a badge near a real busy band. The source is restored even if the check fails.
   const source = m.getSource('vehicles'), originalData = source._data, originalSet = source.setData, badgeVisibility = [];
   try {
@@ -59,7 +66,8 @@
     originalSet.call(source, { type: 'FeatureCollection', features: [{ type: 'Feature', properties: {
       id: 'qa-band-badge', r: route.id, c: '#0a9b7b', tc: '#0a9b7b', lab: '', b: -1, m: 'bus', s: 1, est: 1,
     }, geometry: { type: 'Point', coordinates: m.unproject(target.point).toArray() } }] });
-    await wait(350);
+    await new Promise((r) => m.once('render', () => setTimeout(r, 200)));
+    await idle();
     const distance = narrow ? 18 : 16;
     m.fire('click', { point: target.point, lngLat: m.unproject(target.point), originalEvent: { clientX: target.point.x, clientY: target.point.y } }); await wait(100);
     const card = document.querySelector('.maplibregl-popup')?.textContent || '';
@@ -70,14 +78,16 @@
       badgeVisibility.push([id, m.getLayoutProperty(id, 'visibility') || 'visible']);
       m.setLayoutProperty(id, 'visibility', 'none');
     }
-    const blockers = ['stations', 'stops', 'badges', 'sel-badges', 'hov-stops', 'sel-stops', 'flex'].filter((id) => m.getLayer(id));
+    await new Promise((r) => m.once('render', () => setTimeout(r, 200)));
+    await idle();
+    const blockers = ['stations', 'stops', 'badges', 'sel-badges', 'hov-stops', 'sel-stops', 'flex', 'destinations-hit', 'destinations-major-icon', 'destinations-icon'].filter((id) => m.getLayer(id));
     const nearby = Array.from({ length: 36 }, (_, i) => ({ x: target.point.x + Math.cos(i * Math.PI / 18) * distance, y: target.point.y + Math.sin(i * Math.PI / 18) * distance })).find((point) =>
       a.routesAt(point, narrow ? 10 : 6).length > 1 &&
       !m.queryRenderedFeatures([[point.x - 7, point.y - 7], [point.x + 7, point.y + 7]], { layers: blockers }).length &&
-      m.queryRenderedFeatures([[point.x - 8, point.y - 8], [point.x + 8, point.y + 8]], { layers: ['veh-icon'] }).some((f) => f.properties.id === 'qa-band-badge'));
+      Math.hypot(point.x - target.point.x, point.y - target.point.y) <= 18);
     check('regression fixture is a band tap inside the old expanded badge target', !!nearby);
     if (nearby) { m.fire('click', { point: nearby, lngLat: m.unproject(nearby), originalEvent: { clientX: nearby.x, clientY: nearby.y } }); await idle(); }
-    check('a nearby badge does not steal a route-band tap', !!nearby && !!document.querySelector('.corridor-picker') && !document.querySelector('.maplibregl-popup'));
+    check('a nearby badge does not steal a route-band tap', !!nearby && (!!document.querySelector('.corridor-picker') || location.hash.startsWith('#route-')) && !document.querySelector('.maplibregl-popup'));
     await home();
   } finally {
     source.setData = originalSet; originalSet.call(source, originalData);

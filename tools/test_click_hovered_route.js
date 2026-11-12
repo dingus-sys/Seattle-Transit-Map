@@ -9,7 +9,7 @@ assert(appJs.includes('const hoveredRoute = (cur && cur.kind === "line" && cur.i
   'Click handler must inspect currently hovered route');
 assert(appJs.includes('const strandRoute = (hoveredRoute && rs.some((r) => r.id === hoveredRoute.id))'),
   'Click handler must prioritize the hovered route if it is on the clicked corridor');
-assert(appJs.includes('if (strandRoute) {\n        selectRoute(strandRoute.id, { fit: false });\n        return;\n      }'),
+assert(appJs.includes('if (strandRoute) {\n        selectRoute(strandRoute.id, { fit: true });\n        return;\n      }'),
   'Click handler must select the strand/hovered route directly');
 
 console.log('PASS 1: Clicking a route while it is hovered directly selects that route');

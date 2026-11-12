@@ -506,7 +506,7 @@ class TestTier1FeatureCoverage(E2EBaseTestCase):
         self.assertIn(".badge.suspended::after", self.app_css)
 
     # --- Feature F10: Zero-Crossing Strand Optimization ---
-    def test_t1_f10_01_strand_swaps_under_100(self):
+    def test_t1_f10_01_strand_swaps_under_8(self):
         """F10: Total network junction strand swaps are strictly bounded (<= 8)."""
         res = run_node_script(ROOT / "tools" / "geometry_check.js")
         self.assertIn("strand swaps", res.stdout)

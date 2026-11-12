@@ -58,7 +58,7 @@ All tests in this suite are designed strictly from the authoritative specificati
 | **F7** | WebGL Ribbon Layouts & GPU Shaders | `ORIGINAL_REQUEST §R2`, `PROJECT.md §7` | World-space vertex buffers (stride 10, multiple of 30). Rail stack ($1$) above surface ($0$). Distinct patterns (RapidRide dots, ferry dashes, rail ties). Zero-copy buffer transfer. |
 | **F8** | Through-Routes ("Stay on the Bus") | `ORIGINAL_REQUEST §R2`, `PROJECT.md §8` | 6 Metro route pairs (1/14, 2/13, 5/21, 24/33/124, 28/131/132, 27). Interactive continuation, no transfer penalty for through-passengers, restricted to Metro agency. |
 | **F9** | Everyday vs Part-Time Badges & Suspended Indicators | `ORIGINAL_REQUEST §R2`, `PROJECT.md §9` | Everyday routes (7-day service) render solid badges; part-time (peak/weekday-only) render hollow badges. Suspended services display diagonal red strike-through (`.badge.suspended`). |
-| **F10** | Zero-Crossing Strand Optimization | `ORIGINAL_REQUEST §R2`, `PROJECT.md §10` | Strand swaps at junctions reduced to $\le 40$ across Puget Sound network. Selection and hover share identical strand geometry. Turnaround loops preserved. |
+| **F10** | Zero-Crossing Strand Optimization | `ORIGINAL_REQUEST §R2`, `PROJECT.md §10` | Strand swaps at junctions reduced to $\le 8$ (0 current) across Puget Sound network. Selection and hover share identical strand geometry. Turnaround loops preserved. |
 | **F11** | Syntax & Baseline Test Suite Integrity | `PROJECT.md §11`, `ORIGINAL_REQUEST §Verification` | Zero JavaScript syntax errors (`node -c`). Python unit tests (`test_build.py`, `test_legend_features.py`) pass cleanly without `NameError`. |
 | **F12** | Data Pipeline Feed & Graph Validation | `ORIGINAL_REQUEST §R3`, `PROJECT.md §12` | All 5 key agencies present: King County Metro (`kcm`), Sound Transit (`st`), Community Transit (`ct`), Pierce Transit (`pt`), Washington State Ferries (`wsf`). $\ge 330$ routes, $\ge 10,000$ stops. Zero discrepancies $> 3$ km. |
 | **F13** | CI/CD Deployment Guardrails | `ORIGINAL_REQUEST §R3`, `PROJECT.md §13` | `.github/workflows/pages.yml` and `checks.yml` execute validation and unit tests prior to deployment. Site files build with cache-busting content hashes. |
@@ -135,8 +135,8 @@ All tests in this suite are designed strictly from the authoritative specificati
 - **T1-F9-05 (Canvas Badge Rendering):** Dynamic canvas badge drawn for everyday vs part-time. Expected: Everyday fills background solid; part-time draws stroked border with transparent fill.
 
 #### Feature F10: Zero-Crossing Strand Optimization
-- **T1-F10-01 (Strand Swap Ceiling):** Run strand order optimizer on network graph. Expected: Total swaps $\le 40$ across Puget Sound network.
-- **T1-F10-02 (Crossings Reduction):** Compare strand swaps before and after optimization. Expected: Swaps reduced by $> 90\%$ (from 643 to 40).
+- **T1-F10-01 (Strand Swap Ceiling):** Run strand order optimizer on network graph. Expected: Total swaps $\le 8$ across Puget Sound network (0 current).
+- **T1-F10-02 (Crossings Reduction):** Compare strand swaps before and after optimization. Expected: Swaps reduced from baseline 803 to 0.
 - **T1-F10-03 (Selection & Hover Agreement):** Select route at complex junction and inspect hover geometry. Expected: Selection and hover follow identical strand paths.
 - **T1-F10-04 (Turnaround Loop Preservation):** Inspect terminal turnarounds in `repair_network.py`. Expected: Turnaround loops preserved without clipping.
 - **T1-F10-05 (Selected Route Visibility):** Hide category of selected route. Expected: Selected route remains visible while sibling routes hide.
@@ -292,7 +292,7 @@ All tests in this suite are designed strictly from the authoritative specificati
 | **T3-11** | F3 (Transfer Walk) + F2 (Station Transfer Hub) | Transferring between routes at Westlake or International District Station. | Both routes share station complex; transfer walk defaults to 50m (1 min), and connection buffer $\ge 2$ min is enforced. |
 | **T3-12** | F5 (Live HUD) + F13 (Deployment Checks) | Live HUD fleet count adherence under CI test runner. | Test runner validates HUD status pill transitions cleanly between Live, Sched, and Off states. |
 | **T3-13** | F8 (Through-Route) + F1 (Timetable Query) | Trip lookup from Queen Anne to Mount Baker traversing Downtown Seattle. | Timetable engine routes rider onto single vehicle (Route 1 $\rightarrow$ 14) without disembarking, applying 0 min transfer wait. |
-| **T3-14** | F6 (Geometry) + F10 (Strand Optimization) | High-density corridor (3rd Ave Downtown) across zooms 12 through 16. | Corridors collapse into unified service bands with logarithmic width scaling ($GROW(n)$), maintaining $\le 40$ strand swaps. |
+| **T3-14** | F6 (Geometry) + F10 (Strand Optimization) | High-density corridor (3rd Ave Downtown) across zooms 12 through 16. | Corridors collapse into unified service bands with logarithmic width scaling ($GROW(n)$), maintaining $\le 8$ strand swaps (0 current). |
 | **T3-15** | F1 (Midnight Boundary) + F2 (Transfer Buffer) | Late-night transfer at 12:45 AM linking to 1:15 AM departure. | Midnight calendar wrap-around (+86,400s) resolves correctly on both legs, producing valid 30-min connection buffer ($\ge 2$ min, $\le 60$ min). |
 
 ---
@@ -358,7 +358,7 @@ All tests in this suite are designed strictly from the authoritative specificati
   2. Compiles ribbon geometry across zoom levels 10, 12, 14, 16, and 18.
   3. Invariant: 100% of feature coordinates finite (0 NaN, 0 Infinity).
   4. Invariant: Ribbon half-widths finite and strictly positive (`wm > 0`).
-  5. Invariant: Junction strand swaps $\le 40$ (93.8% reduction from unoptimized 643).
+  5. Invariant: Junction strand swaps $\le 8$ (100% reduction from baseline 803 to 0).
   6. Invariant: Dual GPU stack orders rail layer ($1$) strictly above surface layer ($0$).
 
 ---

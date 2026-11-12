@@ -1,5 +1,6 @@
-// Run in the local test tab (CDP/console). Works against the previous release too,
-// returning the same measurements for a matched before/after comparison.
+// Browser zoom harness: fast zoom destination, geometry work gating, mesh stability.
+// Run standalone via: node tools/run_browser_check.js tools/zoom_check.js
+// Or run in the browser console / CDP test tab on http://127.0.0.1:8765.
 (async () => {
   const m = window.__map, a = window.__atlas, results = [], errors = [];
   const check = (name, ok, detail = '') => results.push({ name, ok: !!ok, detail });

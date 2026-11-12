@@ -8,8 +8,8 @@ The Seattle Transit Map (`dingus-sys/Seattle-Transit-Map`) is an interactive, hi
    - `web/ribbons.js`: Custom MapLibre WebGL layer generating world-space GPU meshes (casing, body, dashes, glows, RapidRide dots, rail ties) with zero-copy buffer transfer.
    - `web/app.js`: Interactive UI shell with real-time timetable trip planning (`timetableTripTimes`, `planTransitTrip`), OneBusAway GTFS-realtime integration, WSF ferry vessel tracking, through-route ("stay on the bus") navigation, service alerts, and dynamic canvas/HTML everyday vs part-time badges.
 3. **Automated Verification & Tooling (`tools/`)**:
-   - Python test suites: `tools/test_e2e_transit.py` (161 tests), `tools/validate_data.py`, `tools/check_repair.py`, `tools/test_build.py`, `tools/test_legend_features.py`. Total discoverable unittests: 174.
-   - Node geometry & routing test suites: `tools/test_routing_engine.js` (16 tests), `tools/geometry_check.js` (11 tests), `tools/ribbon_check.js` (8/8 tests), `tools/strandorder.js`.
+   - Python test suites: `tools/test_e2e_transit.py` (161 tests), `tools/validate_data.py`, `tools/check_repair.py`, `tools/test_build.py`, `tools/test_legend_features.py`. Total discoverable unittests: 181.
+   - Node geometry & routing test suites: `tools/test_routing_engine.js` (22 tests), `tools/geometry_check.js` (12 tests), `tools/ribbon_check.js` (8/8 tests), `tools/strandorder.js` (0 junction swaps, gate <= 8).
 4. **CI/CD & Deployment (`.github/workflows/`)**:
    - GitHub Pages publishing workflow (`pages.yml`) and pull-request validation (`checks.yml`).
 
@@ -25,7 +25,7 @@ The Seattle Transit Map (`dingus-sys/Seattle-Transit-Map`) is an interactive, hi
 | 7 | WebGL Ribbon Layouts & GPU Shaders | Zero-copy ArrayBuffer GPU meshes, dual rail/surface stack, shader patterns | M1 (DONE) | ORIGINAL_REQUEST §R2 |
 | 8 | Through-Routes ("Stay on the Bus") | Interactive navigation, guide cards, and tooltips for 6 Metro through-route pairs | M1 (DONE) | ORIGINAL_REQUEST §R2 |
 | 9 | Badges & Suspended Service Indicators | Solid (everyday) vs hollow (part-time) canvas & HTML badges with diagonal red strike-through for suspended services | M1 (DONE) | ORIGINAL_REQUEST §R2 |
-| 10 | Zero-Crossing Strand Optimization | Strand ordering at junctions minimizing crossings (40 junction swaps) | M1 (DONE) | ORIGINAL_REQUEST §R2 |
+| 10 | Zero-Crossing Strand Optimization | Strand ordering at junctions minimizing crossings (0 junction swaps, gate <= 8) | M1 (DONE) | ORIGINAL_REQUEST §R2 |
 | 11 | Syntax & Baseline Test Suite Integrity | Resolve syntax error at `web/app.js:1870` and verify baseline test suites pass | M1 (DONE) | Survey Findings |
 | 12 | Data Pipeline Feed & Graph Validation | `tools/validate_data.py` passes all 8 checks with 0 severe discrepancies (> 3 km) | M3 (DONE) | ORIGINAL_REQUEST §R3 |
 | 13 | CI/CD Deployment Guardrails | Validate data and run full test suites before publishing in `pages.yml` and `checks.yml` | M3 (DONE) | ORIGINAL_REQUEST §R3 |
@@ -36,10 +36,10 @@ The Seattle Transit Map (`dingus-sys/Seattle-Transit-Map`) is an interactive, hi
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| M1 | Syntax, Geometry & Baseline Test Fixes | Fix syntax error in `web/app.js:1870`, verify `geometry_check.js` (11/11), `ribbon_check.js` (8/8), and python unit tests pass | none | DONE |
+| M1 | Syntax, Geometry & Baseline Test Fixes | Fix syntax error in `web/app.js:1870`, verify `geometry_check.js` (12/12), `ribbon_check.js` (8/8), and python unit tests pass | none | DONE |
 | M2 | R1 Trip Planning & Mode Labeling Engine | Fix mode labels (amtrak/monorail -> train, watertaxi -> ferry, streetcar icon), fix `getSoonestBus` live GPS false claim, expose planner test hooks | M1 | DONE |
 | M3 | R3 Data Pipeline & CI Deployment Guards | Both CI workflows install pipeline dependencies and run the data, repair, routing, geometry and ribbon checks; feed fallbacks are guarded in `process_gtfs.py` | M1, M2 | DONE |
-| M4 | Final Milestone: 100% E2E Test Pass & Hardening | 174-test suite, routing stress test and local map load verification; Git commit, GitHub Actions push and live Pages verification | M2, M3, E2E-Track | DONE |
+| M4 | Final Milestone: 100% E2E Test Pass & Hardening | 181-test suite, routing stress test and local map load verification; Git commit, GitHub Actions push and live Pages verification | M2, M3, E2E-Track | DONE |
 
 ## Interface Contracts
 ### Routing Engine ↔ UI & Test Harness (`web/app.js`)

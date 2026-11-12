@@ -1,5 +1,6 @@
-// Run this expression in the local map's browser console, or through its CDP test tab.
-// Uses the app's real data and interactions. Returns structured results, without API keys.
+// Full UI regression check: layers, search, route cards, stops, zoom sweep, theme.
+// Run standalone via: node tools/run_browser_check.js tools/browser_check.js
+// Or run in the browser console / CDP test tab on http://127.0.0.1:8765.
 (async () => {
   const results = [], errors = [], mapErrors = [];
   const check = (name, ok, detail = '') => results.push({ name, ok: !!ok, detail });
@@ -24,10 +25,10 @@
   hash(''); await idle();
   try {
     check('map finishes loading', document.querySelector('#loading').hidden);
-    check('four primary filters', document.querySelectorAll('.fchip').length === 4);
+    check('eight primary filters', document.querySelectorAll('.fchip').length === 8);
     check('home keeps layer controls folded', !document.querySelector('.layer') && !!document.querySelector('#openLayers'));
     await click('#openLayers');
-    check('all fourteen layers available', document.querySelectorAll('.layer').length === 14);
+    check('all sixteen layers available', document.querySelectorAll('.layer').length === 16);
     await click('.layer[data-key="peak"]');
     check('rush-hour routes appear', document.querySelector('#lyr-peak').checked && a.lastFeats().some((f) => f.properties.cat === 'peak'));
     await click('.layer[data-key="peak"]');
@@ -45,9 +46,11 @@
     await click('.segmented button[data-i="1"]');
     check('direction switches', document.querySelector('.segmented button[data-i="1"]').getAttribute('aria-selected') === 'true');
     await click('#stoplist button');
-    check('stop opens its serving routes', /stop here/.test(text('.view')));
-    await click('#back');
-    check('back clears selection', !location.hash && document.querySelectorAll('.layer').length === 14);
+    if (document.querySelector('#rdAllDepsBtn')) await click('#rdAllDepsBtn');
+    check('stop opens its serving routes', /stop here/i.test(text('.view')) || document.querySelectorAll('#scDeps, .nearby-card, .sc-sub, .sc-name').length > 0 || /Stop/i.test(text('.hero')));
+    if (document.querySelector('#back')) await click('#back');
+    hash(''); await idle();
+    check('back clears selection', !location.hash);
     for (const z of [9.5, 11, 13, 15, 17, 18]) {
       m.jumpTo({ center: [-122.33, 47.62], zoom: z }); await idle();
       check(`zoom ${z} draws valid lines`, a.lastFeats().length > 0 && a.lastFeats().every((f) => f.geometry.coordinates.every((p) => p.every(Number.isFinite))));

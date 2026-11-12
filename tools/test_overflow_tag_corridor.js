@@ -20,7 +20,7 @@ console.log('PASS 2: Lens correctly displays +N badge count using it.extra');
 
 // 3. Verify hovering +N on tag focuses all routes on corridor with glow
 const tagHoverSection = appJs.substring(appJs.indexOf('cur = { kind: "tag", id: "more" };'), appJs.indexOf('cur = { kind: "tag", id: "more" };') + 1200);
-assert(tagHoverSection.includes('focusRoutes(tg.item.more.map((i) => LINES[i]), false, { glow: true, widthScale: 1.65 });'),
+assert(tagHoverSection.includes('focusRoutes(groupList, false, { glow: true, widthScale: 1.65 });'),
   'Hovering +N must focus all corridor routes with glow and widthScale 1.65');
 assert(tagHoverSection.includes('${' + 'allRoutes.length} routes share this street · Click to view all'),
   'Tooltip on +N hover must indicate total routes and offer to view all');

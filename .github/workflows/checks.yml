@@ -34,9 +34,19 @@ jobs:
         run: |
           node tools/geometry_check.js
           node tools/ribbon_check.js
+          node tools/strandorder.js
           node tools/test_routing_engine.js
           node tools/stress_test_routing.js
+          node tools/test_click_hovered_route.js
+          node tools/test_overflow_tag_corridor.js
           python3 tools/validate_data.py
           python3 tools/check_repair.py
       - name: Build the keyless website
         run: python3 pipeline/build_site.py
+      - name: Run Playwright browser test sweep
+        run: |
+          npx playwright install --with-deps chromium
+          python3 -m http.server -d site 8765 &
+          sleep 2
+          node tools/sweep.js
+          node tools/test_hover_cards.js

@@ -40,11 +40,15 @@ service is a corridor, lines follow the real streets, and the look is Apple "liq
    and rebase on `origin/main` (`git rebase origin/main`); never force-push. Look at
    `git log --oneline origin/main` first: someone may have just changed the same area. Read their
    commit messages, which explain the why.
-5. Follow the attribution lines your session instructions give for commits and PRs.
+5. **One writing session per checkout.** Avoid concurrent active sessions modifying the same working tree.
+   Use `git worktree add` for parallel sessions.
+6. Follow the attribution lines your session instructions give for commits and PRs.
 
 ## Run, build, test, ship
 
 ```bash
+# macOS: use Python 3.12-3.14 (e.g. /opt/homebrew/bin/python3.14 -m venv .venv)
+# because Python 3.15 lacks prebuilt binary wheels for scikit-image/numpy
 pip install -r requirements.txt
 python3 pipeline/build_site.py                 # after editing web/*: rebuilds the page in site/ (fast)
 python3 pipeline/build_all.py --no-tiles       # rebuilds all data (slow: downloads GTFS and tiles into <repo>/.cache,
@@ -55,17 +59,19 @@ python3 -m http.server -d site 8765 &          # serve it (a background server d
 The data under `site/data/` is committed, so UI work never needs `build_all.py`. A change to
 `pipeline/` does: run it, look at the result, and commit the regenerated `site/`.
 
-**Tests** are Playwright scripts in `tools/` (Playwright is preinstalled in the cloud sandbox).
+**Tests** are Playwright scripts in `tools/` (Playwright is preinstalled in the cloud sandbox;
+on macOS: `export PATH="/opt/homebrew/bin:$PATH"` and resolve `NODE_PATH` via `npm root -g` or `~/.npm/_npx/*/node_modules`).
 Run them from the repo root with the site served on :8765:
 
 ```bash
-export NODE_PATH=$(npm root -g)               # or npm _npx cache path if Playwright isn't global;
+export NODE_PATH=$(npm root -g):$(echo ~/.npm/_npx/*/node_modules 2>/dev/null | tr ' ' ':')
 export MAPLIBRE_JS=/path/to/maplibre-gl.js    #   set this if the sandbox can't reach CDN for maplibre-gl.js
 node tools/sweep.js                           # 51 checks: expect "51/51 passed"
+node tools/test_hover_cards.js                # 13 checks: +N tag & stop safe bridge micro-traversals
 node tools/close.js '[["name",[-122.3365,47.6085],16]]'   # screenshot views to shots/c-name.png
 node tools/bench.js                           # layout time per zoom (worker 5-260 ms is normal)
 node tools/zoomgap2.js tag                    # pinch-zoom check (lines must stay together)
-node tools/strandorder.js                     # strand swaps at junctions (0 current; 42 in November 5 network)
+node tools/strandorder.js                     # strand swaps at junctions (0 current; gate <= 8)
 node tools/geometry_check.js                  # all routes/zoom levels, selection/hover agreement
 python3 tools/check_repair.py                 # omitted branches, anchored repairs, direction metadata
 node tools/deployed_watch.js https://dingus-sys.github.io/Seattle-Transit-Map/   # live data on the real site
@@ -164,12 +170,13 @@ the map tiles; the bundled tiles keep only named places of the kinds in `POI_KEE
 
 ## Open items
 
-1. **November 5 release is published.** GitHub Pages and the Check map workflow succeeded.
-   The published app, geometry and 956,447-byte network matched the tested release. `WSP_KEY`
+1. **Current release is published.** GitHub Pages and the Check map workflow succeeded.
+   The published app, geometry and 1,549,615-byte network (465 routes) matched the tested release
+   (the November 5 historical release was 956,447 bytes). `WSP_KEY`
    and `WSDOT_KEY` work: live vessel locations, ferry bulletins, terminal notes, vehicle-space
    reports and WSDOT highway alerts all returned valid lists with HTTP 200. The browser also
    received live vehicles, ferry conditions and highway reports. Never print key values.
-2. `optimizeBundleGraph()` in `web/geom.js` plus the Gorst pipeline fixes reduced junction strand swaps from 697 initial (and the November 5 historical baseline of 42) to 0, enforced by a `<= 8` CI gate in `tools/test_e2e_transit.py`. Earlier November 5 geometry changes also clipped small offset
+2. `optimizeBundleGraph()` in `web/geom.js` plus the Gorst pipeline fixes reduced junction strand swaps from 803 baseline (and the November 5 historical baseline of 42) to 0, enforced by a `<= 8` CI gate in `tools/test_e2e_transit.py`. Earlier November 5 geometry changes also clipped small offset
    folds, and restore substantial source-path omissions, including the shared 201/202/513 stretch
    on I-5 in South Everett. Keep real crossings and rail/surface separations. Some routes can still list
    stops served only by trip variants below the 15% drawing threshold (e.g. 21, 4, 7, 906); adding

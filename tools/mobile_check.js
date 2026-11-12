@@ -1,4 +1,6 @@
-// Run in the local app at a phone-width viewport.
+// Browser mobile layout check: sheet peek/half/full states, route card responsiveness.
+// Run standalone via: node tools/run_browser_check.js tools/mobile_check.js
+// Or run in the local app at a phone-width viewport (<= 480px).
 (async () => {
   const results = [], check = (name, ok) => results.push({ name, ok: !!ok });
   const wait = () => new Promise((r) => setTimeout(r, 550));

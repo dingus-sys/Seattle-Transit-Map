@@ -1,4 +1,6 @@
-// Set window.__qaRouteStart to 0, 75, 150, ... to check all cards in bounded batches.
+// Batch verification of route cards against data/routes.json.
+// Run standalone via: node tools/run_browser_check.js tools/route_check.js
+// Or set window.__qaRouteStart to 0, 75, 150, ... in console to check in bounded batches.
 (async () => {
   const routes = (await fetch('data/routes.json').then((r) => r.json())).routes;
   const start = window.__qaRouteStart || 0, batch = routes.slice(start, start + 75), bad = [];

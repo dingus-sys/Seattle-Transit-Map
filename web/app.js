@@ -5250,6 +5250,10 @@
     if (r.url) html += `<a class="link-out press" href="${esc(r.url)}" target="_blank" rel="noopener">Official schedule and alerts${poiIconSVG("external", 12)}</a>`;
     setView(html);
     $("#back").addEventListener("click", () => {
+      if (corridorRoutes.length) {
+        showCorridor(null);
+        return;
+      }
       if (history.length > 1 && window.history.state?.hash) {
         history.back();
       } else {
@@ -5383,7 +5387,9 @@
   function showCorridor(routes = null, quiet = false) {
     if (routes) corridorRoutes = [...new Set(routes.map((r) => r.id))];
     if (quiet && body().querySelector(".corridor-picker")) return;
+    selected = null;
     panelView = "corridor";
+    renderLive();
     setNetDim(1);
     focusRoutes(corridorRoutes.map((id) => RBY[id]), false, { glow: true, widthScale: 1.65 });
     const query = routes ? "" : $("#corridorQuery")?.value || "";
@@ -5461,6 +5467,10 @@
     }
     setView(html);
     $("#back").addEventListener("click", () => {
+      if (corridorRoutes.length) {
+        showCorridor(null);
+        return;
+      }
       if (history.length > 1 && window.history.state?.hash) {
         history.back();
       } else {
@@ -10146,7 +10156,7 @@
       drawStats: () => ({ ...drawStats, renderer: ribbons ? "mesh" : "native", pending: !!(inFlight || queued || needsRebuild), ...(ribbons?.stats() || {}) }), routesAt, lineId: (i) => LINES[i]?.id,
       vehicleLines, vehicleOccupancy, occCode,
       obaStop, readDeparture, liveDepartures, depRowsHTML, depCache: () => depCache, stopCard, ensureDepartures,
-      onLine, routeById: (id) => RBY[id],
+      onLine, routeById: (id) => RBY[id], showCorridor,
       planner: { timetableTripTimes, planTransitTrip, currentVehWord, modeIcon, getSoonestBus },
       timetableTripTimes, planTransitTrip, currentVehWord,
       idle: () => new Promise((res) => { if (!inFlight && !queued && !needsRebuild) res(); else idleWaiters.push(res); }),
