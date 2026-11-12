@@ -28,7 +28,7 @@ REGION = {
 RAIL_REGION = {"west": -123.20, "south": 46.50, "east": -121.70, "north": 48.50}
 
 # Wider, low-detail context ring for the zoomed-out view.
-CONTEXT = {"west": -123.40, "south": 46.75, "east": -121.20, "north": 48.40}
+CONTEXT = {"west": -123.90, "south": 46.50, "east": -121.10, "north": 49.15}
 
 # Base-map zoom levels: context ring up to CONTEXT_MAXZOOM, detail area up to DETAIL_MAXZOOM.
 CONTEXT_MAXZOOM = 10
