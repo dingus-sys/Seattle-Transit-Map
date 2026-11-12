@@ -218,73 +218,83 @@ def bridge_route_components(g, surface, max_gap=25000.0):
         if len(comps) <= 1:
             continue
 
-        for part in getattr(shape, "geoms", [shape]):
-            comp_projs = []
-            for c in comps:
-                nodes_on = []
-                for n in c:
-                    P = Point(g.pos[n])
-                    dist = part.distance(P)
-                    if dist < 60:
-                        proj = part.project(P)
-                        nodes_on.append((proj, n, dist))
-                comp_projs.append(nodes_on)
+        def _connected_components():
+            seen, out = set(), []
+            for start in adj:
+                if start in seen:
+                    continue
+                comp, q = [], [start]
+                seen.add(start)
+                while q:
+                    cur = q.pop()
+                    comp.append(cur)
+                    for nxt in adj.get(cur, []):
+                        if nxt not in seen:
+                            seen.add(nxt)
+                            q.append(nxt)
+                out.append(comp)
+            return out
 
-            best_pair = None
-            best_gap = float("inf")
-            for c1_idx in range(len(comps)):
-                for c2_idx in range(c1_idx + 1, len(comps)):
-                    for s1, n1, _ in comp_projs[c1_idx]:
-                        for s2, n2, _ in comp_projs[c2_idx]:
-                            gap = abs(s2 - s1)
-                            if 5 < gap < max_gap and gap < best_gap:
-                                best_gap = gap
-                                best_pair = (s1, n1, s2, n2, c1_idx, c2_idx)
+        while len(comps) > 1:
+            best = None
+            best_score = float("inf")
+            for part in getattr(shape, "geoms", [shape]):
+                comp_projs = []
+                for c in comps:
+                    nodes_on = []
+                    for n in c:
+                        P = Point(g.pos[n])
+                        dist = part.distance(P)
+                        if dist < 60:
+                            nodes_on.append((part.project(P), n, dist))
+                    comp_projs.append(nodes_on)
 
-            if best_pair:
-                s1, n1, s2, n2, c1_idx, c2_idx = best_pair
-                lo, hi = min(s1, s2), max(s1, s2)
-                sub = substring(part, lo, hi)
-                a = n1 if s1 < s2 else n2
-                b = n2 if s1 < s2 else n1
+                for c1_idx in range(len(comps)):
+                    for c2_idx in range(c1_idx + 1, len(comps)):
+                        for s1, n1, d1 in comp_projs[c1_idx]:
+                            for s2, n2, d2 in comp_projs[c2_idx]:
+                                gap = abs(s2 - s1)
+                                if not (5 < gap < max_gap):
+                                    continue
+                                # Rank across all parts using path gap plus perpendicular endpoint offset so
+                                # an opposite carriageway ~55 m away does not beat the actual carriageway.
+                                score = gap + 2.0 * (d1 + d2)
+                                if score < best_score:
+                                    best_score = score
+                                    best = (part, s1, n1, d1, s2, n2, d2, gap)
+
+            if not best:
+                break
+            part, s1, n1, d1, s2, n2, d2, gap = best
+            lo, hi = min(s1, s2), max(s1, s2)
+            sub = substring(part, lo, hi)
+            a = n1 if s1 < s2 else n2
+            b = n2 if s1 < s2 else n1
+            # Avoid drawing a sideways V-detour when the matched shape sits farther to the side than the bridge.
+            if d1 + d2 > gap and gap < 80:
+                coords = [g.pos[a], g.pos[b]]
+            else:
                 coords = [g.pos[a]] + list(sub.coords)[1:-1] + [g.pos[b]]
 
-                key = frozenset((a, b))
-                existing = None
-                for k, e in g.edges.items():
-                    if frozenset((e["a"], e["b"])) == key:
-                        existing = k
-                        break
-                    elif LineString(e["c"]).hausdorff_distance(LineString(coords)) < 30:
-                        existing = k
-                        break
-
-                if existing is not None:
-                    g.edges[existing]["lines"] |= {slug}
-                else:
-                    g.add(a, b, coords, frozenset({slug}))
-                bridged += 1
-
-                adj.setdefault(a, []).append(b)
-                adj.setdefault(b, []).append(a)
-                visited = set()
-                new_comps = []
-                for n in adj:
-                    if n not in visited:
-                        comp = []
-                        q = [n]
-                        visited.add(n)
-                        while q:
-                            cur = q.pop()
-                            comp.append(cur)
-                            for nxt in adj.get(cur, []):
-                                if nxt not in visited:
-                                    visited.add(nxt)
-                                    q.append(nxt)
-                        new_comps.append(comp)
-                comps = new_comps
-                if len(comps) <= 1:
+            key = frozenset((a, b))
+            existing = None
+            for k, e in g.edges.items():
+                if frozenset((e["a"], e["b"])) == key:
+                    existing = k
                     break
+                elif LineString(e["c"]).hausdorff_distance(LineString(coords)) < 30:
+                    existing = k
+                    break
+
+            if existing is not None:
+                g.edges[existing]["lines"] |= {slug}
+            else:
+                g.add(a, b, coords, frozenset({slug}))
+            bridged += 1
+
+            adj.setdefault(a, []).append(b)
+            adj.setdefault(b, []).append(a)
+            comps = _connected_components()
     return bridged
 
 

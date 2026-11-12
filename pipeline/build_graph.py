@@ -28,7 +28,7 @@ import numpy as np
 import shapely
 from PIL import Image, ImageDraw
 from pyproj import Transformer
-from shapely.geometry import LineString, MultiLineString, box
+from shapely.geometry import LineString, MultiLineString, Point, box
 from skan import Skeleton
 from skimage.morphology import skeletonize
 
@@ -136,7 +136,8 @@ def freeway_mask():
         lines.append(LineString(list(zip(xs, ys))))
     if not lines:
         return None
-    return unary_union([l.buffer(25, quad_segs=4) for l in lines]).simplify(5)
+    # Close thin median slits between parallel carriageways up to 2 * R_FWY wide without expanding outer edges.
+    return unary_union([l.buffer(25, quad_segs=4) for l in lines]).buffer(R_FWY - 25, quad_segs=4).buffer(-(R_FWY - 25), quad_segs=4).simplify(5)
 
 
 def layer_of(cat):
@@ -734,7 +735,64 @@ def edge_directions(g, routes, mask=None):
     return sum(1 for e in g.edges.values() for v in e["dirs"].values() if v)
 
 
-def collapse_bubbles(g, mask=None):
+def _peel_folded_stubs(g, routes, before_edges, before_deg):
+    """Drop dead-end legs created when collapsing a bubble folds a route back onto itself.
+
+    If route r used edge e (u<->v) plus another edge at v (deg >= 2), and removing e onto an
+    alternate path leaves r with degree 1 at v on a short (<450 m) surviving leg covered within a
+    collapsed-corridor width (2 * R_FWY) by r's continuing edges, and r does not actually end near
+    v (>250 m), then r's trip along that leg was just the folded bubble detour.
+    """
+    from shapely.ops import unary_union
+    ends = {
+        slug: [Point(c) for p in getattr(rg, "geoms", [rg]) if len(p.coords) >= 2
+               for c in (list(p.coords)[0], list(p.coords)[-1])]
+        for slug, rg in routes.items()
+    }
+    after_deg = defaultdict(lambda: defaultdict(int))
+    for e in g.edges.values():
+        for s in e["lines"]:
+            after_deg[s][e["a"]] += 1
+            after_deg[s][e["b"]] += 1
+
+    peeled = 0
+    for eid in sorted(set(before_edges) - set(g.edges)):
+        u, v, orig_lines = before_edges[eid]
+        for tip in (u, v):
+            if tip not in g.adj:
+                continue
+            tip_pt = Point(g.pos[tip])
+            for s in list(orig_lines):
+                if before_deg[s][tip] < 2 or after_deg[s][tip] != 1:
+                    continue
+                surv = [k for k in g.adj[tip] if s in g.edges[k]["lines"]]
+                if len(surv) != 1:
+                    continue
+                sk = surv[0]
+                if min((tip_pt.distance(ep) for ep in ends[s]), default=9999.0) <= 250.0:
+                    continue
+                ls = LineString(g.edges[sk]["c"])
+                if ls.length > 450.0:
+                    continue
+                rg = routes[s]
+                beside = rg.intersection(ls.buffer(R_FWY + 10))
+                ok = beside.is_empty or beside.length < 5
+                if not ok:
+                    mine = [LineString(ee["c"]) for k, ee in g.edges.items() if k != sk and s in ee["lines"]]
+                    near_o = [o for o in mine if o.distance(ls) < 4 * R_FWY + 50]
+                    if near_o:
+                        drawn = beside.intersection(unary_union(near_o).buffer(2 * R_FWY)).length
+                        ok = drawn >= 0.6 * beside.length
+                if ok:
+                    g.edges[sk]["lines"] = g.edges[sk]["lines"] - {s}
+                    if not g.edges[sk]["lines"]:
+                        g.remove(sk)
+                    after_deg[s][tip] = 0
+                    peeled += 1
+    return peeled
+
+
+def collapse_bubbles(g, mask=None, routes=None):
     """Fold side-by-side detours into one line.
 
     Where a route's two directions take slightly different paths (the two ramps of a freeway
@@ -747,6 +805,13 @@ def collapse_bubbles(g, mask=None):
     pairs, such as 2nd and 4th Ave, stay apart.)"""
     import heapq
     near_fwy = mask.buffer(150) if mask is not None else None
+    before_edges = {k: (e["a"], e["b"], e["lines"]) for k, e in g.edges.items()} if routes is not None else None
+    before_deg = defaultdict(lambda: defaultdict(int))
+    if routes is not None:
+        for e in g.edges.values():
+            for s in e["lines"]:
+                before_deg[s][e["a"]] += 1
+                before_deg[s][e["b"]] += 1
     folded = 0
     changed = True
     while changed:
@@ -801,6 +866,8 @@ def collapse_bubbles(g, mask=None):
             g.remove(eid)
             folded += 1
             changed = True
+    if routes is not None and folded:
+        _peel_folded_stubs(g, routes, before_edges, before_deg)
     for n in [n for n, s in g.adj.items() if not s]:
         del g.adj[n]
     return folded
@@ -1222,7 +1289,7 @@ def build_layer(routes, rank, name, mask=None):
     fixed = repair_gaps(g, routes)
     trimmed = trim_stubs(g, routes, mask=mask)
     merge_chains(g, same=lambda e1, e2: e1["lines"] == e2["lines"])
-    folded = collapse_bubbles(g, mask)
+    folded = collapse_bubbles(g, mask, routes)
     trimmed += trim_stubs(g, routes, mask=mask)  # folding a ramp loop leaves its two sides as stubs
     fixed += fill_gaps(g, routes, mask)
     fixed += bridge_loose_ends(g, routes, mask)
