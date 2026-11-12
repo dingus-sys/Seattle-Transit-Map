@@ -8974,19 +8974,27 @@
     const match = ["==", ["get", "name"], name];
     return typeof expr === "number" ? ["case", match, 1, expr * mul] : expr;
   }
-  let trailHoverCat = null, trailHlName = null;
+  let trailHoverCat = null, trailHlName = null, trailHoverName = null;
   function refreshTrailPaint() {
     if (!map || !map.getLayer("trail-pbl")) return;
     const active = trailHoverCat ? new Set(TRAIL_CAT_LAYERS[trailHoverCat] || []) : null;
+    // A click-selected trail wins over a plain hover, same as a selected route suppresses
+    // hovering a different one; a bare hover just bolds that trail without dimming the rest
+    // (mirrors plain route hover: "nothing else on the map changes").
+    const dimName = trailHlName;
+    const boldOnlyName = !dimName ? trailHoverName : null;
     for (const id of TRAIL_LINE_LAYERS) {
       if (!map.getLayer(id)) continue;
       const baseW = trailBase(id, "line-width"), baseO = trailBase(id, "line-opacity");
       if (active) {
         map.setPaintProperty(id, "line-width", active.has(id) ? scaleWidthExpr(baseW, 1.6) : baseW);
         map.setPaintProperty(id, "line-opacity", active.has(id) ? 1 : baseO * 0.22);
-      } else if (trailHlName) {
-        map.setPaintProperty(id, "line-width", boldByName(baseW, trailHlName, 1.7));
-        map.setPaintProperty(id, "line-opacity", dimByName(baseO, trailHlName, 0.3));
+      } else if (dimName) {
+        map.setPaintProperty(id, "line-width", boldByName(baseW, dimName, 1.7));
+        map.setPaintProperty(id, "line-opacity", dimByName(baseO, dimName, 0.3));
+      } else if (boldOnlyName) {
+        map.setPaintProperty(id, "line-width", boldByName(baseW, boldOnlyName, 1.5));
+        map.setPaintProperty(id, "line-opacity", baseO);
       } else {
         map.setPaintProperty(id, "line-width", baseW);
         map.setPaintProperty(id, "line-opacity", baseO);
@@ -8995,8 +9003,16 @@
     if (map.getLayer("trail-labels")) {
       const baseTO = trailBase("trail-labels", "text-opacity");
       map.setPaintProperty("trail-labels", "text-opacity",
-        active ? (active.has("trail-labels") ? baseTO : baseTO * 0.22) : trailHlName ? dimByName(baseTO, trailHlName, 0.3) : baseTO);
+        active ? (active.has("trail-labels") ? baseTO : baseTO * 0.22) : dimName ? dimByName(baseTO, dimName, 0.3) : baseTO);
     }
+  }
+  // Hovering a trail directly on the map bolds it (no dimming of anything else), like plain
+  // route hover; it's a no-op while a different trail is click-selected, same as route hover
+  // is suppressed while another route is selected.
+  function setTrailHoverName(name) {
+    if (!map || !map.getLayer("trail-pbl") || trailHoverName === name) return;
+    trailHoverName = name;
+    refreshTrailPaint();
   }
   function setBikeLegendHover(cat) {
     if (!map || !map.getLayer("trail-pbl") || trailHoverCat === cat) return;
@@ -9228,6 +9244,12 @@
         moveRaf = 0;
         if (!lastMoveEvent || map.isMoving()) return;
         const e = lastMoveEvent;
+        // Independent of whatever wins the cursor/tooltip below, bold whichever trail is
+        // directly under the pointer (or none) so it always reflects the current position.
+        const trailAtPoint = map.queryRenderedFeatures([[e.point.x - 6, e.point.y - 6], [e.point.x + 6, e.point.y + 6]], {
+          layers: ["trail-pbl", "trail-greenway", "trail-lane", "trail-sharrow", "trail-dash"].filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none")
+        });
+        setTrailHoverName(trailAtPoint.length ? trailAtPoint[0].properties.name : null);
         if (cur && cur.kind === "dart" && !(selected && selected.type === "route" && RBY[selected.id]?.cat === "dart")) {
           const stillDart = map.queryRenderedFeatures(e.point, { layers: ["dart-fill"] });
           if (!stillDart.length) highlightDartArea(null);
@@ -9430,6 +9452,7 @@
     map.getCanvas().addEventListener("mouseleave", () => {
       if (moveRaf) { cancelAnimationFrame(moveRaf); moveRaf = 0; }
       cur = null; tipHide(true); setHover(null); highlightStop(null); showLens(null);
+      setTrailHoverName(null);
       if (!(selected && selected.type === "route" && RBY[selected.id]?.cat === "dart")) {
         highlightDartArea(null);
       }
@@ -9437,6 +9460,7 @@
     map.on("movestart", () => {
       if (moveRaf) { cancelAnimationFrame(moveRaf); moveRaf = 0; }
       cur = null; queuedRoute = null; showLens(null); tipHide(true); if (panelView !== "directions") focusOff(); highlightStop(null);
+      setTrailHoverName(null);
     });
     map.on("dragstart", () => {
       if (locateMode !== "idle") {
