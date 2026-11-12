@@ -1231,7 +1231,7 @@
         layout: { "text-field": ["concat", "Metro Flex\n", ["get", "name"]], "text-font": F_BOLD,
           "text-size": ["interpolate", ["linear"], ["zoom"], 10, 10.5, 14, 12.5], "text-max-width": 10, "text-padding": 4 },
         paint: { "text-color": (th || theme) === "dark" ? "#e3b4ff" : "#6a2593", "text-halo-color": P.halo, "text-halo-width": 1.8 } },
-      ...stopGroup("hov", "hoverstops", P), ...stopGroup("sel", "selstops", P), ...stopGroup("hl", "stophl", P, 1.8),
+      ...stopGroup("hov", "hoverstops", P), ...stopGroup("sel", "selstops", P), ...stopGroup("hl", "stophl", P, 2.5),
       { id: "badges", type: "symbol", source: "netlabels", minzoom: 9,
         layout: { "icon-image": ["concat", "b:", ["get", "k"]], "icon-padding": 4, "symbol-sort-key": ["get", "p"] } },
       { id: "sel-badges", type: "symbol", source: "sellabels",
@@ -2927,7 +2927,7 @@
       { id: `${prefix}-stops-halo`, type: "circle", source: src,
         paint: { "circle-radius": stopRadius(mult * 2.5),
           "circle-color": ["case", ["==", ["get", "suspended"], 1], "#d0213b", ["get", "c"]],
-          "circle-opacity": prefix === "hl" ? 0.3 : 0.2, "circle-blur": 0.85 } },
+          "circle-opacity": prefix === "hl" ? 0.42 : 0.2, "circle-blur": 0.85 } },
       { id: `${prefix}-stops`, type: "circle", source: src,
         paint: { "circle-radius": stopRadius(mult),
           "circle-color": ["case", ["==", ["get", "suspended"], 1], "#d0213b", P.stopFill],
@@ -2938,7 +2938,7 @@
   const anims = {};
   function popIn(prefix, mult = 1) {
     cancelAnimationFrame(anims[prefix]);
-    const halo = prefix === "hl" ? 0.3 : 0.2;
+    const halo = prefix === "hl" ? 0.42 : 0.2;
     const set = (sc, op) => {
       map.setPaintProperty(`${prefix}-stops`, "circle-radius", stopRadius(mult, sc));
       map.setPaintProperty(`${prefix}-stops`, "circle-stroke-width", stopStroke(mult, sc));
@@ -2963,7 +2963,7 @@
   function popOut(prefix, done) {
     cancelAnimationFrame(anims[prefix]);
     if (!map.getLayer(`${prefix}-stops`)) { done(); return; }
-    const halo = prefix === "hl" ? 0.3 : 0.2, t0 = performance.now(), DUR = 160;
+    const halo = prefix === "hl" ? 0.42 : 0.2, t0 = performance.now(), DUR = 160;
     const frame = (now) => {
       const t = Math.max(0, Math.min(1, (now - t0) / DUR)), op = 1 - t * t;
       map.setPaintProperty(`${prefix}-stops`, "circle-opacity", op);
@@ -3192,7 +3192,7 @@
     const c = f.properties.c || f.properties.stroke || (rs[0] ? keyColor(dkey(rs[0])) : BASE[theme].stopStroke);
     const susp = stopIsSuspended(id);
     src.setData(fc([{ type: "Feature", properties: { id, c, end: 0, suspended: susp ? 1 : 0 }, geometry: { type: "Point", coordinates: f.geometry.coordinates } }]));
-    popIn("hl", 1.8);
+    popIn("hl", 2.5);
   }
 
   function highlightStopById(id) {
@@ -3597,7 +3597,7 @@
             <div class="rd-origin-walk">
               <span class="rd-walk-min">${walkMin} min</span>
               <span class="rd-walk-dist">${walkDist}m</span>
-            </div>` : `<span class="rd-hint-pill">Active Stop</span>`}
+            </div>` : `<span class="rd-hint-pill" title="This is your current boarding stop"><span class="rd-hint-dot" aria-hidden="true"></span>Active Stop</span>`}
         </div>
 
         <div class="rd-card-body">

@@ -2181,13 +2181,22 @@ td.sched-cell-now {
   font-size: 10.5px;
   color: var(--muted);
 }
+/* a status readout, not a control: no fill/pill shape, so it doesn't read as tappable
+   next to the real buttons in this card (rd-all-deps-btn, the stop rows below) */
 .rd-hint-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   font-size: 11px;
-  font-weight: 600;
-  color: var(--accent);
-  background: var(--fill-2);
-  padding: 3px 8px;
-  border-radius: 99px;
+  font-weight: 700;
+  color: var(--on);
+  flex-shrink: 0;
+}
+.rd-hint-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--on);
   flex-shrink: 0;
 }
 /* Main Transit App style inner departures card */

@@ -337,6 +337,14 @@ def merge_chains(g, same=lambda e1, e2: True):
         b = g.other(e2, n)
         if a == n or b == n:
             continue
+        if a == b:
+            # e1 and e2 are two parallel paths between the same pair of real junctions (a
+            # one-way couplet, a loop ramp, a divided carriageway that splits and rejoins):
+            # welding them here would fuse the whole detour into one circular edge, which
+            # has no second path left for collapse_bubbles to fold it onto, so it survives
+            # as a standalone loop instead (visible as a long, narrow lasso on the map).
+            # Leave the two edges apart; collapse_bubbles folds them onto one line itself.
+            continue
         c1 = g.coords_from(e1, a)
         c2 = g.coords_from(e2, n)
         lines = g.edges[e1]["lines"]
@@ -360,6 +368,11 @@ def contract_short(g, max_len):
             if a == b or g.length(eid) >= max_len or g.deg(a) < 3 and g.deg(b) < 3:
                 continue
             if g.deg(a) == 1 or g.deg(b) == 1:
+                continue
+            if any(g.other(k, b) == a for k in g.adj[b] if k != eid):
+                # b also reaches a some other way (a bubble: a loop ramp, a couplet, a divided
+                # carriageway): folding b into a would turn that other edge into a self-loop,
+                # with no second path left for collapse_bubbles to fold it onto instead.
                 continue
             g.remove(eid)
             pa, pb = g.pos[a], g.pos[b]
@@ -912,6 +925,10 @@ def refine_geometry(g, routes, rank):
                 continue
             a, b = e["a"], e["b"]
             if math.dist(g.pos[a], g.pos[b]) > 1.5:
+                continue
+            if any(g.other(k, b) == a for k in g.adj[b] if k != eid):
+                # b also reaches a some other way: pinning it into a would turn that other
+                # edge into a self-loop instead of the bubble collapse_bubbles expects.
                 continue
             g.remove(eid)
             for other in list(g.adj[b]):
