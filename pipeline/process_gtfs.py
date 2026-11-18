@@ -104,7 +104,10 @@ def sample_days(today=None):
     return {"weekday": nxt(2), "saturday": nxt(5), "sunday": nxt(6)}
 
 
-DAYS = sample_days()
+# TRANSIT_SAMPLE_DAYS=weekday,saturday,sunday (YYYYMMDD) rebuilds with a previous build's sample
+# days, so a timetable-only change doesn't also shift which routes are on the map
+DAYS = (dict(zip(("weekday", "saturday", "sunday"), os.environ["TRANSIT_SAMPLE_DAYS"].split(",")))
+        if os.environ.get("TRANSIT_SAMPLE_DAYS") else sample_days())
 PERIODS = [  # (key, label, start hour, end hour)
     ("am", "Morning rush", 6, 9),
     ("mid", "Midday", 9, 15),
@@ -570,7 +573,7 @@ def main():
     out_routes.sort(key=lambda r: rank_of[r["id"]])
     slug_index = {r["id"]: i for i, r in enumerate(out_routes)}
     export_schedule(trips, st, stops_idx, shapes, day_services, gtfs_to_slug, slug_index,
-                    os.path.join(DATA, "schedule.json"))
+                    os.path.join(DATA, "schedule.json"), cal=cal, cal_dates=cal_dates)
     os.makedirs(DATA, exist_ok=True)
     meta = {
         "built": dt.date.today().isoformat(),
@@ -597,7 +600,58 @@ def main():
     print(f"{len(out_stops)} stops, {len(out_stations)} stations")
 
 
-def export_schedule(trips, st, stops_idx, shapes, day_services, gtfs_to_slug, slug_index, path):
+SPECIAL_HORIZON_DAYS = 120  # the trip planner looks up to 90 days ahead
+
+
+def day_type(d):
+    return "saturday" if d.weekday() == 5 else "sunday" if d.weekday() == 6 else "weekday"
+
+
+def special_days(recs, pat_route, day_services, horizon_services):
+    """Dates whose service is not their sample day's: holidays (Thanksgiving runs a Sunday
+    timetable, Sounder doesn't run), a feed's next service change, or a feed that has run out.
+
+    Each date gets a variant: the sample day it is closest to ("base"), the routes whose trips
+    differ from that day ("drop"), and those routes' real trips that date ("add"). The page builds
+    the date's timetable from it, so the planner never offers a trip that doesn't run that day.
+    Returns ({yyyymmdd: variant index}, [variants])."""
+    by_sid = defaultdict(list)
+    for pi, s0, du, sid in recs:
+        by_sid[sid].append((pi, s0, du))
+
+    def per_route(sids):
+        out = defaultdict(set)
+        for sid in sids:
+            for t in by_sid.get(sid, ()):
+                out[pat_route[t[0]]].add(t)
+        return out
+
+    base = {k: per_route(sv) for k, sv in day_services.items()}
+    dates, variants, seen = {}, [], {}
+    for ymd, wkey, sv in horizon_services:
+        if sv == day_services[wkey]:
+            continue
+        key = frozenset(sv)
+        if key not in seen:
+            tr = per_route(sv)
+            best = None
+            for k, b in base.items():
+                drop = sorted(r for r in b if tr.get(r) != b[r])
+                add = sorted((t for r in tr if tr[r] != b.get(r) for t in tr[r]), key=lambda x: (x[1], x[0]))
+                cost = len(add) + sum(len(b[r]) for r in drop)
+                if best is None or cost < best[0] or (cost == best[0] and k == wkey):
+                    best = (cost, k, drop, add)
+            if best[0] == 0 and best[1] == wkey:
+                seen[key] = None
+            else:
+                seen[key] = len(variants)
+                variants.append({"base": best[1], "drop": best[2], "add": [list(t) for t in best[3]]})
+        if seen[key] is not None:
+            dates[ymd] = seen[key]
+    return dates, variants
+
+
+def export_schedule(trips, st, stops_idx, shapes, day_services, gtfs_to_slug, slug_index, path, cal=None, cal_dates=None):
     """Timetable for estimated vehicle positions.
 
     patterns: one per (shape, stop list): a simplified path, its stops, each stop's distance along it
@@ -607,7 +661,14 @@ def export_schedule(trips, st, stops_idx, shapes, day_services, gtfs_to_slug, sl
     """
     LAT0, LON0 = 47.61, -122.33  # same flat projection as the page uses
     KX, KY = 111320 * math.cos(math.radians(LAT0)), 110574
-    all_sv = set().union(*day_services.values())
+    horizon = []
+    if cal is not None:
+        today = dt.date.today()
+        for i in range(SPECIAL_HORIZON_DAYS):
+            d = today + dt.timedelta(days=i)
+            ymd = d.strftime("%Y%m%d")
+            horizon.append((ymd, day_type(d), active_services(cal, cal_dates, ymd)))
+    all_sv = set().union(*day_services.values(), *(sv for _, _, sv in horizon))
     act = trips[trips.service_id.isin(all_sv) & trips.route_id.isin(gtfs_to_slug.keys()) & trips.shape_id.isin(shapes.keys())]
     sub = st[st.trip_id.isin(set(act.trip_id))].copy()
     sub["t"] = sub.departure_time.map(lambda t: to_sec(t) if t else np.nan)
@@ -675,7 +736,11 @@ def export_schedule(trips, st, stops_idx, shapes, day_services, gtfs_to_slug, sl
     days = {}
     for k, sv in day_services.items():
         days[k] = sorted([[pi, s0, du] for pi, s0, du, sid in recs if sid in sv], key=lambda x: x[1])
-    json.dump({"dates": DAYS, "patterns": pat_out, "days": days}, open(path, "w"), separators=(",", ":"))
+    special, variants = special_days(recs, [p["r"] for p in pat_out], day_services, horizon)
+    json.dump({"dates": DAYS, "patterns": pat_out, "days": days, "special": special, "variants": variants},
+              open(path, "w"), separators=(",", ":"))
+    print(f"schedule: {len(special)} dates differ from their sample day ({len(variants)} variants, "
+          f"{sum(len(v['add']) for v in variants)} extra trips)")
     print(f"schedule: {len(pat_out)} patterns, trips " + ", ".join(f"{k} {len(v)}" for k, v in days.items())
           + f"; {os.path.getsize(path)/1e6:.2f} MB")
 

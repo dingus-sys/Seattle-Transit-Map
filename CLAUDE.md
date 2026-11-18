@@ -68,6 +68,10 @@ export NODE_PATH=$(npm root -g):$(echo ~/.npm/_npx/*/node_modules 2>/dev/null | 
 export MAPLIBRE_JS=/path/to/maplibre-gl.js    #   set this if the sandbox can't reach CDN for maplibre-gl.js
 node tools/sweep.js                           # 51 checks: expect "51/51 passed"
 node tools/test_hover_cards.js                # 13 checks: +N tag & stop safe bridge micro-traversals
+node tools/test_hover_dim.js                  # 10 checks: hover fades the rest to 0.65, selection's 0.38 wins
+node tools/stress_test_routing.js             # 18 planner tests: every leg timetabled, 2-min buffers, walk caps
+node tools/test_planner_edges.js              # picker above cards & Seattle time from any zone, Arrive by latest,
+                                              #   holiday timetables, "X Station" search, Escape, bad links
 node tools/close.js '[["name",[-122.3365,47.6085],16]]'   # screenshot views to shots/c-name.png
 node tools/bench.js                           # layout time per zoom (worker 5-260 ms is normal)
 node tools/zoomgap2.js tag                    # pinch-zoom check (lines must stay together)
@@ -123,6 +127,12 @@ one file for the artifact):
   waits for moveend and keeps only the latest request. Simplified shapes and tag spacing use the
   quarter step `zs`. Native line layers are a fallback (`?noribbons`); `?noworker` tests main-page
   layout. The mesh uses its own VAO, transfers typed buffers, and releases superseded GPU buffers.
+- Hover dim (`setHoverDim`/`syncHoverDim` in `app.js`): hovering a route eases everything else
+  (net mesh via `dim: netDim * hovDim.v`, tags, stops, stations, vehicles via the `o` property,
+  trails, DART/Flex/Access areas) to `HOVER_DIM` 0.65 with MapLibre paint transitions; the route's
+  own tags are redrawn at full strength in `hov-badges-0/1` (two cross-fading slots). Only while
+  `netDim === 1`: a selection's 0.38 always wins. Never animate a data-driven paint expression
+  (that re-tiles the source); constant values with `*-transition` are free.
 - Hover: `pickLine` finds the route strand under the pointer (sticky: the current target is held
   until the pointer is clearly off it); the route's whole path is drawn bold in one of two
   cross-fading hover layers; the tooltip glides, morphs between cards and fades. Hover opacity
@@ -132,6 +142,30 @@ one file for the artifact):
   surface routes on the street, without a 16-route cutoff, with a route/destination filter and
   large buttons. Choosing one highlights its full path and stops. Back returns to the choices.
   Overview land-vehicle badges keep 38 px apart; a selected route shows all its vehicles.
+
+**Trip planner** (`planTransitTrip` in `app.js`): RAPTOR (Delling et al.), the algorithm
+OpenTripPlanner 2 uses, over `schedule.json` (stop time = `s0 + f[i] * du`). Round k = best arrival
+with k rides (max 4). Walking transfers 360 m, 650 m at stations/ferry terminals, 2-minute
+connection buffer (0 for through-routed pairs). One plan runs four searches (full; least walking;
+the fastest trip's longest route banned; next departure) and keeps options that arrive within
+max(30 min, half the trip) of the fastest, one card per route sequence, tagged Fastest / Fewest
+transfers / Least walking ("Best" when one wins all three). Arrive-by (`planArriveBy`) binary-searches
+the departure (earliest arrival only grows with it) for the latest one that still arrives in time,
+then plans from there and a little earlier so each way of going shows at its latest departure.
+No estimated times: a trip the timetable doesn't run is never offered. 5-70 ms per plan, so it
+stays on the main thread.
+- Dates: `schedule.json` has one sample weekday, Saturday and Sunday, plus `special`/`variants`
+  for every date in the next 120 days whose services differ (holidays: Thanksgiving runs Sunday
+  service and no Sounder or peak ST Express; service changes; a feed that has run out). A variant
+  is the nearest sample day with the differing routes swapped for their real trips that date
+  (`special_days` in `process_gtfs.py`); `pacificAt` resolves a date to it (`schedDayKey`), so
+  the planner, stop departures and estimated vehicles all use that date's trips.
+- The date picker holds a Pacific wall-clock value (`wallNow`, `wallToInstant`), so a browser in
+  another time zone still plans for the Seattle time it shows.
+- `TRANSIT_SAMPLE_DAYS=YYYYMMDD,YYYYMMDD,YYYYMMDD python3 pipeline/process_gtfs.py` rebuilds with a
+  previous build's sample days (see `schedule.json` `dates`), so a timetable-only change doesn't
+  also change which routes are on the map. `process_gtfs` writes raw station positions; restore
+  `routes.json`/`stops.json` (or rerun `align_ferry_terminals.py`) if only `schedule.json` should change.
 
 **Live data:** vehicle positions and service alerts from OneBusAway Puget Sound (GTFS-realtime,
 decoded by hand in `app.js`; agencies in `OBA_AGENCIES`), Intercity Transit's own feeds, and
@@ -181,9 +215,20 @@ the map tiles; the bundled tiles keep only named places of the kinds in `POI_KEE
    on I-5 in South Everett. Keep real crossings and rail/surface separations. Some routes can still list
    stops served only by trip variants below the 15% drawing threshold (e.g. 21, 4, 7, 906); adding
    every rare variant would require a separate decision about map detail.
-3. The user asked for official agency logos; this was declined (rule 3). Original service-type
-   symbols (light rail, rapid bus, bus, ferry, on-demand) for route cards and the Layers list were
-   offered and not yet answered.
+3. The user asked for official agency logos; this was declined (rule 3). The legend now uses the
+   map's own vehicle markers (train, streetcar, bus, boat; `vehSymbolURL`/`keySymbol`) beside each
+   line style, on the home key and in the Guide's "Service types" section.
+4. Route ends: `split_at_line_ends` now runs on every layer (it used to be rail only, so the First
+   Hill and South Lake Union streetcars stopped ~300 m short of their terminals), and
+   `align_ferry_terminals.reach_terminal` brings any crossing that stops short of its own terminal
+   in to it (Mukilteo's feed path still ends at the pre-2020 dock).
+5. The weekly refresh failed on Nov 9 and 16: the runner (16 GB) was killed ~40 s into
+   `build_graph`'s surface layer. The full-region raster is ~2 G pixels at 4 m; labelling it for
+   pinholes took an 8 GB int32 image. `fill_pinholes` now works tile by tile (identical result,
+   `tools/test_fill_pinholes.py`), the thinning uses a uint8 view instead of a copy, the raster is
+   freed once thinned, and the job limit is 120 min. Not yet proven on a runner: check the next
+   Monday run (`gh run list --workflow refresh-data.yml`). On a 17 GB Mac the surface layer took
+   32 min while swapping before these changes.
 
 ## Working with this user
 

@@ -32,6 +32,37 @@ def meters(a, b):
     return math.hypot((a[0] - b[0]) * 75000, (a[1] - b[1]) * 111000)
 
 
+def reach_terminal(line, terminals, gap=150, reach=1200):
+    """A crossing whose published path stops short of its own terminal (Mukilteo's moved in
+    2020; the feed's path still ends at the old dock, 560 m west) is brought in to it: cut at
+    the point of its approach nearest the terminal and finished with a straight run to it."""
+    changed = False
+    for index in (0, -1):
+        if len(line) < 2 or not terminals:
+            continue
+        end = tuple(line[index])
+        target = min(terminals, key=lambda t: meters(end, t))
+        d = meters(end, target)
+        if d <= gap or d > reach:
+            continue
+        pts = line if index == -1 else line[::-1]
+        # the vertex of the approach (its last ~2 km) closest to the terminal
+        acc, best = 0.0, len(pts) - 1
+        for i in range(len(pts) - 1, 0, -1):
+            if meters(pts[i], target) < meters(pts[best], target):
+                best = i
+            acc += meters(pts[i], pts[i - 1])
+            if acc > 2000:
+                break
+        new = pts[: best + 1] + [list(target)]
+        if index == -1:
+            line[:] = new
+        else:
+            line[:] = new[::-1]
+        changed = True
+    return changed
+
+
 def align(cache=CACHE, stops_path=None):
     """Update terminal stations and only matching ferry-shape endpoints.
 
@@ -59,6 +90,12 @@ def align(cache=CACHE, stops_path=None):
     with open(stops_path, "w") as f:
         json.dump(stops_data, f, separators=(",", ":"))
 
+    # Every terminal a boat serves, by route: the station (or stop) records that list it.
+    terminals = {}
+    for rec in stops_data.get("stations", []) + stops_data.get("stops", []):
+        for rid in rec.get("routes", []):
+            terminals.setdefault(rid, []).append((rec["lon"], rec["lat"]))
+
     endpoint_updates = 0
     for filename in ("route_shapes.json", "route_shapes_matched.json"):
         path = os.path.join(cache, filename)
@@ -67,7 +104,7 @@ def align(cache=CACHE, stops_path=None):
         with open(path) as f:
             shapes = json.load(f)
         changed = False
-        for route in shapes.values():
+        for rid, route in shapes.items():
             if route.get("cat") not in {"ferry", "watertaxi"}:
                 continue
             for line in route.get("lines", []):
@@ -82,6 +119,9 @@ def align(cache=CACHE, stops_path=None):
                             line[index] = target
                             endpoint_updates += 1
                             changed = True
+                if reach_terminal(line, terminals.get(rid, [])):
+                    endpoint_updates += 1
+                    changed = True
         if changed:
             with open(path, "w") as f:
                 json.dump(shapes, f)

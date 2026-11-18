@@ -1177,16 +1177,17 @@
       { id: "veh-icon", type: "symbol", source: "vehicles",
         layout: { "icon-image": ["concat", "veh:", ["get", "c"], ":", ["get", "m"]], "icon-rotation-alignment": "viewport",
           "icon-allow-overlap": true, "icon-ignore-placement": true, "icon-size": VEH_SIZE, "symbol-sort-key": ["get", "s"] },
-        paint: { "icon-opacity": ["case", ["==", ["get", "est"], 1], 0.82, 1] } },
+        // "o": fades back while another route is hovered (set per vehicle in renderVehicles)
+        paint: { "icon-opacity": ["*", ["coalesce", ["get", "o"], 1], ["case", ["==", ["get", "est"], 1], 0.82, 1]] } },
       // ...and which way it's heading: the badge's point, turning with the vehicle
       { id: "veh-dir", type: "symbol", source: "vehicles", filter: [">=", ["get", "b"], 0],
         layout: { "icon-image": ["concat", "vdir:", ["get", "c"]], "icon-rotate": ["get", "b"], "icon-rotation-alignment": "map",
           "icon-allow-overlap": true, "icon-ignore-placement": true, "icon-size": VEH_SIZE, "symbol-sort-key": ["get", "s"] },
-        paint: { "icon-opacity": ["case", ["==", ["get", "est"], 1], 0.82, 1] } },
+        paint: { "icon-opacity": ["*", ["coalesce", ["get", "o"], 1], ["case", ["==", ["get", "est"], 1], 0.82, 1]] } },
       { id: "veh-label", type: "symbol", source: "vehicles", minzoom: 14.5,
         layout: { "text-field": ["get", "lab"], "text-font": F_BOLD, "text-size": 11.5, "text-anchor": "left", "text-offset": VEH_LABEL_OFFX,
           "text-optional": true, "text-padding": 1 },
-        paint: { "text-color": ["get", "tc"], "text-halo-color": P.halo, "text-halo-width": 2 } },
+        paint: { "text-color": ["get", "tc"], "text-halo-color": P.halo, "text-halo-width": 2, "text-opacity": ["coalesce", ["get", "o"], 1] } },
     ];
   }
   function stopLayers(P, th = theme) {
@@ -1234,6 +1235,12 @@
       ...stopGroup("hov", "hoverstops", P), ...stopGroup("sel", "selstops", P), ...stopGroup("hl", "stophl", P, 2.5),
       { id: "badges", type: "symbol", source: "netlabels", minzoom: 9,
         layout: { "icon-image": ["concat", "b:", ["get", "k"]], "icon-padding": 4, "symbol-sort-key": ["get", "p"] } },
+      // While a route is hovered the other tags fade back; the hovered route's own tags are
+      // redrawn here at full strength, exactly over themselves. Two slots cross-fade, like
+      // the hover lines, so moving from one route to the next never pops.
+      ...[0, 1].map((i) => ({ id: `hov-badges-${i}`, type: "symbol", source: `hovlabels${i}`, minzoom: 9,
+        layout: { "icon-image": ["concat", "b:", ["get", "k"]], "icon-allow-overlap": true, "icon-ignore-placement": true },
+        paint: { "icon-opacity": 0, "icon-opacity-transition": { duration: 180, delay: 0 } } })),
       { id: "sel-badges", type: "symbol", source: "sellabels",
         layout: { "icon-image": ["concat", "b:", ["get", "k"]], "icon-padding": 2 } },
       { id: "sel-ends", type: "symbol", source: "selstops", minzoom: 10.5, filter: [">", ["get", "end"], 0],
@@ -1737,6 +1744,13 @@
     document.documentElement.setAttribute("data-dark", theme === "dark" ? "1" : "0");
     if (!map || !map.style) return;
     const P = BASE[theme];
+    // undo a hover fade first: the loop below only resets the paint values the layers define,
+    // and the fade also sets others (stop and tag opacity)
+    if (hovDim.to !== 1) {
+      for (const [id, prop] of DIM_OWN) dimPaint(id, prop, 1, 0);
+      dimPaint("badges", "icon-opacity", 1, 0);
+    }
+    dimBase.clear(); cancelAnimationFrame(hovDim.raf); Object.assign(hovDim, { v: 1, from: 1, to: 1, raf: 0, key: "" });
     netDim = 1; // the loop below resets every layer to its normal look
     for (const set of [baseLayers(P), transitLayers(P), areaLayers(P, theme), poiLayers(P, theme), destLayers(P, theme), stopLayers(P, theme), tripLayers(P, theme), liveLayers(P), topLabelLayers(P)]) {
       for (const L of set) {
@@ -1762,6 +1776,7 @@
     try { refreshStations(); } catch {}
     try { rebuild(); } catch {}
     try { applySelectionStyle(); } catch {}
+    try { if (hovDim.ids) syncHoverDim(); } catch {} // still on a line: fade the rest again
     try { renderFilterBar(); } catch {}
     try {
       if (!selected) {
@@ -2460,18 +2475,43 @@
   }
   // ---- timetable estimates: where each scheduled trip should be right now
   let SCHED = null;
-  const PT_FMT = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", weekday: "short", hour: "numeric", minute: "numeric", second: "numeric", hourCycle: "h23" });
+  const PT_FMT = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit", weekday: "short", hour: "numeric", minute: "numeric", second: "numeric", hourCycle: "h23" });
+  const ymdOf = (y, m, d) => { const t = new Date(Date.UTC(y, m - 1, d)); return `${t.getUTCFullYear()}${String(t.getUTCMonth() + 1).padStart(2, "0")}${String(t.getUTCDate()).padStart(2, "0")}`; };
+  // The timetable for a date: its sample day (weekday, Saturday, Sunday), or, on a holiday or
+  // after a service change, that date's own trips (the sample day nearest it, with the routes
+  // that differ swapped for their real trips that day; see special_days in process_gtfs.py).
+  function schedDayKey(ymd, wkey) {
+    const v = SCHED && SCHED.special ? SCHED.special[ymd] : undefined;
+    if (v === undefined || !SCHED.variants || !SCHED.variants[v]) return wkey;
+    const k = "v" + v;
+    if (!SCHED.days[k]) {
+      const V = SCHED.variants[v], drop = new Set(V.drop);
+      const list = (SCHED.days[V.base] || []).filter(([pi]) => !drop.has(SCHED.patterns[pi].r)).concat(V.add);
+      list.sort((a, b) => a[1] - b[1]);
+      SCHED.days[k] = list;
+      if (SCHED.byPat) {
+        const m = new Map();
+        for (const [pi, s0, du] of list) { if (!m.has(pi)) m.set(pi, []); m.get(pi).push([s0, du]); }
+        SCHED.byPat[k] = m;
+      }
+    }
+    return k;
+  }
   function pacificAt(date) {
     const at = date instanceof Date ? date : new Date();
     const parts = Object.fromEntries(PT_FMT.formatToParts(at).map((p) => [p.type, p.value]));
     const key = (w) => (w === "Sat" ? "saturday" : w === "Sun" ? "sunday" : "weekday");
-    const prev = { Mon: "Sun", Tue: "Mon", Wed: "Tue", Thu: "Wed", Fri: "Thu", Sat: "Fri", Sun: "Sat" }[parts.weekday];
-    return { day: key(parts.weekday), prev: key(prev), secs: (+parts.hour % 24) * 3600 + +parts.minute * 60 + +parts.second + at.getMilliseconds() / 1000, date: at };
+    const prevW = { Mon: "Sun", Tue: "Mon", Wed: "Tue", Thu: "Wed", Fri: "Thu", Sat: "Fri", Sun: "Sat" }[parts.weekday];
+    const y = +parts.year, mo = +parts.month, d = +parts.day, ymd = ymdOf(y, mo, d);
+    const day = schedDayKey(ymd, key(parts.weekday)), prev = schedDayKey(ymdOf(y, mo, d - 1), key(prevW));
+    return { day, prev, ymd, special: day[0] === "v", secs: (+parts.hour % 24) * 3600 + +parts.minute * 60 + +parts.second + at.getMilliseconds() / 1000, date: at };
   }
   function pacificNow() {
     return pacificAt(new Date());
   }
-  async function loadSchedule() {
+  let schedPromise = null;
+  function loadSchedule() { return schedPromise || (schedPromise = loadScheduleOnce()); }
+  async function loadScheduleOnce() {
     try {
       const d = await fetch("data/schedule.json").then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); });
       for (const p of d.patterns) { p.pts = p.c.map(([x, y]) => toM(x, y)); p.cum = cumLen(p.pts); p.route = ROUTES[p.r]; }
@@ -2574,7 +2614,7 @@
         markerGrid.get(key).push(p);
       }
       feats.push({ type: "Feature", properties: { id: v.id, r: r.id, c, tc: c, lab: v.name || shortLabel(r), b: Math.round(b), m: vehKind(r),
-        s: 20 - CAT[dkey(r)].prio, est: v.est ? 1 : 0 }, geometry: { type: "Point", coordinates: pos } });
+        s: 20 - CAT[dkey(r)].prio, est: v.est ? 1 : 0, o: hovDim.ids && !hovDim.ids.has(r.id) ? +hovDim.v.toFixed(3) : 1 }, geometry: { type: "Point", coordinates: pos } });
     }
     let liveCount = 0, estCount = 0;
     for (const f of feats) {
@@ -2818,6 +2858,32 @@
       for (let i = 0; i < 4; i++) { const x0 = -0.84 + i * 0.42; ctx.quadraticCurveTo(x0 + 0.105, 0.62, x0 + 0.21, 0.74); ctx.quadraticCurveTo(x0 + 0.315, 0.86, x0 + 0.42, 0.74); }
       ctx.strokeStyle = "#fff"; ctx.lineWidth = 0.11; ctx.lineCap = "round"; ctx.stroke();
     }
+  }
+  // The legend's service symbols are the map's own vehicle markers (same drawing), so what
+  // the key shows is exactly what rides the lines.
+  const SYM_CACHE = new Map();
+  function vehSymbolURL(color, mode) {
+    const key = color + ":" + mode;
+    if (SYM_CACHE.has(key)) return SYM_CACHE.get(key);
+    const S = 48, cv = document.createElement("canvas");
+    cv.width = cv.height = S;
+    const ctx = cv.getContext("2d"), c = S / 2, R = 19;
+    ctx.beginPath(); ctx.arc(c, c, R + 3.5, 0, Math.PI * 2); ctx.fillStyle = "#fff"; ctx.fill();
+    ctx.beginPath(); ctx.arc(c, c, R, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill();
+    ctx.save(); ctx.translate(c, c); ctx.scale(R * 0.6, R * 0.6); vehGlyph(ctx, mode, color); ctx.restore();
+    let url = "";
+    try { url = cv.toDataURL("image/png"); } catch (e) { /* a locked-down canvas: no symbol */ }
+    SYM_CACHE.set(key, url);
+    return url;
+  }
+  // the vehicle symbol for each service type in the key (none for on-demand areas)
+  function keySymbol(key) {
+    const P = LINE[theme];
+    const m = { link: ["rail", P.link1], rail: ["rail", P.sounder], streetcar: ["tram", P.streetcar], monorail: ["tram", P.monorail],
+      rapid: ["bus", P.rapidride], frequent: ["bus", P.frequent], local: ["bus", P.local], peak: ["bus", P.peak], water: ["boat", P.ferry] }[key];
+    if (!m) return "";
+    const url = vehSymbolURL(m[1], m[0]);
+    return url ? `<img class="sw-sym" src="${url}" alt="" width="16" height="16" decoding="async">` : "";
   }
   function drawVehicle(id) {
     const [kind, color, mode] = id.split(":");
@@ -3758,6 +3824,103 @@
       const baseTO = trailBase("trail-labels", "text-opacity");
       map.setPaintProperty("trail-labels", "text-opacity", level === 1 ? baseTO : baseTO * level);
     }
+    syncHoverDim(); // a hover fade only applies on top of the full-strength map
+  }
+
+  // ---------------------------------------------------------------- hover dim
+  // Pointing at a route fades the rest of the map back a little (like a click does, but
+  // lighter): every other line, tag, stop, station, vehicle, trail and service area eases to
+  // HOVER_DIM, while the hovered route, its stops and its own number tags stay at full
+  // strength. Only when nothing is selected: a selection already dims the map further.
+  const HOVER_DIM = 0.65;
+  const hovDim = { v: 1, from: 1, to: 1, t0: 0, dur: 1, raf: 0, ids: null, idx: null, slot: 0, key: "", clearT: 0 };
+  // Layers this fade owns outright, and layers it shares with setNetDim (touched only while
+  // netDim is 1, so a selection's stronger dim always wins).
+  const DIM_OWN = [["stops", "circle-opacity"], ["stops", "circle-stroke-opacity"], ["stop-name", "text-opacity"],
+    ["stations", "circle-opacity"], ["stations", "circle-stroke-opacity"], ["arrows", "icon-opacity"],
+    ["dart-fill", "fill-opacity"], ["dart-line", "line-opacity"], ["access-fill", "fill-opacity"], ["access-line", "line-opacity"],
+    ["flex-fill", "fill-opacity"], ["flex-line", "line-opacity"], ["flex", "text-opacity"]];
+  const dimBase = new Map();
+  function dimPaint(id, prop, f, dur) {
+    if (!map.getLayer(id)) return;
+    const key = id + ":" + prop;
+    if (!dimBase.has(key)) dimBase.set(key, id.startsWith("trail-") ? trailBase(id, prop) : map.getPaintProperty(id, prop));
+    const base = dimBase.get(key);
+    let v;
+    if (base == null) v = f;
+    else if (typeof base === "number") v = base * f;
+    else if (Array.isArray(base) && base[0] === "interpolate" && JSON.stringify(base[2]) === '["zoom"]') {
+      v = base.slice(); for (let i = 4; i < v.length; i += 2) v[i] = typeof v[i] === "number" ? v[i] * f : v[i];
+    } else return; // data-driven: changing it would re-tile the source; leave it
+    try {
+      map.setPaintProperty(id, prop + "-transition", { duration: dur, delay: 0 });
+      map.setPaintProperty(id, prop, v);
+    } catch (e) { /* layer mid-rebuild */ }
+  }
+  const hoverDimTarget = () => (hovDim.ids && netDim === 1 ? HOVER_DIM : 1);
+  // ids: route ids that stay bright (a Set), or null when nothing is hovered
+  function setHoverDim(ids) {
+    hovDim.ids = ids && ids.size ? ids : null;
+    hovDim.idx = hovDim.ids ? new Set([...hovDim.ids].map((id) => LINEIDX[id]).filter((i) => i != null)) : null;
+    syncHoverDim();
+    if (!liveAnimRaf) renderVehicles();
+  }
+  function syncHoverDim() {
+    if (!map || !map.getLayer("line-bus")) return;
+    const to = hoverDimTarget(), dur = calm() ? 0 : to < 1 ? 200 : 190;
+    if (to !== hovDim.to) {
+      for (const [id, prop] of DIM_OWN) dimPaint(id, prop, to, dur);
+      if (netDim === 1) {
+        dimPaint("badges", "icon-opacity", to, dur);
+        for (const id of TRAIL_LINE_LAYERS) dimPaint(id, "line-opacity", to, dur);
+        dimPaint("trail-labels", "text-opacity", to, dur);
+        if (!ribbons) for (const L of transitLayers(BASE[theme])) if (L.source === "net" && L.type === "line") dimPaint(L.id, "line-opacity", to, dur);
+      }
+      cancelAnimationFrame(hovDim.raf);
+      Object.assign(hovDim, { from: hovDim.v, to, t0: performance.now(), dur: Math.max(1, dur) });
+      const frame = (now) => {
+        const t = Math.min(1, (now - hovDim.t0) / hovDim.dur);
+        hovDim.v = hovDim.from + (hovDim.to - hovDim.from) * (1 - Math.pow(1 - t, 3));
+        if (ribbons) map.triggerRepaint();
+        if (!liveAnimRaf && hovDim.ids) renderVehicles();
+        hovDim.raf = t < 1 ? requestAnimationFrame(frame) : 0;
+        if (!hovDim.raf && !liveAnimRaf) renderVehicles();
+      };
+      hovDim.raf = requestAnimationFrame(frame);
+    }
+    hoverTags();
+  }
+  // The hovered route's own tags, as placed on screen right now, redrawn at full strength.
+  function hoverTags() {
+    if (!map.getSource("hovlabels0")) return;
+    const want = hovDim.to < 1 && hovDim.idx;
+    let feats = [];
+    if (want) {
+      for (const f of qrf(undefined, { layers: ["badges"] })) {
+        const rs = String(f.properties.k || "").split(":")[1];
+        if (rs && rs.split(".").some((i) => hovDim.idx.has(+i))) feats.push({ type: "Feature", properties: { k: f.properties.k }, geometry: f.geometry });
+      }
+    }
+    const key = feats.map((f) => f.properties.k + f.geometry.coordinates.join()).sort().join("|");
+    if (key === hovDim.key) return;
+    const fresh = !hovDim.key;
+    hovDim.key = key;
+    clearTimeout(hovDim.clearT);
+    const cur = hovDim.slot, next = 1 - cur, dur = calm() ? 0 : 180;
+    const fadeTo = (i, o, d) => { try { map.setPaintProperty(`hov-badges-${i}`, "icon-opacity-transition", { duration: d, delay: 0 }); map.setPaintProperty(`hov-badges-${i}`, "icon-opacity", o); } catch (e) {} };
+    const clearSlot = (i) => { map.getSource(`hovlabels${i}`)?.setData(fc([])); fadeTo(i, 0, 0); };
+    if (feats.length) {
+      // A fresh hover: the tags are already at full strength underneath, so the copy goes on
+      // at once (no dip while the rest fades). Between routes, the two copies cross-fade.
+      map.getSource(`hovlabels${next}`).setData(fc(feats));
+      fadeTo(next, 1, fresh ? 0 : dur);
+      fadeTo(cur, 0, dur);
+      hovDim.slot = next;
+      hovDim.clearT = setTimeout(() => { if (hovDim.slot !== cur) clearSlot(cur); }, dur + 60);
+    } else {
+      // Hover over: keep the copy until the tags underneath are back at full strength.
+      hovDim.clearT = setTimeout(() => { if (!hovDim.key) { clearSlot(0); clearSlot(1); } }, (calm() ? 0 : 200) + 40);
+    }
   }
   function applySelectionStyle() {
     if (!map || !map.getLayer("line-bus")) return;
@@ -4125,6 +4288,20 @@
   // Home is deliberately small: what's moving, what the lines mean, and one way in to the
   // full set of switches ("Layers"). Everything advanced lives on the Layers page.
   let panelView = "home", corridorRoutes = [];
+  // the service types in the Guide, in the order a rider meets them
+  const SERVICE_TYPES = [
+    ["link", "Sound Transit light rail: the 1, 2 and T Lines"],
+    ["rail", "Sounder commuter trains and Amtrak Cascades intercity trains"],
+    ["streetcar", "Seattle Streetcar: First Hill and South Lake Union lines"],
+    ["monorail", "Seattle Center Monorail, Westlake Center to Seattle Center"],
+    ["rapid", "Bus rapid transit: frequent all-day buses with fewer stops"],
+    ["frequent", "Buses every 15 minutes or better most of the day"],
+    ["local", "Buses every 20 to 60 minutes through the day"],
+    ["peak", "Weekday rush-hour trips only (dashed line)"],
+    ["water", "Washington State Ferries, King County Water Taxi and Kitsap fast ferries (dashed line)"],
+    ["dart", "Dial-a-Ride: a bus that can leave its route on request inside the dashed area"],
+    ["flex", "Metro Flex: on-demand rides anywhere inside the zone, booked by app or phone"],
+  ];
   const KEY_NAME = {
     link: "Link light rail", rail: "Sounder & Amtrak", streetcar: "Streetcar", monorail: "Monorail",
     rapid: "RapidRide & Swift", frequent: "Frequent bus", local: "All-day bus", peak: "Rush-hour bus",
@@ -4291,7 +4468,7 @@
     const hasFavs = favRoutes.length > 0 || favStops.length > 0 || favTrips.length > 0;
     const favSectionHTML = hasFavs ? `
       <div class="fav-header-wrap">
-        <h3 class="section fav-header">Favorites <span class="fav-sub">${favRoutes.length + favStops.length + favTrips.length} saved</span></h3>
+        <h2 class="section fav-header">Favorites <span class="fav-sub">${favRoutes.length + favStops.length + favTrips.length} saved</span></h2>
         <button type="button" class="fav-filter-toggle${specialFilter === "favs" ? " active" : ""}" id="toggleFavFilter">
           ${specialFilter === "favs" ? "Showing saved only" : "Filter map to saved"}
         </button>
@@ -4324,7 +4501,7 @@
     const bikeLegendHTML = hasTrails ? `
       <div class="bike-legend-card">
         <div class="bike-legend-head">
-          <h4 class="bike-legend-title">Bicycle Network & Trails</h4>
+          <h3 class="bike-legend-title">Bicycle Network & Trails</h3>
           <span class="muted" style="font-size:11px">SDOT 2025 Legend</span>
         </div>
         <div class="bike-filter-pills" role="group" aria-label="Filter bike facilities">
@@ -4378,7 +4555,7 @@
         ${alertRow}
       </ul>
       ${nonTrailKeys.length ? `<h2 class="section">On the map</h2><ul class="key-grid" role="list">${nonTrailKeys.map((l) =>
-        `<li><span class="sw">${swatch(l)}</span><span>${esc(KEY_NAME[l.key])}</span></li>`).join("")}</ul>` : ""}
+        `<li><span class="sw">${swatch(l)}${keySymbol(l.key)}</span><span>${esc(KEY_NAME[l.key])}</span></li>`).join("")}</ul>` : ""}
       ${bikeLegendHTML}
       ${!keys.length ? `<p class="hint">Every layer is off. Turn some on in Layers.</p>` : `<p class="hint">Tap a colored band or bike route to choose it. Its path, stops, and details will stand out.</p>`}
     </div>`;
@@ -4579,11 +4756,20 @@
           <span class="icon guide-hero-ic">${poiIconSVG("legend", 26)}</span>
           <div>
             <h2>Transit Map Guide & Legend</h2>
-            <p>Official service levels, bus runs & symbols</p>
+            <p>Service types, service levels and the symbols on the map</p>
           </div>
         </div>
 
         <div class="legend-card">
+          <div class="legend-section">
+            <h3 class="legend-sec-title">Service types</h3>
+            ${SERVICE_TYPES.map(([key, desc]) => `<div class="legend-row svc-row">
+              <span class="svc-key">${swatch({ key })}${keySymbol(key)}</span>
+              <div><strong>${esc(KEY_NAME[key])}</strong><br><span class="muted">${esc(desc)}</span></div>
+            </div>`).join("")}
+            <p class="legend-note">The round marker riding a line is a vehicle: its symbol says train, streetcar, bus or boat, and its point shows which way it is heading. Solid markers are live GPS positions; slightly faded ones are where the timetable puts a trip right now.</p>
+          </div>
+
           <div class="legend-section">
             <h3 class="legend-sec-title">Frequent Bus Service</h3>
             <div class="legend-row">
@@ -4991,7 +5177,7 @@
       return `<th scope="col" class="${isToday ? "sched-col-today" : ""}">${l}${isToday ? ' <span class="sched-today-pill">Today</span>' : ""}</th>`;
     }).join("");
 
-    return `${statusBanner}<div class="group table-group"><table class="sched"><thead><tr><th></th>${theadCols}</tr></thead>
+    return `${statusBanner}<div class="group table-group" tabindex="0" role="region" aria-label="Timetable"><table class="sched"><thead><tr><th><span class="vh">Stop</span></th>${theadCols}</tr></thead>
       <tbody>${rows}<tr><th scope="row"${curSlot.period === "first_last" ? ' class="sched-row-now"' : ""}>${curSlot.period === "first_last" ? '<span class="sched-row-live-dot" aria-hidden="true"></span>' : ""}First / last</th>${span}</tr></tbody></table></div>`;
   }
   const dayLabel = () => {
@@ -5537,6 +5723,13 @@
       const isFerry = s.kind === "ferry" || s.id.includes("wsf") || s.id.includes("ferry");
       const extraWords = [s.name, s.kind || "", ...(s.routes || []).map((rid) => RBY[rid]?.short || RBY[rid]?.name || rid)];
       if (isFerry) extraWords.push("ferry", "terminal", "dock", "boat", "wsf", "water taxi", "colman");
+      // what people call the stations, beside the timetable's names
+      const n = s.name.toLowerCase();
+      if (n.includes("univ of washington")) extraWords.push("uw", "university of washington", "husky stadium");
+      if (n.includes("int'l dist")) extraWords.push("international district", "id", "chinatown");
+      if (n.includes("seatac")) extraWords.push("airport", "sea-tac", "sea tac");
+      if (n.includes("tukwila int'l")) extraWords.push("tukwila international");
+      if (n === "u district") extraWords.push("university district", "udistrict");
       searchIndex.push({ kind: "station", id: s.id, key: extraWords.join(" ").toLowerCase(), s });
     }
     for (const s of STOPS.stops) searchIndex.push({ kind: "stop", id: s.id, key: (s.name + " " + (s.code || "")).toLowerCase(), s });
@@ -5594,13 +5787,19 @@
     q = q.trim().toLowerCase();
     if (!q) return [];
     const words = q.split(/\s+/), scored = [];
+    // "Westlake Station", "Bainbridge ferry terminal", "Pine St stop": a word naming what the
+    // place is counts as matched by its kind (station names don't include the word "Station")
+    const implied = (it, w) => (it.kind === "station" && (/^(station|stations|stn|sta)$/.test(w) || (it.s.kind === "ferry" && /^(ferry|terminal|dock)$/.test(w))))
+      || (it.kind === "stop" && /^(stop|bus)$/.test(w));
+    const namesKind = words.some((w) => /^(station|stn|sta|terminal)$/.test(w));
     for (const it of searchIndex) {
-      if (!words.every((w) => it.key.includes(w))) continue;
+      if (!words.every((w) => it.key.includes(w) || implied(it, w))) continue;
       let score = it.kind === "route" ? 0 : it.kind === "guide" ? 4 : it.kind === "dest" ? 6 : it.kind === "station" ? 10 : it.kind === "pr" ? 12 : it.kind === "trail" ? 14 : it.kind === "hill" ? 16 : 20;
       if (it.kind === "route" && (it.label === q || it.r.short.toLowerCase() === q)) score -= 100;
       if (it.kind === "guide" && (q.includes("legend") || q.includes("guide") || q.includes("through") || q.includes("transfer") || q.includes("symbol") || q.includes("run") || q.includes("badge"))) score -= 50;
       if (it.kind === "dest" && (it.d.name.toLowerCase().startsWith(q) || it.d.short.toLowerCase().startsWith(q))) score -= 30;
       if (it.key.startsWith(q)) score -= 5;
+      if (namesKind && it.kind === "station") score -= 15;
       if (it.kind === "trail" && (q.includes("bike") || q.includes("trail") || q.includes("cycle") || q.includes("cycling") || q.includes("greenway") || q.includes("pbl") || q.includes("lane"))) score -= 25;
       if (it.kind === "pr" && (q.includes("park") || q.includes("ride") || q.includes("p&r") || q.includes("garage") || q.includes("locker"))) score -= 25;
       if (it.kind === "hill" && (q.includes("hill") || q.includes("steep") || q.includes("incline") || q.includes("grade") || q.includes("slope"))) score -= 25;
@@ -5687,6 +5886,13 @@
 
   function getPlaceBadge(p) {
     if (!p) return { iconKind: "place", bg: "#007aff", label: "Location" };
+    // What a thing is beats what its name sounds like ("Transit Center Bay 4" is not a bay,
+    // "Station Garage Park & Ride" is not a park).
+    if (p.kind === "pr") return { iconKind: "pr", bg: "#0284c7", label: "Park & Ride" };
+    if (p.kind === "stop") return p.isTc ? { iconKind: "transit_center", bg: "#7c3aed", label: "Transit Center" } : { iconKind: "bus", bg: "#2563eb", label: "Bus stop" };
+    if (p.kind === "station") return p.isFerry ? { iconKind: "ferry_terminal", bg: "#0d9488", label: "Ferry Terminal" }
+      : p.isTc ? { iconKind: "transit_center", bg: "#7c3aed", label: "Transit Center" } : { iconKind: "station", bg: "#059669", label: "Rail Station" };
+    if (p.kind === "trail") return { iconKind: "bike", bg: "#059669", label: "Trail" };
     const k = (p.osm_key || p.class || "").toLowerCase();
     const v = (p.osm_value || p.type || "").toLowerCase();
     const str = `${p.name || ""} ${p.desc || ""} ${v} ${k}`.toLowerCase();
@@ -6095,6 +6301,27 @@
   let dirTimeValue = "";
   const PLANNER_MAX_AHEAD_MS = 90 * 24 * 60 * 60 * 1000; // Extended 90-day forward planning range
 
+  // The picker works in Seattle clock time whatever the computer's time zone: dirTimeValue is a
+  // Pacific wall-clock "YYYY-MM-DDTHH:MM", held in local Date objects only for their date maths.
+  function wallNow(plusMin = 0) {
+    const p = Object.fromEntries(PT_FMT.formatToParts(new Date(Date.now() + plusMin * 60000)).map((x) => [x.type, x.value]));
+    return new Date(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second);
+  }
+  // the moment a Pacific wall-clock value names (DST-aware)
+  function wallToInstant(value) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(value || "");
+    if (!m) return new Date(NaN);
+    const want = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
+    let t = want + 8 * 3600000;
+    for (let i = 0; i < 3; i++) {
+      const p = Object.fromEntries(PT_FMT.formatToParts(new Date(t)).map((x) => [x.type, x.value]));
+      const got = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute);
+      if (got === want) break;
+      t += want - got;
+    }
+    return new Date(t);
+  }
+
   function localDateTimeValue(date) {
     const d = date instanceof Date ? date : new Date(date);
     if (!Number.isFinite(d.getTime())) return "";
@@ -6108,7 +6335,7 @@
 
   function formatDirTimeDisplay(date) {
     if (!date || !Number.isFinite(date.getTime())) return "";
-    const now = new Date();
+    const now = wallNow();
     const isToday = date.toDateString() === now.toDateString();
     const tomorrow = new Date(now.getTime() + 86400000);
     const isTomorrow = date.toDateString() === tomorrow.toDateString();
@@ -6133,7 +6360,7 @@
   function getDirPlanningTime() {
     const now = new Date();
     if (dirTimeMode === "leave-now") return { ...pacificAt(now), mode: dirTimeMode };
-    const selected = new Date(dirTimeValue);
+    const selected = wallToInstant(dirTimeValue);
     const max = now.getTime() + PLANNER_MAX_AHEAD_MS;
     const date = Number.isFinite(selected.getTime()) ? new Date(Math.min(Math.max(selected.getTime(), now.getTime()), max)) : new Date(now.getTime() + 15 * 60000);
     return { ...pacificAt(date), mode: dirTimeMode };
@@ -6157,7 +6384,7 @@
     picker.hidden = false;
     trigger?.classList.add("is-open");
     trigger?.setAttribute("aria-expanded", "true");
-    const curDate = dirTimeValue ? new Date(dirTimeValue) : new Date(Date.now() + 15 * 60000);
+    const curDate = dirTimeValue ? new Date(dirTimeValue) : wallNow(15);
     calViewYear = curDate.getFullYear();
     calViewMonth = curDate.getMonth();
     renderCustomDatePicker();
@@ -6183,10 +6410,10 @@
     const picker = $("#dirCustomPicker");
     if (!picker || picker.hidden) return;
 
-    const today = new Date();
+    const today = wallNow();
     today.setHours(0, 0, 0, 0);
     const maxDate = new Date(today.getTime() + PLANNER_MAX_AHEAD_MS);
-    const curDate = dirTimeValue ? new Date(dirTimeValue) : new Date(Date.now() + 15 * 60000);
+    const curDate = dirTimeValue ? new Date(dirTimeValue) : wallNow(15);
 
     if (calViewYear == null || calViewMonth == null) {
       calViewYear = curDate.getFullYear();
@@ -6342,7 +6569,7 @@
     const target = e.target.closest("button");
     if (!target) return;
 
-    const curDate = dirTimeValue ? new Date(dirTimeValue) : new Date(Date.now() + 15 * 60000);
+    const curDate = dirTimeValue ? new Date(dirTimeValue) : wallNow(15);
 
     if (target.id === "calPrevMonth") {
       calViewMonth--;
@@ -6394,7 +6621,7 @@
       const q = target.dataset.qtime;
       let newH = curDate.getHours(), newM = curDate.getMinutes();
       if (q === "now") {
-        const now = new Date();
+        const now = wallNow();
         newH = now.getHours();
         newM = Math.ceil(now.getMinutes() / 5) * 5;
         if (newM >= 60) { newH = (newH + 1) % 24; newM = 0; }
@@ -6411,7 +6638,7 @@
     }
 
     if (target.id === "calResetNow") {
-      dirTimeValue = localDateTimeValue(new Date(Date.now() + 15 * 60000));
+      dirTimeValue = localDateTimeValue(wallNow(15));
       calViewYear = null;
       calViewMonth = null;
       syncDirTimeControls();
@@ -6427,7 +6654,7 @@
   }
 
   function handleCustomPickerChange(e) {
-    const curDate = dirTimeValue ? new Date(dirTimeValue) : new Date(Date.now() + 15 * 60000);
+    const curDate = dirTimeValue ? new Date(dirTimeValue) : wallNow(15);
     const hourSelect = $("#calHourSelect");
     const minuteSelect = $("#calMinuteSelect");
     if (!hourSelect || !minuteSelect) return;
@@ -6444,7 +6671,7 @@
   }
 
   function syncDirTimeControls() {
-    const now = new Date();
+    const now = wallNow();
     const input = $("#dirTimeInput");
     const wrap = $("#dirTimeInputWrap");
     const label = $("#dirTimeLabel");
@@ -6822,659 +7049,525 @@
     return best;
   }
 
-  // The quick direct/one-transfer search below is useful for the common case.
-  // Regional trips need more than that, though: a bus to a ferry and a local
-  // shuttle on the other shore is two transfers.  Build a small, cached view of
-  // the all-mode network so the bounded connection search can use every route
-  // category without turning a trip request into an all-pairs scan.
-  let plannerNetworkCache = null;
-  function getPlannerNetwork() {
-    if (plannerNetworkCache) return plannerNetworkCache;
-    const stopsById = new Map();
-    for (const stop of getPlannerStops()) if (stop && stop.id && !stopsById.has(stop.id)) stopsById.set(stop.id, stop);
+  // ---------------------------------------------------------------- trip planning: RAPTOR
+  // Round-based public transit routing (Delling, Pajor & Werneck, "Round-Based Public Transit
+  // Routing", Transportation Science 2015): the algorithm OpenTripPlanner 2 and most current
+  // journey planners use. Round k finds the earliest arrival at every stop using at most k
+  // vehicles, so a single search returns the best trip for each number of transfers.
+  // Every time comes from the agencies' published timetable (schedule.json). Nothing is
+  // estimated: a trip the timetable doesn't run is never offered.
+  const RAPTOR_MAX_RIDES = 4;          // up to three transfers (bus, ferry, island shuttle...)
+  const WALK_MPM = 80;                  // 4.8 km/h, the pace used everywhere else on the site
+  const MIN_TRANSFER_SEC = 120;         // to get off one vehicle and onto the next
+  const TRANSFER_WALK_M = 360;          // a walk between stops
+  const HUB_TRANSFER_WALK_M = 650;      // ...between a station or ferry terminal and a stop
+  const WALK_ONLY_MAX_M = 2500;
+  let raptorNet = null;
+  const isHubRoute = (r) => r && (r.cat === "link" || r.cat === "sounder" || r.cat === "amtrak" || r.cat === "ferry" || r.cat === "watertaxi" || r.cat === "monorail");
 
-    const cellSize = 0.0035; // roughly 390 m north/south in the map's service area
-    const cellKey = (lat, lon) => `${Math.floor(lat / cellSize)},${Math.floor(lon / cellSize)}`;
-    const cells = new Map();
-    for (const stop of stopsById.values()) {
-      if (!Number.isFinite(stop.lat) || !Number.isFinite(stop.lon)) continue;
-      const key = cellKey(stop.lat, stop.lon);
-      if (!cells.has(key)) cells.set(key, []);
-      cells.get(key).push(stop);
-    }
-
-    const atStop = new Map();
-    const addAtStop = (sid, entry) => {
-      if (!sid) return;
-      if (!atStop.has(sid)) atStop.set(sid, []);
-      atStop.get(sid).push(entry);
-      const keyed = stopIndex[sid] && stopIndex[sid].key;
-      if (keyed && keyed !== sid) {
-        if (!atStop.has(keyed)) atStop.set(keyed, []);
-        atStop.get(keyed).push(entry);
-      }
+  function raptorNetwork() {
+    if (!SCHED) return null;
+    if (raptorNet && raptorNet.sched === SCHED) return raptorNet;
+    const P = SCHED.patterns;
+    const stopId = [], stopIx = new Map(), lat = [], lon = [], hub = [], group = [];
+    const ix = (sid) => {
+      let i = stopIx.get(sid);
+      if (i != null) return i;
+      const st = stopIndex[sid];
+      if (!st || !Number.isFinite(st.lat) || !Number.isFinite(st.lon)) return -1;
+      i = stopId.length;
+      stopIx.set(sid, i); stopId.push(sid); lat.push(st.lat); lon.push(st.lon);
+      hub.push(st.kind === "ferry" || st.kind === "rail" || st.kind === "station" || !!st.isStation || !!(st.stops && st.stops.length > 1));
+      group.push(st.key && st.key !== sid ? st.key : null);
+      return i;
     };
-    for (const route of ROUTES) {
-      for (const pattern of (route.patterns || [])) {
-        for (let index = 0; index < pattern.stops.length; index++) {
-          addAtStop(pattern.stops[index], { route, pattern, index });
+    const pats = new Array(P.length).fill(null);
+    const stopPatsTmp = [];
+    for (let pi = 0; pi < P.length; pi++) {
+      const p = P[pi], route = ROUTES[p.r];
+      if (!route || LINEIDX[route.id] == null || !p.s || !p.f || p.s.length < 2) continue;
+      const stops = new Int32Array(p.s.length);
+      for (let i = 0; i < p.s.length; i++) {
+        const s = stops[i] = ix(p.s[i]);
+        if (s < 0) continue;
+        (stopPatsTmp[s] || (stopPatsTmp[s] = [])).push(pi, i);
+        if (isHubRoute(route)) hub[s] = true;
+      }
+      pats[pi] = { pi, route, stops, f: p.f };
+    }
+    const n = stopId.length;
+    const stopPats = new Array(n);
+    for (let s = 0; s < n; s++) stopPats[s] = Int32Array.from(stopPatsTmp[s] || []);
+    // a coarse grid (about 450 m cells) for walking distances
+    const CELL = 0.004, cellKey = (la, lo) => Math.floor(la / CELL) * 100000 + Math.floor(lo / (CELL * 1.5));
+    const grid = new Map();
+    for (let s = 0; s < n; s++) {
+      const k = cellKey(lat[s], lon[s]);
+      let a = grid.get(k);
+      if (!a) grid.set(k, a = []);
+      a.push(s);
+    }
+    const near = (la, lo, maxM, fn) => {
+      const rLa = Math.ceil(maxM / 111000 / CELL), rLo = Math.ceil(maxM / (111000 * Math.cos(la * Math.PI / 180)) / (CELL * 1.5));
+      const ca = Math.floor(la / CELL), co = Math.floor(lo / (CELL * 1.5));
+      for (let a = ca - rLa; a <= ca + rLa; a++) for (let o = co - rLo; o <= co + rLo; o++) {
+        const cell = grid.get(a * 100000 + o);
+        if (!cell) continue;
+        for (const s of cell) {
+          const d = distMeters(la, lo, lat[s], lon[s]);
+          if (d <= maxM) fn(s, d);
         }
       }
-    }
-
-    plannerNetworkCache = { stopsById, cellSize, cellKey, cells, atStop, transferCache: new Map(), routeNeighbors: null };
-    return plannerNetworkCache;
+    };
+    raptorNet = { sched: SCHED, stopId, stopIx, lat, lon, hub, group, pats, stopPats, n, near, foot: new Map(), trips: new Map(), patOf: new Map() };
+    return raptorNet;
   }
 
-  function transferBoardsFrom(stop) {
-    const net = getPlannerNetwork();
-    const source = stop && (stopIndex[stop.id] || net.stopsById.get(stop.id) || stop);
-    if (!source || !source.id || !Number.isFinite(source.lat) || !Number.isFinite(source.lon)) return [];
-    if (net.transferCache.has(source.id)) return net.transferCache.get(source.id);
-
-    const result = new Map();
-    const isSourceFerryOrHub = source.kind === "ferry" || source.kind === "rail" || source.isStation || (source.id && (source.id.includes("wsf") || source.id.includes("ferry")));
-    const reach = isSourceFerryOrHub ? 3 : 2;
-    const add = (candidate, dist) => {
-      const isCandFerryOrHub = candidate && (candidate.kind === "ferry" || candidate.kind === "rail" || candidate.isStation || (candidate.id && (candidate.id.includes("wsf") || candidate.id.includes("ferry"))));
-      const limit = (isSourceFerryOrHub || isCandFerryOrHub) ? 650 : 360;
-      if (!candidate || !candidate.id || !Number.isFinite(dist) || dist > limit) return;
-      const old = result.get(candidate.id);
-      if (!old || dist < old.dist) result.set(candidate.id, { stop: candidate, dist });
-    };
-    add(source, 0);
-
-    const station = getStopToStation().get(source.id);
-    if (station) {
-      for (const sid of (station.stops || [])) add(stopIndex[sid] || net.stopsById.get(sid), sid === source.id ? 0 : 50);
-    }
-
-    const cx = Math.floor(source.lat / net.cellSize), cy = Math.floor(source.lon / net.cellSize);
-    for (let dx = -reach; dx <= reach; dx++) {
-      for (let dy = -reach; dy <= reach; dy++) {
-        for (const candidate of net.cells.get(`${cx + dx},${cy + dy}`) || []) {
-          add(candidate, distMeters(source.lat, source.lon, candidate.lat, candidate.lon));
-        }
+  // walking transfers from a stop: [stop, seconds, metres, ...], cached
+  function raptorFootpaths(net, s, maxWalkM) {
+    const key = s * 2 + (maxWalkM < TRANSFER_WALK_M ? 1 : 0);
+    let out = net.foot.get(key);
+    if (out) return out;
+    const tmp = [];
+    const seen = new Set([s]);
+    // platforms of one station: a short walk inside the station
+    if (net.group[s] != null) {
+      const st = stopIndex[net.group[s]];
+      for (const sid of (st && st.stops) || []) {
+        const q = net.stopIx.get(sid);
+        if (q != null && !seen.has(q)) { seen.add(q); tmp.push(q, 60, 50); }
       }
     }
-    const out = [...result.values()];
-    net.transferCache.set(source.id, out);
+    if (maxWalkM >= TRANSFER_WALK_M) {
+      net.near(net.lat[s], net.lon[s], HUB_TRANSFER_WALK_M, (q, d) => {
+        if (seen.has(q)) return;
+        const limit = net.hub[s] || net.hub[q] ? HUB_TRANSFER_WALK_M : TRANSFER_WALK_M;
+        if (d > limit) return;
+        seen.add(q);
+        tmp.push(q, Math.max(60, Math.round(d / WALK_MPM * 60)), Math.round(d));
+      });
+    }
+    out = Int32Array.from(tmp);
+    net.foot.set(key, out);
     return out;
   }
 
-  function boardEntriesFor(stop) {
-    const net = getPlannerNetwork();
-    const found = new Map();
-    const keys = new Set([stop && stop.id, stop && stop.key, ...((stop && stop.stops) || [])]);
-    for (const key of keys) {
-      for (const entry of net.atStop.get(key) || []) {
-        found.set(`${entry.route.id}|${entry.pattern.dir || ""}|${entry.index}|${entry.pattern.stops[0]}`, entry);
+  // The timetable for one service day, per pattern, sorted by departure: trips still running
+  // after midnight from the day before, the day itself, and the next morning (for late searches).
+  function raptorTrips(net, day, prev, next) {
+    const key = `${day}|${prev}|${next}`;
+    let T = net.trips.get(key);
+    if (T) return T;
+    const lists = new Map();
+    const add = (list, off, lateOnly) => {
+      for (const [pi, s0, du] of list || []) {
+        if (!net.pats[pi]) continue;
+        if (lateOnly && s0 + du + off <= 0) continue;
+        let a = lists.get(pi);
+        if (!a) lists.set(pi, a = []);
+        a.push(s0 + off, du);
       }
+    };
+    add(SCHED.days[prev], -86400, true);
+    add(SCHED.days[day], 0, false);
+    if (next) add(SCHED.days[next], 86400, false);
+    T = new Map();
+    for (const [pi, a] of lists) {
+      const order = [];
+      for (let i = 0; i < a.length; i += 2) order.push(i);
+      order.sort((x, y) => a[x] - a[y]);
+      const s0 = new Float64Array(order.length), du = new Float64Array(order.length);
+      order.forEach((i, j) => { s0[j] = a[i]; du[j] = a[i + 1]; });
+      T.set(pi, { s0, du });
     }
-    return [...found.values()];
+    net.trips.set(key, T);
+    return T;
   }
 
-  function routeConnections() {
-    const net = getPlannerNetwork();
-    if (net.routeNeighbors) return net.routeNeighbors;
-    const links = new Map();
-    const link = (from, to) => {
-      if (!from || !to || from === to) return;
-      if (!links.has(from)) links.set(from, new Set());
-      links.get(from).add(to);
-    };
-    for (const [sid, entries] of net.atStop) {
-      const source = stopIndex[sid] || net.stopsById.get(sid);
-      if (!source) continue;
-      const fromRoutes = new Set(entries.map((entry) => entry.route.id));
-      for (const option of transferBoardsFrom(source)) {
-        const toEntries = boardEntriesFor(option.stop);
-        for (const from of fromRoutes) for (const entry of toEntries) {
-          link(from, entry.route.id);
-          link(entry.route.id, from);
+  // earliest trip leaving position pos at or after t (trips of one pattern keep their order)
+  function raptorEarliest(T, f, t) {
+    const s0 = T.s0, du = T.du, n = s0.length;
+    let lo = 0, hi = n;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (s0[m] + f * du[m] < t) lo = m + 1; else hi = m; }
+    // guard against a later trip overtaking an earlier one
+    let best = lo < n ? lo : -1;
+    for (let j = lo + 1; j < Math.min(n, lo + 4); j++) if (s0[j] + f * du[j] >= t && s0[j] + f * du[j] < s0[best] + f * du[best]) best = j;
+    return best;
+  }
+
+  // One RAPTOR search. access: [[stop, walkSec, metres]], egress: Map(stop -> [walkSec, metres]).
+  function raptorSearch(net, T, access, egress, t0, { maxRides = RAPTOR_MAX_RIDES, maxWalkM = TRANSFER_WALK_M, banned = null } = {}) {
+    const n = net.n, R = maxRides;
+    const arr = [], kind = [], setIn = [], pPat = [], pTrip = [], pBoard = [], pAlight = [], pFrom = [], pDist = [], pWalk = [];
+    const best = new Float64Array(n).fill(Infinity);
+    arr[0] = new Float64Array(n).fill(Infinity); kind[0] = new Int8Array(n); setIn[0] = new Int8Array(n).fill(-1);
+    let marked = [];
+    for (const [s, w] of access) {
+      const a = t0 + w;
+      if (a < arr[0][s]) { arr[0][s] = a; best[s] = a; kind[0][s] = 3; setIn[0][s] = 0; marked.push(s); }
+    }
+    const results = [];
+    let target = Infinity;
+    const qpos = new Int32Array(net.pats.length).fill(-1);
+    const through = typeof isThroughRoutedPair === "function" ? isThroughRoutedPair : () => false;
+    for (let k = 1; k <= R && marked.length; k++) {
+      const prevArr = arr[k - 1], prevKind = kind[k - 1], prevSet = setIn[k - 1];
+      const cur = arr[k] = prevArr.slice(), kd = kind[k] = prevKind.slice(), si = setIn[k] = prevSet.slice();
+      pPat[k] = new Int32Array(n); pTrip[k] = new Int32Array(n); pBoard[k] = new Int16Array(n); pAlight[k] = new Int16Array(n);
+      pFrom[k] = new Int32Array(n); pDist[k] = new Int32Array(n); pWalk[k] = new Int32Array(n);
+      const qlist = [];
+      for (const s of marked) {
+        const sp = net.stopPats[s];
+        for (let j = 0; j < sp.length; j += 2) {
+          const pi = sp[j], pos = sp[j + 1];
+          if (qpos[pi] < 0) { qlist.push(pi); qpos[pi] = pos; } else if (pos < qpos[pi]) qpos[pi] = pos;
         }
       }
-    }
-    net.routeNeighbors = links;
-    return links;
-  }
-
-  function routeHopsTo(destRoutes, maxTransfers) {
-    const links = routeConnections();
-    const hops = new Map();
-    const queue = [];
-    for (const routeId of destRoutes) { hops.set(routeId, 0); queue.push(routeId); }
-    for (let cursor = 0; cursor < queue.length; cursor++) {
-      const routeId = queue[cursor], distance = hops.get(routeId);
-      if (distance >= maxTransfers) continue;
-      for (const next of links.get(routeId) || []) {
-        if (!hops.has(next)) { hops.set(next, distance + 1); queue.push(next); }
-      }
-    }
-    return hops;
-  }
-
-  function estimatedRideMinutes(route, boardStop, alightStop, numStops) {
-    const rail = route.cat === "link" || route.cat === "sounder" || route.cat === "amtrak";
-    const speed = rail ? 750 : route.cat === "ferry" || route.cat === "watertaxi" ? 500 : 380;
-    return Math.max(2, Math.round(distMeters(boardStop.lat, boardStop.lon, alightStop.lat, alightStop.lon) / speed) + Math.round(numStops * (rail ? 0.3 : 0.35)));
-  }
-
-  // A time-aware, bounded (four vehicles / three transfers) search.  It is
-  // deliberately separate from the fast one-transfer results so short trips
-  // keep their familiar compact choices while regional, cross-water trips are
-  // still found and rendered as complete itineraries.
-  function planMultiLegTrips(origStops, destStops, origStopMap, destStopMap, nowSecs, day, prev, planningTime) {
-    const MAX_LEGS = 4;
-    const MAX_STATES = 1800;
-    const destRoutes = new Set();
-    for (const item of destStops) for (const routeId of (item.stop.routes || [])) destRoutes.add(routeId);
-    if (!destRoutes.size) return [];
-
-    const hops = routeHopsTo(destRoutes, MAX_LEGS - 1);
-    const _canContinueCache = new Map();
-
-    const destPt = destStops[0]?.stop || { lat: 47.6, lon: -122.3 };
-    const stateScore = (s) => {
-      const prior = s.legs[s.legs.length - 1];
-      const remainingHops = prior ? (hops.get(prior.route.id) ?? 3) : 3;
-      const remDist = distMeters(s.atStop.lat, s.atStop.lon, destPt.lat, destPt.lon);
-      return s.arrSec + Math.round(remDist / 15) + remainingHops * 300;
-    };
-
-    // Filter origin stops: pick the closest stop per unique route pattern / direction
-    const bestOrigPerPattern = new Map();
-    for (const item of origStops) {
-      const stop = item.stop;
-      for (const entry of boardEntriesFor(stop)) {
-        if (!hops.has(entry.route.id)) continue;
-        const pKey = `${entry.route.id}|${entry.pattern.dir || 0}`;
-        if (!bestOrigPerPattern.has(pKey) || bestOrigPerPattern.get(pKey).dist > item.dist) {
-          bestOrigPerPattern.set(pKey, { item, entry });
-        }
-      }
-    }
-
-    const heap = [];
-    const pushHeap = (item) => {
-      heap.push(item);
-      let i = heap.length - 1;
-      while (i > 0) {
-        const p = (i - 1) >> 1;
-        if (stateScore(heap[i]) < stateScore(heap[p])) {
-          const tmp = heap[i]; heap[i] = heap[p]; heap[p] = tmp;
-          i = p;
-        } else break;
-      }
-    };
-    const popHeap = () => {
-      if (heap.length === 0) return null;
-      const top = heap[0];
-      const bottom = heap.pop();
-      if (heap.length > 0) {
-        heap[0] = bottom;
-        let i = 0, len = heap.length;
-        while (true) {
-          let best = i;
-          const l = (i << 1) + 1, r = l + 1;
-          if (l < len && stateScore(heap[l]) < stateScore(heap[best])) best = l;
-          if (r < len && stateScore(heap[r]) < stateScore(heap[best])) best = r;
-          if (best !== i) {
-            const tmp = heap[i]; heap[i] = heap[best]; heap[best] = tmp;
-            i = best;
-          } else break;
-        }
-      }
-      return top;
-    };
-
-    const seenOrigStops = new Set();
-    for (const { item } of bestOrigPerPattern.values()) {
-      if (seenOrigStops.has(item.stop.id)) continue;
-      seenOrigStops.add(item.stop.id);
-      pushHeap({
-        atStop: item.stop,
-        arrSec: nowSecs + Math.round(item.dist / 80) * 60,
-        totalDuration: Math.round(item.dist / 80),
-        walk1Dist: item.dist,
-        walk1Time: Math.round(item.dist / 80),
-        legs: [],
-        schedVerified: true,
-      });
-    }
-
-    const bestAt = new Map();
-    const found = [];
-    let explored = 0;
-    while (heap.length && explored++ < MAX_STATES) {
-      const state = popHeap();
-      const prior = state.legs[state.legs.length - 1];
-      const boardOptions = prior ? transferBoardsFrom(state.atStop) : [{ stop: state.atStop, dist: 0 }];
-
-      for (const boardOption of boardOptions) {
-        const boardStop = boardOption.stop;
-        const transferWalkTime = prior ? Math.max(1, Math.round(boardOption.dist / 80)) : 0;
-        const earliestSec = prior ? state.arrSec + boardOption.dist / 80 * 60 + 120 : state.arrSec;
-        for (const entry of boardEntriesFor(boardStop)) {
-          const route = entry.route, pattern = entry.pattern, from = entry.index;
-          if (prior && prior.route.id === route.id) continue;
-          const routeHops = hops.get(route.id);
-          const legCount = state.legs.length + 1;
-          if (routeHops == null || routeHops > MAX_LEGS - legCount || from >= pattern.stops.length - 1) continue;
-
-          const targets = [];
-          for (let to = from + 1; to < pattern.stops.length; to++) {
-            const sid = pattern.stops[to], alightStop = stopIndex[sid];
-            if (!alightStop) continue;
-            const destination = destStopMap.get(sid);
-            if (destination) {
-              targets.push({ to, alightStop, destination });
-              continue;
+      const rideMarked = [];
+      const isMarked = new Uint8Array(n);
+      for (const pi of qlist) {
+        const start = qpos[pi]; qpos[pi] = -1;
+        const pat = net.pats[pi], tt = T.get(pi);
+        if (!pat || !tt || (banned && banned.has(pat.route.id))) continue;
+        const st = pat.stops, f = pat.f, len = st.length;
+        let trip = -1, boardPos = -1;
+        for (let pos = start; pos < len; pos++) {
+          const s = st[pos];
+          if (s < 0) continue;
+          if (trip >= 0) {
+            const a = tt.s0[trip] + f[pos] * tt.du[trip];
+            if (a < best[s] && a < target) {
+              cur[s] = a; best[s] = a; kd[s] = 1; si[s] = k;
+              pPat[k][s] = pi; pTrip[k][s] = trip; pBoard[k][s] = boardPos; pAlight[k][s] = pos;
+              if (!isMarked[s]) { isMarked[s] = 1; rideMarked.push(s); }
             }
-            if (legCount >= MAX_LEGS) continue;
-            const maxRemaining = MAX_LEGS - legCount;
-            const ccKey = `${sid}|${route.id}|${maxRemaining}`;
-            let canContinue = _canContinueCache.get(ccKey);
-            if (canContinue === undefined) {
-              canContinue = transferBoardsFrom(alightStop).some((option) =>
-                boardEntriesFor(option.stop).some((next) => next.route.id !== route.id && (hops.get(next.route.id) ?? Infinity) <= maxRemaining - 1)
-              );
-              _canContinueCache.set(ccKey, canContinue);
-            }
-            if (canContinue) targets.push({ to, alightStop, destination: null });
           }
-
-          // A pattern can pass many equivalent transfer bays.  Keeping the
-          // first 32 preserves meaningful alternatives on regional routes without
-          // flooding the bounded search.
-          for (const target of targets.slice(0, 32)) {
-            const numStops = target.to - from;
-            const scheduled = timetableTripTimes(route, boardStop, target.alightStop, earliestSec, day, prev, planningTime);
-            let waitTime, rideTime, arrSec, schedVerified = state.schedVerified;
-            if (scheduled) {
-              waitTime = prior ? Math.max(2, Math.round((scheduled.depSec - state.arrSec - boardOption.dist / 80 * 60) / 60)) : scheduled.waitMin;
-              if (prior && (waitTime < 2 || waitTime > 60)) continue;
-              if (!prior && waitTime > 90) continue;
-              rideTime = scheduled.rideMin;
-              arrSec = scheduled.arrSec;
-            } else {
-              const hasServiceToday = route.sched && route.sched[day] && route.sched[day].trips > 0;
-              if (SCHED && !hasServiceToday) continue;
-              const headway = route.midHeadway || route.sched?.[day]?.mid || route.sched?.weekday?.mid || (route.cat === "link" ? 8 : 15);
-              waitTime = prior ? Math.max(2, Math.round(Math.min(headway / 2, route.cat === "ferry" ? 45 : 12))) : Math.round(Math.min(headway / 2, route.cat === "ferry" ? 45 : 12));
-              rideTime = estimatedRideMinutes(route, boardStop, target.alightStop, numStops);
-              arrSec = earliestSec + (waitTime + rideTime) * 60;
-              schedVerified = false;
+          const pa = prevArr[s];
+          if (pa === Infinity || pos === len - 1) continue;
+          // the way we got here decides the buffer: none from the street, none to stay on a
+          // through-routed bus, two minutes for any other change
+          let buffer = 0;
+          const how = prevKind[s];
+          if (how === 1 || how === 2) {
+            buffer = MIN_TRANSFER_SEC;
+            if (how === 1) {
+              const r0 = prevSet[s], fromPat = net.pats[pPat[r0][s]];
+              if (fromPat && through(fromPat.route, pat.route)) buffer = 0;
             }
-
-            const leg = {
-              route, pattern, boardStop, alightStop: target.alightStop,
-              intermediateStopIds: pattern.stops.slice(from + 1, target.to), numStops,
-              rideTime, waitTime, schedTrip: scheduled,
-              transferWalkDist: prior ? boardOption.dist : 0,
-              transferWalkTime,
-            };
-            const totalDuration = state.totalDuration + (prior ? transferWalkTime : 0) + waitTime + rideTime;
-            const legs = [...state.legs, leg];
-            if (target.destination) {
-              if (legs.length < 3) continue;
-              const walk2Time = Math.round(target.destination.dist / 80);
-              found.push({
-                type: "multi", legs, boardStop: legs[0].boardStop, alightStop: target.alightStop,
-                walk1Dist: state.walk1Dist, walk1Time: state.walk1Time,
-                walk2Dist: target.destination.dist, walk2Time,
-                totalDuration: totalDuration + walk2Time,
-                schedTrip: legs[0].schedTrip, schedVerified,
-              });
-              continue;
-            }
-            if (legs.length >= MAX_LEGS) continue;
-            const key = `${target.alightStop.id}|${route.id}|${legs.length}`;
-            if (bestAt.has(key) && bestAt.get(key) <= arrSec) continue;
-            bestAt.set(key, arrSec);
-            pushHeap({ atStop: target.alightStop, arrSec, totalDuration, walk1Dist: state.walk1Dist, walk1Time: state.walk1Time, legs, schedVerified });
+          }
+          const need = pa + buffer;
+          if (trip >= 0 && need > tt.s0[trip] + f[pos] * tt.du[trip]) continue;
+          const t2 = raptorEarliest(tt, f[pos], need);
+          if (t2 >= 0 && (trip < 0 || tt.s0[t2] + f[pos] * tt.du[t2] < tt.s0[trip] + f[pos] * tt.du[trip])) { trip = t2; boardPos = pos; }
+        }
+      }
+      // walking transfers from every stop a vehicle just reached (from the ride arrivals as
+      // they stood before any walk, so a walk never starts from another walk)
+      const walkMarked = [], rideArr = rideMarked.map((s) => cur[s]);
+      for (let i = 0; i < rideMarked.length; i++) {
+        const s = rideMarked[i], fp = raptorFootpaths(net, s, maxWalkM);
+        for (let j = 0; j < fp.length; j += 3) {
+          const q = fp[j], a = rideArr[i] + fp[j + 1];
+          if (a < best[q] && a < target) {
+            cur[q] = a; best[q] = a; kd[q] = 2; si[q] = k; pFrom[k][q] = s; pDist[k][q] = fp[j + 2]; pWalk[k][q] = fp[j + 1];
+            if (!isMarked[q]) { isMarked[q] = 1; walkMarked.push(q); }
           }
         }
       }
+      // the destination: walk there from a stop a vehicle reached in this round
+      let bestStop = -1;
+      for (const s of rideMarked) {
+        const e = egress.get(s);
+        if (!e || kd[s] !== 1) continue;
+        const a = cur[s] + e[0];
+        if (a < target) { target = a; bestStop = s; }
+      }
+      if (bestStop >= 0) results.push({ k, stop: bestStop, arrival: target });
+      marked = rideMarked.concat(walkMarked);
     }
-
-    const seen = new Set();
-    return found.sort((a, b) => a.totalDuration - b.totalDuration).filter((it) => {
-      const key = it.legs.map((leg) => leg.route.id).join(">");
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    }).slice(0, 4);
+    // trace each result back through the rounds
+    return results.map(({ k, stop, arrival }) => {
+      const legs = [];
+      let r = k, s = stop, accessStop = -1;
+      for (let guard = 0; guard < 4 * R + 4; guard++) {
+        const r0 = setIn[r][s], how = kind[r][s];
+        if (how === 3 || r0 <= 0) { accessStop = s; break; }
+        if (how === 2) {
+          // a walk, and before it the ride (same round) that reached the stop it starts from
+          const from = pFrom[r0][s];
+          legs.unshift({ walk: true, from, to: s, metres: pDist[r0][s], sec: pWalk[r0][s] });
+          s = from;
+        }
+        const pi = pPat[r0][s], trip = pTrip[r0][s], b = pBoard[r0][s], a = pAlight[r0][s];
+        legs.unshift({ pi, trip, b, a });
+        s = net.pats[pi].stops[b];
+        r = r0 - 1;
+      }
+      return { k, arrival, accessStop, egressStop: stop, legs };
+    });
   }
 
-  function planTransitTrip(orig, dest, planningTime = pacificNow()) {
-    if (!orig || !dest) return null;
-    const directWalkDist = distMeters(orig.lat, orig.lon, dest.lat, dest.lon);
-    const directWalkTime = Math.round(directWalkDist / 80);
-
-    let origStops = findNearbyStops(orig.lat, orig.lon, 950, 1500);
-    if (origStops.length < 3) origStops = findNearbyStops(orig.lat, orig.lon, 1800, 2200);
-    if (origStops.length === 0) origStops = findNearbyStops(orig.lat, orig.lon, 3200, 3600);
-
-    let destStops = findNearbyStops(dest.lat, dest.lon, 950, 1500);
-    if (destStops.length < 3) destStops = findNearbyStops(dest.lat, dest.lon, 1800, 2200);
-    if (destStops.length === 0) destStops = findNearbyStops(dest.lat, dest.lon, 3200, 3600);
-
-    const origStopMap = new Map();
-    for (const o of origStops) {
-      if (!origStopMap.has(o.stop.id)) origStopMap.set(o.stop.id, o);
-      for (const sid of (o.stop.stops || [])) {
-        if (!origStopMap.has(sid)) origStopMap.set(sid, o);
-      }
+  // the route's own pattern (for its headsign) that matches a timetable pattern's stops
+  function raptorRoutePattern(net, pi) {
+    if (net.patOf.has(pi)) return net.patOf.get(pi);
+    const p = SCHED.patterns[pi], route = ROUTES[p.r];
+    let best = null, bestScore = -1;
+    for (const rp of (route && route.patterns) || []) {
+      const set = new Set(rp.stops || []);
+      let score = 0;
+      for (const sid of p.s) if (set.has(sid)) score++;
+      if (rp.stops && rp.stops[rp.stops.length - 1] === p.s[p.s.length - 1]) score += 2;
+      if (score > bestScore) { bestScore = score; best = rp; }
     }
+    const last = stopIndex[p.s[p.s.length - 1]];
+    const out = best && best.headsign ? best : { ...(best || {}), stops: p.s, headsign: best?.headsign || (last ? last.name : "") };
+    net.patOf.set(pi, out);
+    return out;
+  }
 
-    const destStopMap = new Map();
-    for (const d of destStops) {
-      if (!destStopMap.has(d.stop.id)) destStopMap.set(d.stop.id, d);
-      for (const sid of (d.stop.stops || [])) {
-        if (!destStopMap.has(sid)) destStopMap.set(sid, d);
-      }
-    }
+  function planNextDay(planningTime) {
+    if (typeof pacificAt !== "function" || !(planningTime && planningTime.date instanceof Date)) return planningTime.day;
+    return pacificAt(new Date(planningTime.date.getTime() + 86400000)).day;
+  }
 
-    const { day, prev } = planningTime;
+  // Turn a RAPTOR journey into the itinerary shapes the panel draws (direct, transfer, multi).
+  // minutes between two times as the card's clocks show them (each clock drops its seconds)
+  function clockSpanMin(planningTime, aSec, bSec) {
+    const base = planningTime && planningTime.date instanceof Date ? planningTime.date.getTime() : Date.now(), now = planningTime ? planningTime.secs : 0;
+    const m = (sec) => Math.floor((base + (sec - now) * 1000) / 60000);
+    return Math.max(1, m(bSec) - m(aSec));
+  }
+  function raptorItinerary(net, T, j, access, egressMap, t0, planningTime) {
     const nowSecs = planningTime.secs;
-    const directItineraries = [];
-
-    for (const r of ROUTES) {
-      if (LINEIDX[r.id] == null) continue;
-      for (const pat of (r.patterns || [])) {
-        const stops = pat.stops;
-        let bestPair = null;
-        let minTotal = Infinity;
-
-        for (let i = 0; i < stops.length; i++) {
-          const sid1 = stops[i];
-          const oMatch = origStopMap.get(sid1);
-          if (!oMatch) continue;
-          for (let j = i + 1; j < stops.length; j++) {
-            const sid2 = stops[j];
-            const dMatch = destStopMap.get(sid2);
-            if (!dMatch) continue;
-
-            const bStop = stopIndex[sid1] || oMatch.stop;
-            const aStop = stopIndex[sid2] || dMatch.stop;
-            if (!bStop || !aStop) continue;
-            const transitDist = distMeters(bStop.lat, bStop.lon, aStop.lat, aStop.lon);
-            const isRail = r.cat === "link" || r.cat === "sounder";
-            const speedMpm = isRail ? 750 : r.cat === "ferry" ? 500 : 380;
-            const numStops = j - i;
-            const rideTime = Math.max(2, Math.round(transitDist / speedMpm) + Math.round(numStops * (isRail ? 0.3 : 0.4)));
-            const walk1Time = Math.round(oMatch.dist / 80);
-            const walk2Time = Math.round(dMatch.dist / 80);
-            const total = walk1Time + rideTime + walk2Time - (isRail ? 3 : 0);
-
-            if (total < minTotal) {
-              minTotal = total;
-              bestPair = {
-                firstOrig: i,
-                bestDest: j,
-                origMatch: oMatch,
-                destMatch: dMatch,
-                boardStop: bStop,
-                alightStop: aStop,
-                intermediateStopIds: pat.stops.slice(i + 1, j),
-                numStops,
-                rideTime,
-                walk1Dist: oMatch.dist,
-                walk1Time,
-                walk2Dist: dMatch.dist,
-                walk2Time,
-                transitDist,
-              };
-            }
-          }
-        }
-
-        if (bestPair) {
-          const walk1Time = bestPair.walk1Time;
-          const walk2Time = bestPair.walk2Time;
-          const earliestBoardSec = nowSecs + walk1Time * 60;
-          const schedTrip = timetableTripTimes(r, bestPair.boardStop, bestPair.alightStop, earliestBoardSec, day, prev, planningTime);
-
-          let waitTime, rideTime, totalDuration, schedVerified = false;
-          if (schedTrip) {
-            waitTime = schedTrip.waitMin;
-            if (waitTime > 180) continue;
-            rideTime = schedTrip.rideMin;
-            totalDuration = walk1Time + waitTime + rideTime + walk2Time;
-            schedVerified = true;
-          } else {
-            const hasServiceToday = r.sched && r.sched[day] && r.sched[day].trips > 0;
-            if (!hasServiceToday && SCHED) continue;
-            const headway = r.midHeadway || (r.sched?.weekday?.mid) || (r.cat === "link" ? 8 : 15);
-            waitTime = Math.round(Math.min(headway / 2, 12));
-            rideTime = bestPair.rideTime;
-            totalDuration = walk1Time + waitTime + rideTime + walk2Time;
-          }
-
-          directItineraries.push({
-            type: "direct",
-            route: r,
-            pattern: pat,
-            boardStop: bestPair.boardStop,
-            alightStop: bestPair.alightStop,
-            intermediateStopIds: bestPair.intermediateStopIds,
-            numStops: bestPair.numStops,
-            walk1Dist: bestPair.walk1Dist,
-            walk1Time,
-            rideTime,
-            walk2Dist: bestPair.walk2Dist,
-            walk2Time,
-            waitTime,
-            totalDuration,
-            schedTrip,
-            schedVerified,
-            planningTime,
-            departSec: schedTrip ? schedTrip.depSec - walk1Time * 60 : nowSecs,
-            arrivalSec: schedTrip ? schedTrip.arrSec + walk2Time * 60 : nowSecs + totalDuration * 60,
-            transitDist: bestPair.transitDist,
-          });
-        }
-      }
-    }
-
-    directItineraries.sort((a, b) => a.totalDuration - b.totalDuration);
-    const seenDirect = new Set();
-    const topDirect = [];
-    for (const it of directItineraries) {
-      if (seenDirect.has(it.route.id)) continue;
-      seenDirect.add(it.route.id);
-      topDirect.push(it);
-      if (topDirect.length >= 3) break;
-    }
-
-    // 1-transfer routes: support multi-modal transfer hubs
-    const stopToSt = getStopToStation();
-    const origRoutes = new Set();
-    for (const o of origStops) {
-      for (const rid of (o.stop.routes || [])) origRoutes.add(rid);
-    }
-    const destRoutes = new Set();
-    for (const d of destStops) {
-      for (const rid of (d.stop.routes || [])) destRoutes.add(rid);
-    }
-
-    function transferDistance(s1Id, s2Id, maxDist = 360) {
-      if (s1Id === s2Id) return 0;
-      const st1 = stopToSt.get(s1Id), st2 = stopToSt.get(s2Id);
-      if (st1 && st2 && st1 === st2) return 50;
-      const s1 = stopIndex[s1Id], s2 = stopIndex[s2Id];
-      if (!s1 || !s2) return Infinity;
-      const d = distMeters(s1.lat, s1.lon, s2.lat, s2.lon);
-      return d <= maxDist ? d : Infinity;
-    }
-
-    const transferItineraries = [];
-    for (const r1Id of origRoutes) {
-      const r1 = RBY[r1Id];
-      if (!r1 || LINEIDX[r1.id] == null) continue;
-      for (const p1 of (r1.patterns || [])) {
-        let firstOrig = -1;
-        for (let i = 0; i < p1.stops.length; i++) {
-          if (origStopMap.has(p1.stops[i])) { firstOrig = i; break; }
-        }
-        if (firstOrig === -1) continue;
-
-        for (const r2Id of destRoutes) {
-          if (r2Id === r1Id) continue;
-          const r2 = RBY[r2Id];
-          if (!r2 || LINEIDX[r2.id] == null) continue;
-          for (const p2 of (r2.patterns || [])) {
-            let lastDest = -1;
-            for (let j = p2.stops.length - 1; j >= 0; j--) {
-              if (destStopMap.has(p2.stops[j])) { lastDest = j; break; }
-            }
-            if (lastDest === -1) continue;
-
-            for (let i = firstOrig + 1; i < p1.stops.length; i++) {
-              const sid1 = p1.stops[i];
-              for (let j = 0; j < lastDest; j++) {
-                const sid2 = p2.stops[j];
-                const s1 = stopIndex[sid1], s2 = stopIndex[sid2];
-                if (!s1 || !s2) continue;
-                const isFerryOrHub = r1.cat === "ferry" || r2.cat === "ferry" || r1.cat === "link" || r2.cat === "sounder" || s1.isStation || s2.isStation || s1.kind === "station" || s2.kind === "station" || s1.kind === "ferry" || s2.kind === "ferry";
-                const maxTDist = isFerryOrHub ? 650 : 360;
-                const tDist = transferDistance(sid1, sid2, maxTDist);
-                if (tDist <= maxTDist) {
-                  const origSid = p1.stops[firstOrig], destSid = p2.stops[lastDest];
-                  const boardStop = stopIndex[origSid] || origStopMap.get(origSid)?.stop;
-                  const alightStop = stopIndex[destSid] || destStopMap.get(destSid)?.stop;
-                  if (!boardStop || !alightStop) continue;
-                  const oMatch = origStopMap.get(origSid), dMatch = destStopMap.get(destSid);
-
-                  const numStops1 = i - firstOrig;
-                  const numStops2 = lastDest - j;
-
-                  const isR1Rail = r1.cat === "link" || r1.cat === "sounder";
-                  const isR2Rail = r2.cat === "link" || r2.cat === "sounder";
-                  const speed1 = isR1Rail ? 750 : r1.cat === "ferry" ? 500 : 380;
-                  const speed2 = isR2Rail ? 750 : r2.cat === "ferry" ? 500 : 380;
-
-                  const d1 = distMeters(boardStop.lat, boardStop.lon, s1.lat, s1.lon);
-                  const d2 = distMeters(s2.lat, s2.lon, alightStop.lat, alightStop.lon);
-
-                  if (numStops1 < 2 && d1 < 500) continue;
-
-                  const ride1 = Math.max(2, Math.round(d1 / speed1) + Math.round(numStops1 * (isR1Rail ? 0.3 : 0.35)));
-                  const ride2 = Math.max(2, Math.round(d2 / speed2) + Math.round(numStops2 * (isR2Rail ? 0.3 : 0.35)));
-
-                  const walk1Time = Math.round((oMatch ? oMatch.dist : 0) / 80);
-                  const walk2Time = Math.round((dMatch ? dMatch.dist : 0) / 80);
-                  const transferWalkTime = Math.max(1, Math.round(tDist / 80));
-
-                  const earliestSec1 = nowSecs + walk1Time * 60;
-                  const leg1 = timetableTripTimes(r1, boardStop, s1, earliestSec1, day, prev, planningTime);
-
-                  let leg2 = null;
-                  let wait1, wait2, ride1Time = ride1, ride2Time = ride2;
-                  let schedVerified = false;
-
-                  if (leg1) {
-                    wait1 = leg1.waitMin;
-                    if (wait1 > 90) continue;
-                    ride1Time = leg1.rideMin;
-                    const earliestSec2 = leg1.arrSec + transferWalkTime * 60 + 120;
-                    leg2 = timetableTripTimes(r2, s2, alightStop, earliestSec2, day, prev, planningTime);
-                    if (leg2) {
-                      const transferWaitMin = Math.round((leg2.depSec - leg1.arrSec - transferWalkTime * 60) / 60);
-                      if (transferWaitMin > 60 || transferWaitMin < 0) continue;
-                      wait2 = Math.max(2, transferWaitMin);
-                      ride2Time = leg2.rideMin;
-                      schedVerified = true;
-                    } else if (SCHED) {
-                      continue; // No achievable connecting trip in timetable
-                    }
-                  }
-
-                  if (!leg1 || !leg2) {
-                    const hasS1 = r1.sched && r1.sched[day] && r1.sched[day].trips > 0;
-                    const hasS2 = r2.sched && r2.sched[day] && r2.sched[day].trips > 0;
-                    if ((!hasS1 || !hasS2) && SCHED) continue;
-                    const h1 = r1.midHeadway || (r1.sched?.weekday?.mid) || (r1.cat === "link" ? 8 : 15);
-                    const h2 = r2.midHeadway || (r2.sched?.weekday?.mid) || (r2.cat === "link" ? 8 : 15);
-                    wait1 = Math.round(Math.min(h1 / 2, 7));
-                    wait2 = Math.round(Math.min(h2 / 2, 7)) + 2 + transferWalkTime;
-                  }
-
-                  const railBonus = (isR1Rail ? 3 : 0) + (isR2Rail ? 3 : 0);
-                  const totalDuration = walk1Time + wait1 + ride1Time + transferWalkTime + wait2 + ride2Time + walk2Time;
-
-                  transferItineraries.push({
-                    type: "transfer",
-                    r1, r2,
-                    p1, p2,
-                    boardStop,
-                    transferStop: s1,
-                    transferStop1: s1,
-                    transferStop2: s2,
-                    transferWalkDist: tDist,
-                    transferWalkTime,
-                    alightStop,
-                    intermediateStops1: p1.stops.slice(firstOrig + 1, i),
-                    intermediateStops2: p2.stops.slice(j + 1, lastDest),
-                    numStops1, numStops2,
-                    ride1: ride1Time,
-                    ride2: ride2Time,
-                    walk1Time, walk2Time,
-                    wait1, wait2,
-                    totalDuration,
-                    schedTrip1: leg1,
-                    schedTrip2: leg2,
-                    schedVerified,
-                    planningTime,
-                    departSec: leg1 ? leg1.depSec - walk1Time * 60 : nowSecs,
-                    arrivalSec: leg2 ? leg2.arrSec + walk2Time * 60 : nowSecs + totalDuration * 60,
-                    score: totalDuration - railBonus,
-                  });
-                  break;
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-
-    transferItineraries.sort((a, b) => (a.score ?? a.totalDuration) - (b.score ?? b.totalDuration));
-    const seenTransfer = new Set();
-    const topTransfer = [];
-    for (const it of transferItineraries) {
-      const pair = it.r1.id + "->" + it.r2.id;
-      if (seenTransfer.has(pair)) continue;
-      seenTransfer.add(pair);
-      topTransfer.push(it);
-      if (topTransfer.length >= 4) break;
-    }
-
-    // Cross-water and regional trips often need two or three transfers (for
-    // example, bus → ferry → Vashon shuttle).  Search those after the lighter
-    // direct and one-transfer passes, with the same timetable/buffer rules.
-    const multi = planMultiLegTrips(origStops, destStops, origStopMap, destStopMap, nowSecs, day, prev, planningTime);
-    for (const it of multi) {
-      const first = it.legs[0], last = it.legs[it.legs.length - 1];
-      it.planningTime = planningTime;
-      it.departSec = first?.schedTrip ? first.schedTrip.depSec - it.walk1Time * 60 : nowSecs;
-      it.arrivalSec = last?.schedTrip ? last.schedTrip.arrSec + it.walk2Time * 60 : nowSecs + it.totalDuration * 60;
-    }
-
-    let directWalk = null;
-    if (directWalkDist <= 2500) {
-      directWalk = {
-        type: "walk",
-        dist: directWalkDist,
-        totalDuration: directWalkTime,
-        planningTime,
-        departSec: nowSecs,
-        arrivalSec: nowSecs + directWalkTime * 60,
+    const acc = access.find((a) => a[0] === j.accessStop);
+    const egr = egressMap.get(j.egressStop);
+    if (!acc || !egr) return null;
+    const walk1Dist = acc[2], walk1Time = Math.round(walk1Dist / WALK_MPM);
+    const walk2Dist = egr[1], walk2Time = Math.round(walk2Dist / WALK_MPM);
+    const clockAt = (sec) => CLOCK.format(new Date((planningTime.date instanceof Date ? planningTime.date.getTime() : Date.now()) + (sec - nowSecs) * 1000));
+    const legs = [];
+    let pendingWalk = null, prevArrSec = t0 + acc[1];
+    for (const L of j.legs) {
+      if (L.walk) { pendingWalk = L; continue; }
+      const pat = net.pats[L.pi], tt = T.get(L.pi), sp = SCHED.patterns[L.pi];
+      const depSec = tt.s0[L.trip] + pat.f[L.b] * tt.du[L.trip];
+      const arrSec = tt.s0[L.trip] + pat.f[L.a] * tt.du[L.trip];
+      const boardStop = stopIndex[sp.s[L.b]], alightStop = stopIndex[sp.s[L.a]];
+      const walkSec = pendingWalk ? pendingWalk.sec : 0;
+      const readyAt = prevArrSec + walkSec;
+      const rideSec = Math.max(60, arrSec - depSec);
+      const schedTrip = {
+        pi: L.pi, pattern: sp, depSec, arrSec, rideSec, rideMin: Math.max(1, Math.round(rideSec / 60)),
+        waitMin: Math.max(0, Math.round((depSec - readyAt) / 60)), clock: clockAt(depSec),
       };
+      legs.push({
+        route: pat.route, pattern: raptorRoutePattern(net, L.pi), boardStop, alightStop,
+        intermediateStopIds: sp.s.slice(L.b + 1, L.a), numStops: L.a - L.b,
+        rideTime: schedTrip.rideMin, waitTime: legs.length ? Math.max(0, Math.round((depSec - readyAt) / 60)) : schedTrip.waitMin,
+        schedTrip, transferWalkDist: pendingWalk ? pendingWalk.metres : 0,
+        transferWalkTime: pendingWalk ? Math.max(1, Math.round(pendingWalk.metres / WALK_MPM)) : 0,
+        depSec, arrSec,
+      });
+      pendingWalk = null;
+      prevArrSec = arrSec;
+    }
+    if (!legs.length) return null;
+    const first = legs[0], last = legs[legs.length - 1];
+    const departSec = first.depSec - walk1Time * 60;
+    const arrivalSec = last.arrSec + walk2Time * 60;
+    const walkTotal = walk1Dist + walk2Dist + legs.reduce((t, l) => t + l.transferWalkDist, 0);
+    // door to door: from leaving (walk to the first stop) to arriving, as the two clock times read
+    const totalDuration = clockSpanMin(planningTime, departSec, arrivalSec);
+    const base = {
+      planningTime, departSec, arrivalSec, totalDuration, walkTotal, rides: legs.length,
+      walk1Dist, walk1Time, walk2Dist, walk2Time, schedVerified: true, boardStop: first.boardStop, alightStop: last.alightStop,
+      sig: legs.map((l) => `${l.route.id}@${l.boardStop?.id}>${l.alightStop?.id}`).join("|") + `#${Math.round(first.depSec)}`,
+    };
+    if (legs.length === 1) {
+      return { ...base, type: "direct", route: first.route, pattern: first.pattern, intermediateStopIds: first.intermediateStopIds,
+        numStops: first.numStops, rideTime: first.rideTime, waitTime: first.waitTime, schedTrip: first.schedTrip,
+        transitDist: distMeters(first.boardStop.lat, first.boardStop.lon, first.alightStop.lat, first.alightStop.lon) };
+    }
+    if (legs.length === 2) {
+      const second = legs[1];
+      return { ...base, type: "transfer", r1: first.route, r2: second.route, p1: first.pattern, p2: second.pattern,
+        transferStop: first.alightStop, transferStop1: first.alightStop, transferStop2: second.boardStop,
+        transferWalkDist: second.transferWalkDist, transferWalkTime: second.transferWalkTime,
+        intermediateStops1: first.intermediateStopIds, intermediateStops2: second.intermediateStopIds,
+        numStops1: first.numStops, numStops2: second.numStops, ride1: first.rideTime, ride2: second.rideTime,
+        wait1: first.waitTime, wait2: Math.max(0, second.waitTime), schedTrip: first.schedTrip, schedTrip1: first.schedTrip, schedTrip2: second.schedTrip,
+        score: totalDuration };
+    }
+    return { ...base, type: "multi", legs, schedTrip: first.schedTrip };
+  }
+
+  // Stops within walking distance of a point: [[stop, seconds, metres]] (widening if none).
+  function raptorEnds(net, pt, radii) {
+    for (const R of radii) {
+      const out = [];
+      net.near(pt.lat, pt.lon, R, (s, d) => { if (net.stopPats[s].length) out.push([s, Math.round(d / WALK_MPM * 60), Math.round(d)]); });
+      if (out.length) return out;
+    }
+    return [];
+  }
+
+  function planTransitTrip(orig, dest, planningTime = pacificNow(), { quick = false } = {}) {
+    if (!orig || !dest) return null;
+    // a point with no real coordinates (Infinity sent the stop search into an endless loop)
+    if (![orig.lat, orig.lon, dest.lat, dest.lon].every(Number.isFinite) || !Number.isFinite(planningTime && planningTime.secs)) return null;
+    const directWalkDist = distMeters(orig.lat, orig.lon, dest.lat, dest.lon);
+    const directWalkTime = Math.round(directWalkDist / WALK_MPM);
+    const nowSecs = planningTime.secs;
+    const directWalk = directWalkDist <= WALK_ONLY_MAX_M ? {
+      type: "walk", dist: directWalkDist, totalDuration: directWalkTime, walkTotal: directWalkDist, rides: 0,
+      planningTime, departSec: nowSecs, arrivalSec: nowSecs + directWalkTime * 60, tags: [],
+    } : null;
+    const net = raptorNetwork();
+    if (!net) return { direct: [], transfer: [], multi: [], directWalk, options: [], pending: true };
+    const { day, prev } = planningTime;
+    const T = raptorTrips(net, day, prev, planNextDay(planningTime));
+    const t0 = nowSecs;
+
+    const seen = new Map();
+    const take = (journeys, access, egressMap) => {
+      for (const j of journeys) {
+        const it = raptorItinerary(net, T, j, access, egressMap, t0, planningTime);
+        if (!it) continue;
+        // never suggest riding a few hundred metres when walking is quicker
+        if (directWalk && it.arrivalSec >= directWalk.arrivalSec && it.walkTotal >= directWalk.dist * 0.6) continue;
+        const old = seen.get(it.sig);
+        if (!old || it.arrivalSec < old.arrivalSec) seen.set(it.sig, it);
+      }
+    };
+    const run = (radii, opts = {}) => {
+      const access = raptorEnds(net, orig, radii), egressList = raptorEnds(net, dest, radii);
+      if (!access.length || !egressList.length) return [];
+      const egressMap = new Map(egressList.map(([s, w, m]) => [s, [w, m]]));
+      const res = raptorSearch(net, T, access, egressMap, t0, opts);
+      take(res, access, egressMap);
+      return res.map((j) => raptorItinerary(net, T, j, access, egressMap, t0, planningTime)).filter(Boolean);
+    };
+    // 1. the full search: every trip, any reasonable walk
+    const main = run([1000, 1800, 3500]);
+    // 2. least walking: only stops close by, no walking between stops
+    if (!quick) run([450, 800, 1500], { maxWalkM: 0 });
+    // 3. another way: leave out the route the fastest trip rides longest
+    const fastest = main.slice().sort((a, b) => a.arrivalSec - b.arrivalSec)[0];
+    if (fastest && !quick) {
+      const legs = fastest.type === "direct" ? [{ route: fastest.route, rideTime: fastest.rideTime }]
+        : fastest.type === "transfer" ? [{ route: fastest.r1, rideTime: fastest.ride1 }, { route: fastest.r2, rideTime: fastest.ride2 }] : fastest.legs;
+      const longest = legs.slice().sort((a, b) => b.rideTime - a.rideTime)[0];
+      if (longest) run([1000, 1800, 3500], { banned: new Set([longest.route.id]) });
     }
 
-    return { direct: topDirect, transfer: topTransfer, multi, directWalk };
+    // 4. Later departures (a light range search): from just after the fastest trip leaves, again.
+    // A later bus that still makes the same connection replaces the earlier one (no point
+    // leaving early), and the next couple of departures are offered too.
+    const first = [...seen.values()].sort((a, b) => a.arrivalSec - b.arrivalSec)[0];
+    if (first && !quick && first.departSec - nowSecs < 3 * 3600) {
+      const access = raptorEnds(net, orig, [1000, 1800, 3500]), egressList = raptorEnds(net, dest, [1000, 1800, 3500]);
+      const egressMap = new Map(egressList.map(([s, w, m]) => [s, [w, m]]));
+      let from = first, later = 0;
+      for (let i = 0; i < 7 && from && later < 2; i++) {
+        const res = raptorSearch(net, T, access, egressMap, from.schedTrip.depSec - from.walk1Time * 60 + 60);
+        const its = res.map((j) => raptorItinerary(net, T, j, access, egressMap, t0, planningTime)).filter(Boolean)
+          .sort((a, b) => a.arrivalSec - b.arrivalSec);
+        const next = its.find((it) => it.departSec > from.departSec);
+        if (!next) break;
+        if (next.arrivalSec > first.arrivalSec + 60) { next.later = true; later++; }
+        if (!seen.has(next.sig)) seen.set(next.sig, next);
+        from = next;
+      }
+    }
+
+    // no stop within reach of one end: say which, rather than blame the time of day
+    const noStopsAt = !raptorEnds(net, orig, [3500]).length ? "origin" : !raptorEnds(net, dest, [3500]).length ? "destination" : null;
+    let options = [...seen.values()];
+    // Keep only trips not beaten on every count by another (arrivals a minute apart count as
+    // the same; leaving later for the same arrival is better).
+    const ARR = 60, WALK = 50;
+    const beats = (b, a) => b.arrivalSec <= a.arrivalSec + ARR && b.rides <= a.rides && b.walkTotal <= a.walkTotal + WALK && b.departSec >= a.departSec
+      && (b.arrivalSec < a.arrivalSec - ARR || b.rides < a.rides || b.walkTotal + WALK < a.walkTotal || b.departSec > a.departSec + 30);
+    options = options.filter((a) => !options.some((b) => b !== a && beats(b, a)));
+    const byArrival = (a, b) => Math.round(a.arrivalSec / 60) - Math.round(b.arrivalSec / 60) || a.rides - b.rides || a.walkTotal - b.walkTotal;
+    options.sort(byArrival);
+    // Alternatives have to be worth taking: nothing that gets there far later than the fastest
+    // (half an hour, or half the trip's length on long trips), except the next departures.
+    if (options.length) {
+      const best = options[0], slack = Math.max(30 * 60, best.totalDuration * 30);
+      options = options.filter((o) => o.later || o.arrivalSec <= best.arrivalSec + slack);
+    }
+    // ...and one card per way of going, unless a later run of it leaves at least 8 minutes later
+    const bySeq = new Map();
+    options = options.filter((o) => {
+      const seq = o.sig.split("#")[0].replace(/@[^|]*/g, "");
+      const runs = bySeq.get(seq) || [];
+      if (runs.some((x) => Math.abs(x.departSec - o.departSec) < 8 * 60)) return false;
+      runs.push(o); bySeq.set(seq, runs);
+      return true;
+    });
+    const pick = (cmp) => options.slice().sort(cmp)[0];
+    const tag = (it, t) => { if (it) (it.tags || (it.tags = [])).includes(t) || it.tags.push(t); };
+    tag(pick(byArrival), "Fastest");
+    tag(pick((a, b) => a.rides - b.rides || byArrival(a, b)), "Fewest transfers");
+    tag(pick((a, b) => a.walkTotal - b.walkTotal || byArrival(a, b)), "Least walking");
+    // the labelled options first, then the rest, up to six in all
+    const labelled = options.filter((o) => o.tags && o.tags.length), rest = options.filter((o) => !o.tags || !o.tags.length);
+    options = labelled.concat(rest).slice(0, 6);
+    for (const o of options) if (!o.tags) o.tags = [];
+    return {
+      direct: options.filter((o) => o.type === "direct"),
+      transfer: options.filter((o) => o.type === "transfer"),
+      multi: options.filter((o) => o.type === "multi"),
+      directWalk, options, noStopsAt,
+    };
+  }
+
+  // Arrive by a time. The earliest arrival only grows with the departure time, so a binary
+  // search on the departure finds the latest one that still gets there in time (to the minute).
+  // Plans from there and from a little earlier give each way of going at its latest departure.
+  function planArriveBy(orig, dest, requested) {
+    const deadline = requested.secs;
+    const at = (secs) => ({ ...requested, secs, date: requested.date instanceof Date ? new Date(requested.date.getTime() + (secs - requested.secs) * 1000) : requested.date });
+    let walk = null;
+    const firstArrival = (t) => {
+      const plan = planTransitTrip(orig, dest, at(t), { quick: true });
+      if (plan && plan.directWalk && !walk) walk = { ...plan.directWalk, departSec: deadline - plan.directWalk.totalDuration * 60, arrivalSec: deadline };
+      const opts = (plan && plan.options) || [];
+      return opts.length ? Math.min(...opts.map((o) => o.arrivalSec)) : Infinity;
+    };
+    let lo = deadline - 3 * 3600;
+    if (!(firstArrival(lo) <= deadline + 30)) {
+      lo = deadline - 10 * 3600; // long trips, sparse service, early-morning deadlines
+      if (!(firstArrival(lo) <= deadline + 30)) return { options: [], directWalk: walk };
+    }
+    let hi = deadline;
+    while (hi - lo > 60) {
+      const mid = Math.floor((lo + hi) / 2);
+      if (firstArrival(mid) <= deadline + 30) lo = mid; else hi = mid;
+    }
+    const keep = new Map();
+    for (const back of [0, 20 * 60, 50 * 60]) {
+      const plan = planTransitTrip(orig, dest, at(lo - back));
+      for (const o of (plan && plan.options) || []) {
+        if (o.arrivalSec > deadline + 30) continue;
+        const key = o.sig.split("#")[0].replace(/@[^|]*/g, ""), old = keep.get(key);
+        if (!old || o.departSec > old.departSec) keep.set(key, o);
+      }
+    }
+    // nothing that leaves earlier without saving a ride or real walking
+    let options = [...keep.values()];
+    const beats = (b, a) => b.departSec >= a.departSec - 60 && b.rides <= a.rides && b.walkTotal <= a.walkTotal + 50
+      && (b.departSec > a.departSec + 60 || b.rides < a.rides || b.walkTotal + 50 < a.walkTotal);
+    options = options.filter((a) => !options.some((b) => b !== a && beats(b, a)));
+    options = options.sort((a, b) => b.departSec - a.departSec || a.rides - b.rides).slice(0, 6);
+    for (const o of options) { o.tags = []; o.totalDuration = clockSpanMin(o.planningTime, o.departSec, o.arrivalSec); }
+    if (options[0]) options[0].tags.push("Leave latest");
+    const fewest = options.slice().sort((a, b) => a.rides - b.rides || b.departSec - a.departSec)[0];
+    if (fewest && fewest.rides < options[0].rides) fewest.tags.push("Fewest transfers");
+    const leastWalk = options.slice().sort((a, b) => a.walkTotal - b.walkTotal || b.departSec - a.departSec)[0];
+    if (leastWalk && leastWalk.walkTotal + 50 < options[0].walkTotal) leastWalk.tags.push("Least walking");
+    return { options, directWalk: walk };
   }
 
   function clearTripMap() {
@@ -7509,6 +7602,10 @@
   }
 
   function getSoonestBus(it) {
+    if (it && it.type === "walk" && it.arriveBy && it.planningTime && it.planningTime.date instanceof Date) {
+      const leave = CLOCK.format(new Date(it.planningTime.date.getTime() + (it.departSec - it.planningTime.secs) * 1000));
+      return { type: "walk", vehWord: "walk", text: "Leave by", clock: leave, isLive: false, desc: `Walk, leaving by ${leave}` };
+    }
     if (!it || it.type === "walk") {
       return {
         type: "walk",
@@ -7557,7 +7654,8 @@
     // 2. Timetable schedule departures check
     const schedTrip = it.schedTrip || (it.type === "transfer" && it.schedTrip1) || (it.type === "multi" && it.legs?.[0]?.schedTrip) || timetableTripTimes(route, it.boardStop, it.type === "direct" ? it.alightStop : (it.transferStop1 || it.transferStop), minEarliestSec, planningTime.day, planningTime.prev, planningTime);
     if (schedTrip) {
-      const waitMin = schedTrip.waitMin;
+      // minutes from now until it leaves the stop (not the wait left after walking there)
+      const waitMin = Number.isFinite(schedTrip.depSec) ? Math.max(0, Math.round((schedTrip.depSec - planningTime.secs) / 60)) : schedTrip.waitMin;
       const clockStr = schedTrip.clock;
       const text = isFuturePlan ? "Departs" : (waitMin === 0 ? "Due now" : `in ${waitMin} min`);
       return {
@@ -7829,8 +7927,32 @@
     }
   }
 
+  let lastPlanNoStops = null;
+  // a clock time ("10:42 AM") for seconds-after-midnight on the plan's own day
+  function tripClock(planningTime, sec) {
+    const pt = planningTime || pacificNow();
+    return CLOCK.format(new Date((pt.date instanceof Date ? pt.date.getTime() : Date.now()) + (sec - pt.secs) * 1000));
+  }
+  // the start and the destination are (practically) the same spot: there is no trip to plan
+  function samePlace() { return !!(dirOrigin && dirDest) && distMeters(dirOrigin.lat, dirOrigin.lon, dirDest.lat, dirDest.lon) < 60; }
+
   function executeTripPlan() {
     if (!dirOrigin || !dirDest) return;
+    if (samePlace()) {
+      currentItineraries = [];
+      selectedItinerary = null;
+      panelView = "directions";
+      clearTripMap();
+      renderTripPlanView();
+      return;
+    }
+    if (!SCHED) {
+      // the timetable is still on its way: say so, and plan as soon as it lands
+      setView(`${backBtn}<div class="home-view"><div class="planner-summary-card" aria-live="polite"><div class="planner-summary-title"><span>${poiIconSVG("clock", 17)} Loading timetables…</span></div><p class="planner-sub">Trips are planned from every agency's published schedule. This takes a moment the first time.</p></div></div>`);
+      $("#back")?.addEventListener("click", closeTripPlanner);
+      loadSchedule().then(() => { if (SCHED && dirOrigin && dirDest) executeTripPlan(); });
+      return;
+    }
     const sug = $("#dirSuggestions");
     if (sug) sug.hidden = true;
     $("#panelBody") && ($("#panelBody").style.visibility = "");
@@ -7838,35 +7960,32 @@
     $("#dirOrig")?.blur();
     $("#dirDest")?.blur();
     const requestedTime = getDirPlanningTime();
-    // For arrive-by, search forward from up to three hours before the requested
-    // arrival, then keep only schedule-feasible itineraries that meet the time.
-    // This preserves the same all-mode planner and its transfer buffers.
-    const searchTime = requestedTime.mode === "arrive-by"
-      ? { ...pacificAt(new Date(Math.max(Date.now(), requestedTime.date.getTime() - 3 * 60 * 60 * 1000))), mode: "arrive-by" }
-      : requestedTime;
-    const collect = (plan) => {
-      const itins = [];
-      if (!plan) return itins;
-      if (plan.direct?.length) itins.push(...plan.direct);
-      if (plan.transfer?.length) itins.push(...plan.transfer);
-      if (plan.multi?.length) itins.push(...plan.multi);
-      if (plan.directWalk) itins.push(plan.directWalk);
-      return itins;
-    };
-    let allItins = collect(planTransitTrip(dirOrigin, dirDest, searchTime));
+    // Depart at: the RAPTOR search from that time (fastest, fewest transfers, least walking,
+    // another route, the next departure). Arrive by: each way of going at its latest departure.
+    let allItins;
+    lastPlanNoStops = null;
     if (requestedTime.mode === "arrive-by") {
-      allItins = allItins.filter((it) => it.arrivalSec == null || it.arrivalSec <= requestedTime.secs + 30);
+      const plan = planArriveBy(dirOrigin, dirDest, requestedTime);
+      allItins = plan.options.slice();
+      if (plan.directWalk) allItins.push(plan.directWalk);
       for (const it of allItins) {
         it.planningTime = requestedTime;
         it.arriveBy = true;
         it.requestedArrivalSec = requestedTime.secs;
       }
+    } else {
+      const plan = planTransitTrip(dirOrigin, dirDest, requestedTime);
+      lastPlanNoStops = (plan && plan.noStopsAt) || null;
+      allItins = plan ? plan.options.slice() : [];
+      if (plan && plan.directWalk) {
+        // the walk sits where its arrival time puts it among the rides
+        const w = plan.directWalk, at = allItins.findIndex((it) => it.arrivalSec > w.arrivalSec);
+        if (!allItins.some((it) => it.tags && it.tags.includes("Fastest") && it.arrivalSec <= w.arrivalSec)) w.tags = ["Fastest"];
+        allItins.splice(at < 0 ? allItins.length : at, 0, w);
+        if (w.tags && w.tags.length) for (const it of allItins) if (it !== w && it.tags) it.tags = it.tags.filter((t) => t !== "Fastest");
+      }
+      allItins.sort((a, b) => (a.arrivalSec ?? 0) - (b.arrivalSec ?? 0) || (a.rides ?? 0) - (b.rides ?? 0));
     }
-    allItins.sort((a, b) => {
-      const aDur = a.totalDuration - (a.type === "direct" ? 3 : 0);
-      const bDur = b.totalDuration - (b.type === "direct" ? 3 : 0);
-      return aDur - bDur;
-    });
     currentItineraries = allItins;
     selectedItinerary = currentItineraries[0] || null;
     panelView = "directions";
@@ -7898,6 +8017,22 @@
       return;
     }
 
+    if (samePlace()) {
+      setView(`${backBtn}
+      <div class="home-view">
+        <div class="planner-summary-card" aria-live="polite">
+          <div class="planner-summary-title">
+            <span>${poiIconSVG("map", 17)} You're already there</span>
+            <button class="planner-reverse-btn press" id="planExitBtn" type="button">All routes</button>
+          </div>
+          <p class="planner-sub">The start and the destination are the same place. Choose a different destination to plan a trip.</p>
+        </div>
+      </div>`);
+      $("#back")?.addEventListener("click", closeTripPlanner);
+      $("#planExitBtn")?.addEventListener("click", closeTripPlanner);
+      return;
+    }
+
     if (!currentItineraries.length) {
       const html = `${backBtn}
       <div class="home-view">
@@ -7909,7 +8044,9 @@
               <button class="planner-reverse-btn press" id="planRevBtn" type="button">Reverse ⇄</button>
             </div>
           </div>
-          <p class="planner-sub">No transit connection was found between these points for the selected time. Try choosing a different departure time or selecting a nearby arterial transit hub.</p>
+          <p class="planner-sub">${lastPlanNoStops
+            ? `There is no transit stop within 3.5 km of your ${lastPlanNoStops === "origin" ? "starting point" : "destination"}, so this map can't plan that trip. Try a place closer to a bus, train or ferry stop.`
+            : "No published trip connects these points at the selected time. Try another departure time, or a start or end point closer to a frequent route."}</p>
         </div>
       </div>`;
       setView(html);
@@ -7960,7 +8097,7 @@
         ? "Walking departure:"
         : `Soonest ${soonest.vehWord || "departure"}${(it.type === "transfer" || it.type === "multi") && soonest.routeLabel ? ` (${esc(soonest.routeLabel)})` : ""}:`;
       const footVal = it.type === "walk"
-        ? `<b>Walk anytime</b>`
+        ? (soonest && soonest.text === "Leave by" ? `<b>Leave by ${soonest.clock}</b>` : `<b>Walk anytime</b>`)
         : `<b>${soonest.text}</b>${soonest.clock ? ` (${soonest.clock})` : ""}`;
       const soonestFootHtml = soonest ? `<div class="trip-soonest-foot">
         <span class="soonest-icon">${poiIconSVG(soonest.isLive ? "live" : soonest.type === "walk" ? "walk" : "clock", 14)}</span>
@@ -7975,9 +8112,10 @@
         <div class="trip-card-head">
           <div class="trip-card-headline">
             <span class="trip-time">${it.totalDuration} min</span>
+            ${it.arrivalSec != null && it.type !== "walk" ? `<span class="trip-arrive">${esc(tripClock(it.planningTime, it.departSec))} → ${esc(tripClock(it.planningTime, it.arrivalSec))}</span>` : ""}
             ${soonestPillHtml}
           </div>
-          ${idx === 0 ? '<span class="trip-tag">Fastest</span>' : ""}
+          ${(it.tags || []).length ? `<span class="trip-tags">${(it.tags.length >= 3 ? ["Best"] : it.tags).map((t) => `<span class="trip-tag"${t === "Best" ? ' title="Fastest, fewest transfers and least walking"' : ""}>${esc(t)}</span>`).join("")}</span>` : ""}
         </div>
         <div class="trip-ribbon">${badgeHtml}</div>
         <div class="trip-desc">${descHtml}</div>
@@ -8024,19 +8162,19 @@
             <div class="step-main">Start at ${esc(origTitle)}</div>
           </div>
         </div>
-        <div class="step-row">
+        ${(cur.walk1Dist ?? 99) >= 25 ? `        <div class="step-row">
           <span class="step-line"></span>
           <span class="step-icon">${poiIconSVG("walk", 16)}</span>
           <div class="step-content">
             <div class="step-main">Walk to ${esc(cur.boardStop.name)}</div>
             <div class="step-meta">${cur.walk1Time} min walk · ${Math.round(cur.walk1Dist)} m</div>
           </div>
-        </div>
+        </div>` : ""}
         <div class="step-row">
           <span class="step-line"></span>
           <span class="step-icon transit">${modeIcon(cur.route)}</span>
           <div class="step-content">
-            <div class="step-main">Board ${badgeHTML(cur.route)} towards ${esc(cur.pattern.headsign || "Destination")}</div>
+            <div class="step-main">Board ${badgeHTML(cur.route)} towards ${esc(String(cur.pattern.headsign || "Destination").replace(/^to\s+/i, ""))}</div>
             <div class="step-meta">${curSoonest ? `<span class="step-soonest${curSoonest.isLive ? " is-live" : ""}">${poiIconSVG(curSoonest.isLive ? "live" : "clock", 12)} ${curSoonest.isLive ? "Live departure:" : "Soonest departure:"} <b>${curSoonest.text}</b>${curSoonest.clock ? ` (${curSoonest.clock})` : ""}</span> · ` : ""}${cur.rideTime} min ride · ${cur.numStops} stop${cur.numStops > 1 ? "s" : ""}</div>
           </div>
         </div>
@@ -8045,7 +8183,7 @@
           <span class="step-icon">${poiIconSVG("walk", 16)}</span>
           <div class="step-content">
             <div class="step-main">Alight at ${esc(cur.alightStop.name)}</div>
-            <div class="step-meta">Walk ${cur.walk2Time} min · ${Math.round(cur.walk2Dist)} m to destination</div>
+            <div class="step-meta">${(cur.walk2Dist ?? 99) >= 25 ? `Walk ${cur.walk2Time} min · ${Math.round(cur.walk2Dist)} m to destination` : "Your destination is at the stop"}</div>
           </div>
         </div>
         <div class="step-row">
@@ -8064,19 +8202,19 @@
             <div class="step-main">Start at ${esc(origTitle)}</div>
           </div>
         </div>
-        <div class="step-row">
+        ${(cur.walk1Dist ?? 99) >= 25 ? `        <div class="step-row">
           <span class="step-line"></span>
           <span class="step-icon">${poiIconSVG("walk", 16)}</span>
           <div class="step-content">
             <div class="step-main">Walk to ${esc(cur.boardStop.name)}</div>
             <div class="step-meta">${cur.walk1Time} min walk</div>
           </div>
-        </div>
+        </div>` : ""}
         <div class="step-row">
           <span class="step-line"></span>
           <span class="step-icon transit">${modeIcon(cur.r1)}</span>
           <div class="step-content">
-            <div class="step-main">Board ${badgeHTML(cur.r1)} towards ${esc(cur.p1.headsign || "Transfer")}</div>
+            <div class="step-main">Board ${badgeHTML(cur.r1)} towards ${esc(String(cur.p1.headsign || "Transfer").replace(/^to\s+/i, ""))}</div>
             <div class="step-meta">${curSoonest ? `<span class="step-soonest${curSoonest.isLive ? " is-live" : ""}">${poiIconSVG(curSoonest.isLive ? "live" : "clock", 12)} ${curSoonest.isLive ? "Live departure:" : "Soonest departure:"} <b>${curSoonest.text}</b>${curSoonest.clock ? ` (${curSoonest.clock})` : ""}</span> · ` : ""}${cur.ride1} min · ${cur.numStops1} stops</div>
           </div>
         </div>
@@ -8092,7 +8230,7 @@
           <span class="step-line"></span>
           <span class="step-icon transit">${modeIcon(cur.r2)}</span>
           <div class="step-content">
-            <div class="step-main">${isThroughRoutedPair(cur.r1, cur.r2) ? `Continue on ${badgeHTML(cur.r2)} towards ${esc(cur.p2.headsign || "Destination")}` : `Board ${badgeHTML(cur.r2)} towards ${esc(cur.p2.headsign || "Destination")}`}</div>
+            <div class="step-main">${isThroughRoutedPair(cur.r1, cur.r2) ? `Continue on ${badgeHTML(cur.r2)} towards ${esc(String(cur.p2.headsign || "Destination").replace(/^to\s+/i, ""))}` : `Board ${badgeHTML(cur.r2)} towards ${esc(String(cur.p2.headsign || "Destination").replace(/^to\s+/i, ""))}`}</div>
             <div class="step-meta">${cur.ride2} min · ${cur.numStops2} stops</div>
           </div>
         </div>
@@ -8101,7 +8239,7 @@
           <span class="step-icon">${poiIconSVG("walk", 16)}</span>
           <div class="step-content">
             <div class="step-main">Alight at ${esc(cur.alightStop.name)}</div>
-            <div class="step-meta">Walk ${cur.walk2Time} min to destination</div>
+            <div class="step-meta">${(cur.walk2Dist ?? 99) >= 25 ? `Walk ${cur.walk2Time} min to destination` : "Your destination is at the stop"}</div>
           </div>
         </div>
         <div class="step-row">
@@ -8114,10 +8252,10 @@
     } else if (cur.type === "multi") {
       const rows = [];
       rows.push(`<div class="step-row"><span class="step-line"></span>${origIconHtml}<div class="step-content"><div class="step-main">Start at ${esc(origTitle)}</div></div></div>`);
-      rows.push(`<div class="step-row"><span class="step-line"></span><span class="step-icon">${poiIconSVG("walk", 16)}</span><div class="step-content"><div class="step-main">Walk to ${esc(cur.legs[0].boardStop.name)}</div><div class="step-meta">${cur.walk1Time} min walk · ${Math.round(cur.walk1Dist)} m</div></div></div>`);
+      if ((cur.walk1Dist ?? 99) >= 25) rows.push(`<div class="step-row"><span class="step-line"></span><span class="step-icon">${poiIconSVG("walk", 16)}</span><div class="step-content"><div class="step-main">Walk to ${esc(cur.legs[0].boardStop.name)}</div><div class="step-meta">${cur.walk1Time} min walk · ${Math.round(cur.walk1Dist)} m</div></div></div>`);
       cur.legs.forEach((leg, index) => {
         const firstDeparture = index === 0 && curSoonest ? `<span class="step-soonest${curSoonest.isLive ? " is-live" : ""}">${poiIconSVG(curSoonest.isLive ? "live" : "clock", 12)} ${curSoonest.isLive ? "Live departure:" : "Soonest departure:"} <b>${curSoonest.text}</b>${curSoonest.clock ? ` (${curSoonest.clock})` : ""}</span> · ` : "";
-        rows.push(`<div class="step-row"><span class="step-line"></span><span class="step-icon transit">${modeIcon(leg.route)}</span><div class="step-content"><div class="step-main">Board ${badgeHTML(leg.route)} towards ${esc(leg.pattern.headsign || "Destination")}</div><div class="step-meta">${firstDeparture}${leg.rideTime} min · ${leg.numStops} stop${leg.numStops === 1 ? "" : "s"}</div></div></div>`);
+        rows.push(`<div class="step-row"><span class="step-line"></span><span class="step-icon transit">${modeIcon(leg.route)}</span><div class="step-content"><div class="step-main">Board ${badgeHTML(leg.route)} towards ${esc(String(leg.pattern.headsign || "Destination").replace(/^to\s+/i, ""))}</div><div class="step-meta">${firstDeparture}${leg.rideTime} min · ${leg.numStops} stop${leg.numStops === 1 ? "" : "s"}</div></div></div>`);
         if (index < cur.legs.length - 1) {
           const next = cur.legs[index + 1];
           const isThrough = isThroughRoutedPair(leg.route, next.route);
@@ -8130,7 +8268,7 @@
           rows.push(`<div class="step-row"><span class="step-line"></span><span class="step-icon">${poiIconSVG("transfer", 16)}</span><div class="step-content"><div class="step-main">${transferName}</div><div class="step-meta">${bufferText}</div></div></div>`);
         }
       });
-      rows.push(`<div class="step-row"><span class="step-line"></span><span class="step-icon">${poiIconSVG("walk", 16)}</span><div class="step-content"><div class="step-main">Alight at ${esc(cur.alightStop.name)}</div><div class="step-meta">Walk ${cur.walk2Time} min · ${Math.round(cur.walk2Dist)} m to destination</div></div></div>`);
+      rows.push(`<div class="step-row"><span class="step-line"></span><span class="step-icon">${poiIconSVG("walk", 16)}</span><div class="step-content"><div class="step-main">Alight at ${esc(cur.alightStop.name)}</div><div class="step-meta">${(cur.walk2Dist ?? 99) >= 25 ? `Walk ${cur.walk2Time} min · ${Math.round(cur.walk2Dist)} m to destination` : "Your destination is at the stop"}</div></div></div>`);
       rows.push(`<div class="step-row">${destIconHtml}<div class="step-content"><div class="step-main">Arrive at ${esc(destTitle)}</div></div></div>`);
       stepsHtml = `<div class="trip-steps">${rows.join("")}</div>`;
     }
@@ -8361,19 +8499,17 @@
     showHome();
   }
 
-  function setOriginToCurrentLocation() {
-    if (userCoords) {
-      dirOrigin = {
-        lat: userCoords.lat,
-        lon: userCoords.lng,
-        name: "Your location",
-        isLocation: true,
-      };
+  // "Your current location" fills whichever end of the trip is being edited (the start by default)
+  function setOriginToCurrentLocation(field) {
+    const end = field === "dest" ? "dest" : "orig";
+    const place = (lat, lon) => {
+      const pt = { lat, lon, name: "Your location", isLocation: true };
+      if (end === "dest") dirDest = pt; else dirOrigin = pt;
       updateDirInputs();
-      if (dirDest) executeTripPlan();
-      else focusDirField("dest");
-      return;
-    }
+      if (dirOrigin && dirDest) executeTripPlan();
+      else focusDirField(dirOrigin ? "dest" : "orig");
+    };
+    if (userCoords) { place(userCoords.lat, userCoords.lng); return; }
     if (!navigator.geolocation) {
       showToast("Location services not available");
       return;
@@ -8382,18 +8518,10 @@
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         userCoords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-        dirOrigin = {
-          lat: pos.coords.latitude,
-          lon: pos.coords.longitude,
-          name: "Your location",
-          isLocation: true,
-        };
-        updateDirInputs();
-        if (dirDest) executeTripPlan();
-        else focusDirField("dest");
+        place(pos.coords.latitude, pos.coords.longitude);
       },
-      () => {
-        showToast("Could not determine location");
+      (err) => {
+        showToast(err && err.code === 1 ? "Location permission denied" : "Could not determine location");
       },
       { enableHighAccuracy: true, timeout: 8000 }
     );
@@ -8446,7 +8574,9 @@
     geoAbort = new AbortController();
 
     try {
-      const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&lat=47.6062&lon=-122.3321&limit=6`;
+      // only places on this map (Olympia to Bellingham): Photon's bbox keeps its six answers in the region
+      const R = (META && META.region) || { west: -123.5, south: 46.8, east: -121.6, north: 48.85 };
+      const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&lat=47.6062&lon=-122.3321&limit=6&bbox=${R.west},${R.south},${R.east},${R.north}`;
       const res = await fetch(url, { signal: geoAbort.signal });
       if (res.ok) {
         const json = await res.json();
@@ -8456,8 +8586,7 @@
           const coords = f.geometry?.coordinates;
           if (!coords || coords.length < 2) continue;
           const lon = coords[0], lat = coords[1];
-          // Puget Sound metropolitan bounding box
-          if (lat < 47.0 || lat > 48.3 || lon < -122.8 || lon > -121.5) continue;
+          if (lat < R.south || lat > R.north || lon < R.west || lon > R.east) continue;
 
           const addr = [p.housenumber, p.street].filter(Boolean).join(" ");
           let title = p.name || addr || p.city || q;
@@ -8515,7 +8644,13 @@
         }
       }
     }
-    return results.slice(0, 5);
+    // the name you typed first: exact, then starts with it, then a word that starts with it
+    const bare = q.replace(/\s+(station|stn|sta|terminal|stop)$/, "").trim() || q;
+    const rank = (r) => {
+      const n = (r.name || "").toLowerCase(), k = r.kind === "station" ? bare : q;
+      return n === k ? 0 : n.startsWith(k) ? 1 : (" " + n.replace(/[&/()-]/g, " ")).includes(" " + k) ? 2 : n.includes(k) ? 3 : 4;
+    };
+    return results.map((r, i) => [rank(r), i, r]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((x) => x[2]).slice(0, 5);
   }
 
   let currentDirSuggestions = [];
@@ -8587,8 +8722,9 @@
         name: "Your current location",
         desc: userCoords ? "GPS location available" : "Acquire GPS fix",
         action: () => {
-          setOriginToCurrentLocation();
+          const field = dirActiveField;
           hideDirSuggestionsBox();
+          setOriginToCurrentLocation(field);
         }
       });
       items.push({
@@ -8619,7 +8755,8 @@
         items.push({
           kind: loc.kind,
           name: loc.name,
-          desc: `${loc.desc} · ${badge.label}`,
+          // a stop, station, Park & Ride or trail already says what it is
+          desc: ["stop", "station", "pr", "trail"].includes(loc.kind) || String(loc.desc).toLowerCase() === badge.label.toLowerCase() ? loc.desc : `${loc.desc} · ${badge.label}`,
           badge,
           action: () => {
             const pt = { lat: loc.lat, lon: loc.lon, name: loc.name, badge };
@@ -8657,7 +8794,7 @@
           return {
             kind: "poi",
             name: p.name,
-            desc: `${p.desc} · ${badge.label}`,
+            desc: String(p.desc).toLowerCase() === badge.label.toLowerCase() ? p.desc : `${p.desc} · ${badge.label}`,
             lat: p.lat,
             lon: p.lon,
             osm_key: p.osm_key,
@@ -8688,8 +8825,8 @@
         if (q.length >= 2 && currentDirSuggestions.length === 0) {
           currentDirSuggestions.push({
             kind: "mapchoice",
-            name: "Choose on map",
-            desc: "Tap anywhere on the map to set point",
+            name: `No places match “${q.length > 40 ? q.slice(0, 40) + "…" : q}”`,
+            desc: "Choose on map instead: tap anywhere to set the point",
             action: () => {
               showToast(`Tap anywhere on the map to set ${dirActiveField === "orig" ? "starting point" : "destination"}`);
               hideDirSuggestionsBox();
@@ -8708,13 +8845,13 @@
     $("#dirClose")?.addEventListener("click", closeTripPlanner);
     $("#dirBackIcon")?.addEventListener("click", closeTripPlanner);
     $("#dirSwap")?.addEventListener("click", swapDirections);
-    $("#dirOrigLoc")?.addEventListener("click", setOriginToCurrentLocation);
+    $("#dirOrigLoc")?.addEventListener("click", () => setOriginToCurrentLocation("orig"));
     for (const button of document.querySelectorAll("[data-plan-time]")) {
       button.addEventListener("click", () => {
         dirTimeMode = button.dataset.planTime;
         if (dirTimeMode !== "leave-now") {
           if (!dirTimeValue) {
-            dirTimeValue = localDateTimeValue(new Date(Date.now() + 15 * 60 * 1000));
+            dirTimeValue = localDateTimeValue(wallNow(15));
           }
           openCustomDatePicker();
         } else {
@@ -8749,8 +8886,9 @@
     });
 
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") {
+      if (e.key === "Escape" && !$("#dirCustomPicker")?.hidden) {
         closeCustomDatePicker();
+        e.preventDefault(); // this Escape only closes the picker
       }
     });
 
@@ -8804,6 +8942,7 @@
           e.preventDefault();
           const first = currentDirSuggestions[0];
           if (first) first.action();
+          else if (oInput.value.trim()) showToast(`No places match “${oInput.value.trim().slice(0, 40)}”`);
         }
       });
     }
@@ -8836,6 +8975,7 @@
           e.preventDefault();
           const first = currentDirSuggestions[0];
           if (first) first.action();
+          else if (dInput.value.trim()) showToast(`No places match “${dInput.value.trim().slice(0, 40)}”`);
         }
       });
     }
@@ -9007,18 +9147,16 @@
       if (active) {
         map.setPaintProperty(id, "line-width", active.has(id) ? scaleWidthExpr(baseW, 1.6) : baseW);
         map.setPaintProperty(id, "line-opacity", active.has(id) ? 1 : baseO * 0.22);
-      } else if (boldOnlyName) {
-        map.setPaintProperty(id, "line-width", boldByName(baseW, boldOnlyName, 1.5));
-        map.setPaintProperty(id, "line-opacity", baseO);
       } else {
-        map.setPaintProperty(id, "line-width", baseW);
-        map.setPaintProperty(id, "line-opacity", baseO);
+        // a selected route keeps the trails faded with the rest of the map (setNetDim)
+        map.setPaintProperty(id, "line-width", boldOnlyName ? boldByName(baseW, boldOnlyName, 1.5) : baseW);
+        map.setPaintProperty(id, "line-opacity", netDim === 1 ? baseO : baseO * netDim);
       }
     }
     if (map.getLayer("trail-labels")) {
       const baseTO = trailBase("trail-labels", "text-opacity");
       map.setPaintProperty("trail-labels", "text-opacity",
-        active ? (active.has("trail-labels") ? baseTO : baseTO * 0.22) : baseTO);
+        active ? (active.has("trail-labels") ? baseTO : baseTO * 0.22) : netDim === 1 ? baseTO : baseTO * netDim);
     }
   }
   // Hovering a trail directly on the map bolds it (no dimming of anything else), like plain
@@ -9480,6 +9618,8 @@
       if (tipLive && e.relatedTarget && $("#tip").contains(e.relatedTarget)) { lastMoveEvent = null; return; }
       cur = null; tipHide(true); setHover(null); highlightStop(null); showLens(null);
       setTrailHoverName(null);
+      // onto a map button or off the map: the hover fade ends too (a planned trip keeps its own)
+      if (panelView !== "directions") focusOff();
       if (!(selected && selected.type === "route" && RBY[selected.id]?.cat === "dart")) {
         highlightDartArea(null);
       }
@@ -9656,12 +9796,16 @@
     });
     map.on("zoom", onZoom);
     map.on("moveend", onMoveEnd);
+    // tags are placed afresh after a move: re-take the hovered route's tags once they settle
+    map.on("moveend", () => { if (hovDim.ids) map.once("idle", () => { if (hovDim.ids) { hovDim.key = hovDim.key || " "; hoverTags(); } }); });
     document.addEventListener("keydown", (e) => {
-      if (e.key !== "Escape" || e.target.closest("input")) return;
+      if (e.key !== "Escape" || e.target.closest("input") || e.defaultPrevented || !$("#dirCustomPicker")?.hidden) return;
       if (!$("#tip").hidden && tipLive) { tipHide(true); focusOff(); return; }
       if (popup) closePopup();
       else if (selected) clearSelection();
       else if (trailHlCat) setTrailSelection(null);
+      // the trip planner closes as a whole: fields, trip line and pins with it
+      else if (!$("#dirPanel").hidden) closeTripPlanner();
       else if (panelView !== "home") { panelView = "home"; focusOff(); showHome(); }
     });
   }
@@ -9712,6 +9856,7 @@
     document.querySelectorAll(".route-row.is-hovered").forEach((el) => el.classList.remove("is-hovered"));
     if (!map || !map.getSource("hover")) return;
     hoverFade(hSlot, 0, 190);
+    setHoverDim(null);
     popOut("hov", () => { if (!hoverKey) map.getSource("hoverstops").setData(fc([])); });
     if (selected && selected.type === "route") {
       setNetDim(0.38);
@@ -9742,6 +9887,7 @@
     if (ribbons) ribbons.update(HOVER_SLOTS[next], KCTMRibbons.compile([line], { hover: true, widthScale: 1.12 }));
     hoverFade(hSlot, 0, 140); hoverFade(next, 1, 180); hSlot = next;
     map.getSource("hoverstops").setData(fc([]));
+    setHoverDim(new Set(streetRoutes(f).map((i) => LINES[i] && LINES[i].id).filter(Boolean)));
   }
   function focusRoutes(routes, again = false, { glow = true, widthScale = 1.85 } = {}) {
     routes = (routes || []).filter((r) => r && LINEIDX[r.id] != null);
@@ -9770,6 +9916,7 @@
         hoverFade(next, 1, 200);
         hSlot = next;
       }
+      if (glow) setHoverDim(new Set(routes.map((r) => r.id)));
       if (routes.length <= 4) {
         // stops of each route snap onto that route's own drawn line
         const all = [];
@@ -9817,7 +9964,8 @@
   function showLens(hit) {
     const lens = $("#lens");
     if (!hit) { if (lensKey) { lens.hidden = true; lensKey = ""; } return; }
-    const key = hit.left.toFixed(0) + "," + hit.top.toFixed(0) + "," + hit.item.x0;
+    // which item, not just which column: tags stacked in a column share x0
+    const key = [hit.left.toFixed(0), hit.top.toFixed(0), hit.item.x0, hit.item.y0, hit.item.r, hit.item.extra || (hit.item.more && hit.item.more.length) || 0].join(",");
     const rect = map.getCanvas().getBoundingClientRect();
     lens.style.left = rect.left + hit.left + (hit.item.x0 + hit.item.x1) / 2 + "px";
     lens.style.top = rect.top + hit.top + (hit.L.axis === "y" ? (hit.item.y0 + hit.item.y1) / 2 : hit.L.h / 2) + "px";
@@ -10040,11 +10188,20 @@
     try { h = decodeURIComponent((location.hash || "").slice(1)); } catch { return; }
     if (h.startsWith("route-") && RBY[h.slice(6)]) selectRoute(h.slice(6), { push: false });
     else if (/^(stop|station)-/.test(h) && stopIndex[h.replace(/^(stop|station)-/, "")]) selectStop(h.replace(/^(stop|station)-/, ""), { push: false });
+    else if (/^(route|stop|station)-/.test(h)) {
+      // a link to a route or stop this map doesn't have: say so, and don't keep showing the old one
+      if (selected || panelView !== "home") clearSelection({ push: false });
+      showToast(h.startsWith("route-") ? "That route isn't on this map" : "That stop isn't on this map");
+    }
     else if (h.startsWith("loc=")) {
       const parts = h.slice(4).replace("z", "").split(",");
-      if (parts.length >= 2) {
-        const lat = parseFloat(parts[0]), lon = parseFloat(parts[1]), z = parseFloat(parts[2]) || 14.5;
-        if (!isNaN(lat) && !isNaN(lon) && map) map.jumpTo({ center: [lon, lat], zoom: z });
+      const R = META && META.region;
+      if (parts.length >= 2 && map) {
+        const lat = parseFloat(parts[0]), lon = parseFloat(parts[1]), z = parseFloat(parts[2]);
+        // only places on this map: a far-off point left the map drawn for the wrong zoom
+        const inside = Number.isFinite(lat) && Number.isFinite(lon) && (!R || (lat >= R.south - 0.3 && lat <= R.north + 0.3 && lon >= R.west - 0.4 && lon <= R.east + 0.4));
+        if (inside) map.jumpTo({ center: [lon, lat], zoom: Math.min(map.getMaxZoom(), Math.max(map.getMinZoom(), Number.isFinite(z) ? z : 14.5)) });
+        else showToast("That map link points outside the area this map covers");
       }
     }
     else if (!h && (selected || panelView !== "home")) clearSelection({ push: false });
@@ -10059,6 +10216,12 @@
     const year = now.getFullYear();
     el.textContent = `Every route and stop · ${season} ${year} service`;
   }
+
+  // keyboard focus in a sideways-scrolling row of chips: bring the chip into view, clear of the fades
+  document.addEventListener("focusin", (e) => {
+    const chip = e.target.closest && e.target.closest(".filter-bar > *, .bike-filter-pills > *, .cal-presets > *, .cal-quick-times > *");
+    if (chip && chip.matches(":focus-visible")) chip.scrollIntoView({ block: "nearest", inline: "nearest", behavior: calm() ? "auto" : "smooth" });
+  });
 
   function setupOfflineNotice() {
     function check() {
@@ -10125,6 +10288,8 @@
           hover: { type: "geojson", data: empty, tolerance: 0.2 },
           hover2: { type: "geojson", data: empty, tolerance: 0.2 },
           netlabels: { type: "geojson", data: empty, tolerance: 0.5 },
+          hovlabels0: { type: "geojson", data: empty },
+          hovlabels1: { type: "geojson", data: empty },
           sellabels: { type: "geojson", data: empty, tolerance: 0.5 },
           stations: { type: "geojson", data: empty },
           stops: { type: "geojson", data: empty },
@@ -10157,8 +10322,21 @@
       vehicleLines, vehicleOccupancy, occCode,
       obaStop, readDeparture, liveDepartures, depRowsHTML, depCache: () => depCache, stopCard, ensureDepartures,
       onLine, routeById: (id) => RBY[id], showCorridor,
-      planner: { timetableTripTimes, planTransitTrip, currentVehWord, modeIcon, getSoonestBus },
-      timetableTripTimes, planTransitTrip, currentVehWord,
+      // screen positions of the "+N" items on the route tags placed right now (for tests)
+      moreTags: () => {
+        const rect = map.getCanvas().getBoundingClientRect(), out = [];
+        for (const f of qrf(undefined, { layers: ["badges"] })) {
+          const L = BADGE_LAYOUT.get("b:" + f.properties.k);
+          if (!L) continue;
+          const c = map.project(f.geometry.coordinates);
+          for (const it of L.items) if (it.r == null) out.push({ x: rect.left + c.x - L.w / 2 + (it.x0 + it.x1) / 2,
+            y: rect.top + c.y - L.h / 2 + (L.axis === "y" ? (it.y0 + it.y1) / 2 : L.h / 2), n: (it.more || []).length });
+        }
+        return out;
+      },
+      hoverDim: () => ({ v: hovDim.v, to: hovDim.to, ids: hovDim.ids ? [...hovDim.ids] : null }),
+      planner: { timetableTripTimes, planTransitTrip, planArriveBy, currentVehWord, modeIcon, getSoonestBus },
+      timetableTripTimes, planTransitTrip, planArriveBy, pacificAt, currentVehWord, sched: () => SCHED,
       idle: () => new Promise((res) => { if (!inFlight && !queued && !needsRebuild) res(); else idleWaiters.push(res); }),
     };
     map.touchZoomRotate.disableRotation();
@@ -10174,7 +10352,7 @@
       // Native line layers remain as a fallback for a GPU/driver that rejects the shader.
       // The mesh needs no tile rebuilds for camera motion and uses a handful of draw calls.
       if (typeof KCTMRibbons !== "undefined" && !/[?&]noribbons\b/.test(location.search)) {
-        const layer = KCTMRibbons.createLayer(() => ({ ...BASE[theme], dim: netDim, selected: !!(selected && selected.type === "route"), hover: hAnim.map((a) => a.v) }));
+        const layer = KCTMRibbons.createLayer(() => ({ ...BASE[theme], dim: netDim * hovDim.v, selected: !!(selected && selected.type === "route"), hover: hAnim.map((a) => a.v) }));
         try {
           map.addLayer(layer, transitLayers(BASE[theme])[0].id); ribbons = layer;
           for (const L of transitLayers(BASE[theme])) if (L.type === "line") map.setLayoutProperty(L.id, "visibility", "none");

@@ -47,11 +47,23 @@ async function run() {
     await page.waitForTimeout(600);
 
     console.log('\n=== SUITE 1: +N TAG HOVER CARD & SAFE BRIDGE ===');
+    // Timetable vehicles glide every second and sit above the tags, so one drifting under the
+    // pointer would (correctly) take over the card. Hide them for this suite.
+    await page.evaluate(() => { for (const id of ['veh-icon', 'veh-dir', 'veh-label']) if (window.__map.getLayer(id)) window.__map.setLayoutProperty(id, 'visibility', 'none'); });
     // Position map to bring 8-route corridor tag into clear canvas
     await page.evaluate(() => window.__map.jumpTo({ center: [-122.330, 47.600], zoom: 15.0 }));
     await page.waitForTimeout(1000);
 
-    const startX = 1026, startY = 441;
+    // Aim at a real "+N" item on a placed tag, clear of the panel and the screen edges
+    // (fixed pixel positions drift whenever tag placement changes).
+    const findMore = () => page.evaluate(() => {
+      const panel = document.querySelector('#panel').getBoundingClientRect();
+      const ok = (window.__atlas.moreTags ? window.__atlas.moreTags() : [])
+        .filter((t) => t.x > panel.right + 40 && t.x < innerWidth - 320 && t.y > 60 && t.y < innerHeight - 160);
+      return ok[0] || null;
+    });
+    const found = await findMore();
+    const startX = found ? found.x : 1026, startY = found ? found.y : 441;
     await page.mouse.move(startX, startY);
     await page.waitForTimeout(250);
 
@@ -62,7 +74,13 @@ async function run() {
     check('+N tag opens interactive live card on hover', opened);
 
     // Micro-step mouse traversal across the safe bridge onto the first route chip
-    const destX = 1040, destY = 470;
+    const chip0 = await page.evaluate(() => {
+      const c = document.querySelector('#tip:not([hidden]) .tip-r');
+      if (!c) return null;
+      const r = c.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    });
+    const destX = chip0 ? chip0.x : 1040, destY = chip0 ? chip0.y : 470;
     const steps = 15;
     let stayedOpen = true;
     for (let i = 1; i <= steps; i++) {
@@ -118,12 +136,24 @@ async function run() {
     });
     check('Escape key dismisses the hover card', escaped);
 
-    // Re-open and click chip directly selects route
+    // The wheel step above zoomed the map, so the tag has moved: put the view back before
+    // re-opening the card, then aim at the chip where it is actually drawn.
+    await page.mouse.move(40, 800);
+    await page.evaluate(() => window.__map.jumpTo({ center: [-122.330, 47.600], zoom: 15.0 }));
+    await page.waitForTimeout(1000);
     await page.mouse.move(startX, startY);
     await page.waitForTimeout(250);
     await page.mouse.move(destX, destY);
     await page.waitForTimeout(200);
-    await page.mouse.click(destX, destY);
+    const chip = await page.evaluate(() => {
+      const c = document.querySelector('#tip:not([hidden]) .tip-r');
+      if (!c) return null;
+      const r = c.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    });
+    await page.mouse.move(chip ? chip.x : destX, chip ? chip.y : destY, { steps: 3 });
+    await page.waitForTimeout(150);
+    await page.mouse.click(chip ? chip.x : destX, chip ? chip.y : destY);
     await page.waitForTimeout(400);
     const selRoute = await page.evaluate(() => location.hash);
     check('Clicking route chip selects the route directly', selRoute.startsWith('#route-'), selRoute);
@@ -140,9 +170,18 @@ async function run() {
     await page.waitForTimeout(800);
     await page.mouse.move(startX, startY);
     await page.waitForTimeout(250);
-    await page.mouse.move(1120, 490); // card footer / body area
+    // the card's footer ("N routes share this street · Click to view all"), not a route chip
+    const foot = await page.evaluate(() => {
+      const f = document.querySelector('#tip:not([hidden]) .tt-more');
+      if (!f) return null;
+      const r = f.getBoundingClientRect();
+      return { x: r.left + Math.min(40, r.width / 2), y: r.top + r.height / 2 };
+    });
+    const fx = foot ? foot.x : 1120, fy = foot ? foot.y : 490;
+    await page.mouse.move((startX + fx) / 2, (startY + fy) / 2, { steps: 3 });
+    await page.mouse.move(fx, fy, { steps: 3 });
     await page.waitForTimeout(200);
-    await page.mouse.click(1120, 490);
+    await page.mouse.click(fx, fy);
     await page.waitForTimeout(400);
     const corridorOpen = await page.evaluate(() => !!document.querySelector('.corridor-picker'));
     check('Clicking +N card footer/body opens corridor route chooser', corridorOpen);

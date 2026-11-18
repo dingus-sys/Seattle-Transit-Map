@@ -169,7 +169,9 @@ button, input { font: inherit; color: inherit; letter-spacing: inherit; }
 .search { position: relative; }
 
 /* Filter bar: one chip per kind of service */
-.filter-bar { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: -2px -16px 0; padding: 0 16px 2px; }
+/* room above and below for focus rings (the scroller clips them), and a keyboard-focused chip
+   scrolls clear of the faded edges */
+.filter-bar { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: -6px -16px -4px; padding: 4px 16px 6px; scroll-padding-inline: 40px; }
 .filter-bar::-webkit-scrollbar { display: none; }
 .more-right:is(.filter-bar, .bike-filter-pills, .cal-presets, .cal-quick-times) { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 34px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 34px), transparent); }
 .more-left:is(.filter-bar, .bike-filter-pills, .cal-presets, .cal-quick-times) { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 34px), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 34px), transparent); }
@@ -207,7 +209,8 @@ button, input { font: inherit; color: inherit; letter-spacing: inherit; }
 
 /* Dynamic A to B Trip Planner UI */
 .dir-panel {
-  position: relative; display: flex; align-items: center; gap: 8px; margin-bottom: 2px;
+  /* its own layer above the panel body, so the date picker and suggestions open over the trip cards */
+  position: relative; z-index: 30; display: flex; align-items: center; gap: 8px; margin-bottom: 2px;
   animation: jelly-pop .35s var(--spring) both;
 }
 .dir-back-icon-btn {
@@ -520,9 +523,18 @@ button, input { font: inherit; color: inherit; letter-spacing: inherit; }
   box-shadow: inset 0 0 0 .5px var(--rim), inset 1px 1px 1px -.5px var(--rim-hi);
 }
 .key-grid li { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; padding: 3px 0; }
-.key-grid li > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.key-grid li > span:last-child { min-width: 0; line-height: 1.22; overflow-wrap: anywhere; } /* wrap, never cut a name off */
 .key-grid .sw { flex: none; width: 26px; height: 22px; display: grid; place-items: center; }
 .key-grid .sw svg { width: 30px; height: 30px; }
+/* the service's vehicle marker riding the right end of its line, as on the map */
+.key-grid .sw, .svc-key { position: relative; }
+.key-grid .sw { width: 34px; }
+.sw-sym { position: absolute; right: -3px; top: 50%; width: 16px; height: 16px; transform: translateY(-50%);
+  filter: drop-shadow(0 .5px 1px rgba(0, 0, 0, .28)); pointer-events: none; }
+.svc-key { flex: none; width: 46px; height: 26px; display: grid; place-items: center; }
+.svc-key svg { width: 38px; height: 34px; }
+.svc-key .sw-sym { width: 20px; height: 20px; right: -2px; }
+.legend-note { margin: 10px 0 0; font-size: 12px; line-height: 1.45; color: var(--muted); }
 
 /* A high-visibility doorway for routes that continue through Downtown. */
 .through-routes-home {
@@ -1472,9 +1484,16 @@ td.sched-cell-now {
 .step-soonest.is-live {
   color: var(--good);
 }
+.trip-tags { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
 .trip-tag {
-  font-size: 11.5px; font-weight: 700; padding: 2px 7px; border-radius: 99px;
+  font-size: 11.5px; font-weight: 700; padding: 2px 7px; border-radius: 99px; white-space: nowrap;
   background: color-mix(in srgb, var(--good) 18%, transparent); color: var(--good);
+}
+.trip-tag + .trip-tag, .trip-tags .trip-tag:not(:first-child) {
+  background: color-mix(in srgb, var(--accent, #2563eb) 14%, transparent); color: var(--accent, #2563eb);
+}
+.trip-arrive {
+  font-size: 12px; font-weight: 600; color: var(--ink-2); font-variant-numeric: tabular-nums; white-space: nowrap;
 }
 .trip-ribbon {
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 6px;
@@ -1514,7 +1533,7 @@ td.sched-cell-now {
   display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
   margin: 18px 4px 6px 4px;
 }
-.fav-header-wrap h3.section { margin: 0; }
+.fav-header-wrap .section { margin: 0; }
 .fav-filter-toggle {
   font-size: 12px; font-weight: 600; color: var(--accent); background: none; border: 0;
   cursor: pointer; padding: 2px 6px; border-radius: 6px; transition: background .15s ease;
@@ -2440,3 +2459,7 @@ td.sched-cell-now {
 
 
 
+
+/* visually hidden, still read by screen readers */
+.vh { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+.table-group:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

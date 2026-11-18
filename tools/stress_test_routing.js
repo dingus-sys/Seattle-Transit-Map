@@ -71,6 +71,35 @@ const routingModule = new Function(
 
 const { distMeters, timetableTripTimes, planTransitTrip, currentVehWord, modeIcon, getSoonestBus } = routingModule;
 
+// Every vehicle leg of an itinerary, whatever its shape (direct, transfer or multi).
+const legsOf = (it) => it.type === 'direct' ? [{ route: it.route, boardStop: it.boardStop, alightStop: it.alightStop, schedTrip: it.schedTrip, transferWalkDist: 0, waitTime: it.waitTime }]
+  : it.type === 'transfer' ? [{ route: it.r1, boardStop: it.boardStop, alightStop: it.transferStop1, schedTrip: it.schedTrip1, transferWalkDist: 0, waitTime: it.wait1 },
+    { route: it.r2, boardStop: it.transferStop2, alightStop: it.alightStop, schedTrip: it.schedTrip2, transferWalkDist: it.transferWalkDist, waitTime: it.wait2 }]
+  : it.type === 'multi' ? it.legs : [];
+// A walk between stops may be up to 360 m, or 650 m when one end is a station or ferry terminal
+// (the planner's TRANSFER_WALK_M / HUB_TRANSFER_WALK_M).
+const HUB_CATS = new Set(['link', 'sounder', 'amtrak', 'ferry', 'watertaxi', 'monorail']);
+const isHubStop = (st) => !!st && (st.kind === 'ferry' || st.kind === 'rail' || st.kind === 'station' || st.isStation || (st.stops && st.stops.length > 1)
+  || (st.routes || []).some((rid) => HUB_CATS.has((RBY[rid] || {}).cat)));
+const transferCap = (a, b) => (isHubStop(a) || isHubStop(b) ? 650 : 360);
+// Each leg rides a real timetable trip, connections keep the 2-minute buffer, walks stay in bounds.
+function checkItinerary(it, name) {
+  const legs = legsOf(it);
+  assert(legs.length >= 1, `${name}: itinerary has no legs`);
+  for (let i = 0; i < legs.length; i++) {
+    const leg = legs[i];
+    assert(leg.schedTrip && leg.schedTrip.arrSec > leg.schedTrip.depSec, `${name}: leg ${i + 1} must ride a timetabled trip`);
+    if (i === 0) continue;
+    const prev = legs[i - 1];
+    assert(leg.transferWalkDist <= transferCap(prev.alightStop, leg.boardStop) + 1, `${name}: transfer walk ${leg.transferWalkDist} m is over the limit`);
+    const walkSec = leg.transferWalkDist ? Math.max(60, Math.round(leg.transferWalkDist / 80 * 60)) : 0;
+    assert(leg.schedTrip.depSec - prev.schedTrip.arrSec - walkSec >= 119, `${name}: connection buffer under 2 minutes on leg ${i + 1}`);
+    totalAssertions += 2;
+  }
+  assert(it.arrivalSec > it.departSec, `${name}: arrival must follow departure`);
+  totalAssertions += 2;
+}
+
 let testsPassed = 0;
 let totalAssertions = 0;
 function test(name, fn) {
@@ -293,7 +322,8 @@ test('2.2 Real Network Transfers: verify buffers in actual planTransitTrip execu
     for (const it of plan.transfer) {
       transferCount++;
       // Check transfer walk distance cap
-      assert(it.transferWalkDist <= 360, `Transfer walk distance ${it.transferWalkDist}m exceeds 360m cap in ${pair.name}`);
+      assert(it.transferWalkDist <= transferCap(it.transferStop1, it.transferStop2), `Transfer walk distance ${it.transferWalkDist}m exceeds the cap in ${pair.name}`);
+      checkItinerary(it, pair.name);
       // Check transfer walk time calculation
       assert.equal(it.transferWalkTime, Math.max(1, Math.round(it.transferWalkDist / 80)), `Transfer walk time mismatch in ${pair.name}`);
       // Check transfer buffer (wait2)
@@ -331,10 +361,7 @@ test('2.3 Cross-water trips can use a ferry plus a local shuttle', () => {
   assert(ferryPlan.legs.length >= 3, 'Vashon itinerary must support two or more transfers');
   assert(ferryPlan.legs.some((leg) => leg.route.id === 'wsf-fauntleroy-vashon-island'), 'Expected the Fauntleroy–Vashon ferry');
   assert(ferryPlan.legs.some((leg) => leg.route.id === 'metro-118' || leg.route.id === 'metro-119'), 'Expected an island shuttle connection');
-  for (const leg of ferryPlan.legs.slice(1)) {
-    assert(leg.transferWalkDist <= 360, 'Multi-leg transfer walk must stay within 360m');
-    assert(leg.waitTime >= 2, 'Multi-leg connection must keep at least a 2-minute buffer');
-  }
+  checkItinerary(ferryPlan, 'West Seattle -> Vashon');
   totalAssertions += 6 + (ferryPlan.legs.length - 1) * 2;
 });
 
@@ -343,24 +370,23 @@ test('2.4 Regional multi-leg trips: Seattle to outer South Sound destinations (L
   const manicMeatballs = { lat: 47.1228, lon: -122.5513 };
   const capitolHill = { lat: 47.6163, lon: -122.3195 };
   const planLakewood = planTransitTrip(capitolHill, manicMeatballs);
-  assert(planLakewood && planLakewood.multi.length > 0, 'Expected multi-leg itineraries from Capitol Hill to Lakewood');
-  for (const it of planLakewood.multi) {
-    assert(it.legs.length >= 3, `Expected at least 3 legs for Seattle -> Lakewood, got ${it.legs.length}`);
-    for (const leg of it.legs.slice(1)) {
-      assert(leg.transferWalkDist <= 360, 'Multi-leg transfer walk must stay within 360m');
-      assert(leg.waitTime >= 2, 'Multi-leg connection must keep at least a 2-minute buffer');
-    }
+  // A regional trip needs at least one transfer (no single route runs Capitol Hill to Lakewood).
+  assert(planLakewood && planLakewood.options.length > 0, 'Expected itineraries from Capitol Hill to Lakewood');
+  for (const it of planLakewood.options) {
+    assert(legsOf(it).length >= 2, `Expected a transfer for Seattle -> Lakewood, got ${legsOf(it).length} leg(s)`);
+    checkItinerary(it, 'Capitol Hill -> Lakewood');
   }
 
   // Test trip from Ballard to Tacoma Mall
   const ballard = { lat: 47.6685, lon: -122.3845 };
   const tacomaMall = { lat: 47.2185, lon: -122.4675 };
   const planTacoma = planTransitTrip(ballard, tacomaMall);
-  assert(planTacoma && planTacoma.multi.length > 0, 'Expected multi-leg itineraries from Ballard to Tacoma Mall');
-  for (const it of planTacoma.multi) {
-    assert(it.legs.length >= 3, `Expected at least 3 legs for Ballard -> Tacoma Mall, got ${it.legs.length}`);
+  assert(planTacoma && planTacoma.options.length > 0, 'Expected itineraries from Ballard to Tacoma Mall');
+  for (const it of planTacoma.options) {
+    assert(legsOf(it).length >= 2, `Expected a transfer for Ballard -> Tacoma Mall, got ${legsOf(it).length} leg(s)`);
+    checkItinerary(it, 'Ballard -> Tacoma Mall');
   }
-  totalAssertions += 4 + planLakewood.multi.length * 3 + planTacoma.multi.length;
+  totalAssertions += 4;
 });
 
 // -----------------------------------------------------------------------------

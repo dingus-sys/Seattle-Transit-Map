@@ -14,7 +14,9 @@ permissions:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # street matching takes ~11 min and the graph build ~30 for the Bellingham-Olympia region;
+    # 40 minutes left no room
+    timeout-minutes: 120
     env:
       TRANSIT_CACHE: ${{ github.workspace }}/.cache
     steps:

@@ -239,22 +239,53 @@ def rasterize(routes, mask=None):
         if mask is not None and g.intersects(mask):
             draw(g.intersection(mask), R_FWY)
     arr = np.array(img, dtype=bool)
+    del img
     # Fill pinholes where two nearly-parallel shapes almost touch; they would become tiny
     # rings in the centerline. ~500 m² is far smaller than a city block, so streets survive.
-    from scipy import ndimage
-    lab, n = ndimage.label(~arr, output=np.int32)
-    sizes = np.bincount(lab.ravel())
-    small = sizes < int(500 / RES ** 2)
-    small[0] = False
-    arr |= small[lab]
-    del lab
+    fill_pinholes(arr, int(500 / RES ** 2))
     return arr, (x0, y1)
 
 
-def skeleton_graph(arr, origin):
+def fill_pinholes(arr, max_area, tile=4096, margin=64):
+    """Fill background specks smaller than max_area pixels, tile by tile.
+
+    The same result as labelling the whole raster at once, without its int32 label image (8 GB
+    for the full region, which is what got the weekly refresh killed on a 16 GB runner). A speck
+    is at most max_area pixels across, so any speck that reaches a tile's core lies wholly inside
+    that tile plus its margin; a component that touches the window's edge may run on outside it
+    and is left alone (the tile whose core holds it decides)."""
+    from scipy import ndimage
+    assert max_area < margin, "the margin must be wider than the largest speck"
+    H, W = arr.shape
+    for r0 in range(0, H, tile):
+        for c0 in range(0, W, tile):
+            ra, rb, ca, cb = max(0, r0 - margin), min(H, r0 + tile + margin), max(0, c0 - margin), min(W, c0 + tile + margin)
+            win = arr[ra:rb, ca:cb]
+            if not win.any():
+                continue
+            lab, _ = ndimage.label(~win, output=np.int32)
+            small = np.bincount(lab.ravel()) < max_area
+            small[0] = False
+            # only the window's inner edges: along the raster's own edge nothing runs on outside
+            inner = [lab[0]] * (ra > 0) + [lab[-1]] * (rb < H) + [lab[:, 0]] * (ca > 0) + [lab[:, -1]] * (cb < W)
+            if inner:
+                small[np.concatenate(inner)] = False
+            if not small.any():
+                continue
+            r1, c1 = min(H, r0 + tile), min(W, c0 + tile)
+            arr[r0:r1, c0:c1] |= small[lab[r0 - ra:r1 - ra, c0 - ca:c1 - ca]]
+    return arr
+
+
+def skeleton_graph(raster):
+    arr, origin = raster.pop()
     x0, y1 = origin
     # Lee's thinning (the default Zhang routine crashes on rasters this size)
-    sk = Skeleton(skeletonize(arr.astype(np.uint8), method="lee") > 0)
+    # a uint8 view of the bool raster (same bytes, no 2 GB copy)
+    thin = skeletonize(arr.view(np.uint8), method="lee")
+    del arr
+    sk = Skeleton(thin > 0)
+    del thin
     nodes, edges = {}, []
     for i in range(sk.n_paths):
         pix = sk.path(i)
@@ -419,19 +450,27 @@ def smooth(g):
 
 
 def split_at_line_ends(g, routes, near=None):
-    """Trains: where a line ends partway along a stretch that another line carries on along
-    (Sounder N at Everett, where Amtrak goes on north), split the stretch there. Otherwise the
-    line that ends covers most of the stretch and is drawn on past its last station."""
+    """Where a line ends partway along a stretch that another line carries on along (Sounder N
+    at Everett, where Amtrak goes on north; the First Hill Streetcar at Broadway and Denny, where
+    the 49 goes on), split the stretch there. A line is put on a stretch only when it covers
+    70% of it (assign_lines), so without the split a line that ends early is either drawn on
+    past its last stop or, when it covers less than 70%, not drawn on its last stretch at all."""
     from shapely.geometry import Point
     near = near or SNAP
+    eids = list(g.edges)
+    tree = shapely.STRtree([LineString(g.edges[k]["c"]) for k in eids])
+    fresh = []  # edges made by splits in this pass (not in the tree)
     split = 0
     for slug, rg in routes.items():
         for part in getattr(rg, "geoms", [rg]):
             for pt in (part.coords[0], part.coords[-1]):
                 P = Point(pt)
+                cands = [eids[i] for i in tree.query(P, predicate="dwithin", distance=near)] + fresh
                 best = None
-                for eid, e in g.edges.items():
-                    line = LineString(e["c"])
+                for eid in cands:
+                    if eid not in g.edges:
+                        continue
+                    line = LineString(g.edges[eid]["c"])
                     d = line.distance(P)
                     if d < near and (best is None or d < best[0]):
                         best = (d, eid, line)
@@ -459,8 +498,8 @@ def split_at_line_ends(g, routes, near=None):
                 g.pos[nid] = (q.x, q.y)
                 a, b = e["a"], e["b"]
                 g.remove(eid)
-                g.add(a, nid, first + [(q.x, q.y)])
-                g.add(nid, b, [(q.x, q.y)] + list(rest))
+                fresh.append(g.add(a, nid, first + [(q.x, q.y)]))
+                fresh.append(g.add(nid, b, [(q.x, q.y)] + list(rest)))
                 split += 1
     return split
 
@@ -1271,8 +1310,9 @@ def order_lines(g, rank):
 def build_layer(routes, rank, name, mask=None):
     import time
     t0 = time.time()
-    arr, origin = rasterize(routes, mask)
-    nodes, edges = skeleton_graph(arr, origin)
+    # the raster is handed over in a list so skeleton_graph can drop the only reference to it
+    # (2 GB for the full region) as soon as it is thinned
+    nodes, edges = skeleton_graph([rasterize(routes, mask)])
     g = Graph(nodes, edges)
     for _ in range(3):
         prune_spurs(g, 2.2 * R)
@@ -1280,8 +1320,8 @@ def build_layer(routes, rank, name, mask=None):
     contract_short(g, 22.0)  # junctions closer than ~22 m become one (city blocks are 60 m+)
     merge_chains(g)
     smooth(g)
-    if name == "rail":
-        split_at_line_ends(g, routes)
+    # every layer: a line that ends partway along a stretch gets a junction there
+    split_at_line_ends(g, routes)
     assign_lines(g, routes, mask)
     merge_chains(g, same=lambda e1, e2: e1["lines"] == e2["lines"])
     for eid in [k for k, e in g.edges.items() if e["a"] == e["b"] and g.length(k) < 150]:

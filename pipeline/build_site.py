@@ -14,6 +14,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import shutil
 import sys
 import urllib.request
@@ -30,6 +31,16 @@ LOGO_TYPES = {".svg": "image/svg+xml", ".png": "image/png"}
 # fetched by the page as soon as it starts, so the browser can start downloading them
 # while it is still loading the scripts
 PRELOAD = ["data/network.json", "data/routes.json", "data/stops.json", "data/areas.json"]
+
+
+def preload_urls(js):
+    """The exact URLs app.js fetches (with any ?v= it adds), so the browser reuses each preload
+    instead of downloading the file a second time."""
+    urls = []
+    for u in PRELOAD:
+        m = re.search(r'"(' + re.escape(u) + r'(?:\?[^"]*)?)"', js)
+        urls.append(m.group(1) if m else u)
+    return urls
 
 
 def maplibre_css():
@@ -114,7 +125,7 @@ def build_website(page, css, js, geom, ribbons, logos, with_key):
         open(os.path.join(logo_dir, f), "wb").write(data)
         urls[name] = f"logos/{f}?v={version(data)}"
 
-    preload = "".join(f'<link rel="preload" href="{u}" as="fetch" crossorigin>\n' for u in PRELOAD)
+    preload = "".join(f'<link rel="preload" href="{u}" as="fetch" crossorigin>\n' for u in preload_urls(js))
     body = sub(page, "<style>/*MAPLIBRE_CSS*/</style>", f'{preload}<link rel="stylesheet" href="{MAPLIBRE_CSS_URL}">')
     body = sub(body, "<style>/*APP_CSS*/</style>", f'<link rel="stylesheet" href="app.css?v={version(css)}">')
     body = sub(body, "<script>/*LOGOS*/</script>", f"<script>{logos_js(urls)}</script>")
