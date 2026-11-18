@@ -88,7 +88,9 @@ Test hooks: `window.__map` (MapLibre) and `window.__atlas` (`rebuild`, `idle()`,
 
 **The loop that has worked every round:** change code, rebuild, take screenshots of the exact
 places in question (and a few other busy places, to catch side effects) and look at them, run
-`sweep.js`, rebuild keyless, check for keys, commit, push to `main`, wait for the deploy
+`sweep.js`, run the Pages gate locally (the commands under "Check source syntax and route geometry"
+in `.github/workflows/pages.yml`, including `python3 -m unittest discover -s tools -p 'test_*.py'` and
+`validate_data.py`: a failure there blocks the deploy), rebuild keyless, check for keys, commit, push to `main`, wait for the deploy
 (`gh run list --limit 1`), check the live site, republish the artifact, and send the user the
 screenshots that show the change. In the sandbox `gh run list` works, but `gh` can't read
 secrets or the Pages API (the proxy blocks them); check the live page with `curl`.
@@ -99,7 +101,9 @@ secrets or the Pages API (the proxy blocks them); check the live page with `curl
 then `process_gtfs` (routes, stops, schedules) then `build_areas` (DART, Access, Flex) then
 `match_shapes` (snaps every bus and streetcar shape onto the real street network with an HMM)
 then `build_graph` (the shared-corridor network, `site/data/network.json`) then `tidy_junctions`,
-`repair_network` (remaining source-path omissions and 2 m simplification), then `build_site`.
+`repair_network` (remaining source-path omissions and 2 m simplification; an out-and-back restored
+as a flat loop, e.g. Island Transit 4 out to Troxell Rd, becomes a dead-end stub: `open_skinny_loops`),
+then `build_site`.
 - `network.json`: `{lines: [route ids], edges: [{c: [[lon,lat]...], l: [line indexes], d: [direction per line]}]}`.
   Three separate layers: surface, rail, water.
 - `tidy_junctions.py` (idempotent, repeats until nothing changes) fixes what tracing leaves behind:

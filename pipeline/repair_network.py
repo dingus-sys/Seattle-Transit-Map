@@ -6,12 +6,13 @@ Every added path comes from that route's own shape and joins existing route edge
 Rail and ferry geometry is preserved. This step never invents straight-line bridges.
 """
 import json
+import math
 import os
 
 import build_graph as graph
 import numpy as np
 import shapely
-from shapely.geometry import LineString, Point
+from shapely.geometry import LineString, Point, Polygon
 from shapely.ops import substring, unary_union
 
 from restore_turnarounds import restore_turnarounds
@@ -298,6 +299,40 @@ def bridge_route_components(g, surface, max_gap=25000.0):
     return bridged
 
 
+def open_skinny_loops(g, min_roundness=0.15, min_stub=15.0):
+    """Draw an out-and-back as a dead end instead of a flattened loop.
+
+    A route that runs out to a stop and straight back along the same street (Island
+    Transit 4 to Troxell at Monkey Hill Rd) is restored as an edge that starts and
+    ends at one node and encloses nothing. Drawn, that is a doubled line with a hook
+    at its tip. Keep its way out, to the point farthest from where it leaves, as a
+    stub. Real loops around a block enclose area and are kept. A spike shorter than
+    `min_stub` is below the map's street detail and is removed.
+    """
+    opened = removed = 0
+    for eid in [k for k, e in g.edges.items() if e["a"] == e["b"]]:
+        e = g.edges[eid]
+        c = e["c"]
+        line = LineString(c)
+        if len(c) < 3 or line.length == 0:
+            continue
+        roundness = 4 * math.pi * Polygon(c).area / line.length ** 2 if len(c) >= 4 else 0.0
+        if roundness >= min_roundness:
+            continue
+        far = max(range(len(c)), key=lambda i: math.dist(c[0], c[i]))
+        g.remove(eid)
+        if math.dist(c[0], c[far]) < min_stub:
+            removed += 1
+            continue
+        tip = max(g.pos) + 1
+        g.pos[tip] = tuple(c[far])
+        k = g.add(e["a"], tip, c[:far + 1], e["lines"])
+        # travelled both ways, so the stub has no one-way arrow
+        g.edges[k].update(order=list(e.get("order", sorted(e["lines"]))), dirs={s: 0 for s in e["lines"]})
+        opened += 1
+    return opened, removed
+
+
 def main():
     path = os.path.join(graph.SITE, "data", "network.json")
     with open(path) as f:
@@ -333,8 +368,10 @@ def main():
         raw_routes, _, _ = graph.load_routes(prefer_matched=False)
         raw = {slug: shape for slug, (layer, shape) in raw_routes.items() if layer == "surface"}
     turnarounds = restore_turnarounds(g, surface, raw)
+    opened, spikes = open_skinny_loops(g)
     print(f"final continuity: {filled} gaps filled, {bridged} loose ends reconnected, "
-          f"{restored} omitted spans, {stop_spans} stop spans, {comp_bridged} component gaps reconnected and {turnarounds} turnarounds restored", flush=True)
+          f"{restored} omitted spans, {stop_spans} stop spans, {comp_bridged} component gaps reconnected and {turnarounds} turnarounds restored; "
+          f"{opened} out-and-back loops drawn as dead ends, {spikes} spikes removed", flush=True)
     # Infer direction only for new links; split links retain their original metadata.
     new = graph.Graph(g.pos, [])
     source_ids = {}
