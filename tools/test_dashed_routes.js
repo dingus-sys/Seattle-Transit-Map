@@ -27,6 +27,12 @@ assert(busDash, "Dashed bus routes MUST compile a 'dash' role");
 assert.equal(busDash.pattern, 1, "Dash role must use pattern 1");
 console.log("PASS 1: Dashed bus routes compile a dedicated high-contrast casing bed");
 
+const selectedBus = { ...busFeature, properties: { ...busFeature.properties, hm: 1 } };
+const selectedMesh = KCTMRibbons.compile([selectedBus], { selected: true });
+assert(selectedMesh.some((b) => b.role === "dash"), "The selected route must keep its dashed body");
+assert(!selectedMesh.some((b) => b.role === "shine"), "A continuous highlight must not fill the selected route's dash gaps");
+console.log("PASS: Selected rush-hour routes keep clear gaps");
+
 // 2. Water routes (ferries) must NOT compile street casing over open water
 const waterFeature = {
   type: "Feature",

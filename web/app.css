@@ -1916,7 +1916,7 @@ td.sched-cell-now {
   flex-shrink: 0;
 }
 .legend-swatch.dashed {
-  background: repeating-linear-gradient(90deg, currentColor, currentColor 4px, transparent 4px, transparent 8px);
+  background: repeating-linear-gradient(90deg, currentColor 0 7px, transparent 7px 12px);
 }
 .legend-badge-sample {
   display: inline-flex;

@@ -450,8 +450,10 @@
   const netColors = (th) => Object.fromEntries(Object.entries(LINE[th]).map(([k, c]) =>
     [k, SOFT[k] && /^#[0-9a-f]{6}$/i.test(c) ? mixHex(c, BASE[th].land, SOFT[k]) : c]));
   const HOVER_SLOTS = ["hover", "hover2"];
+  const ROUTE_DASH = [2.5, 3]; // in line widths, matching the ribbon shader
   function transitLayers(P) {
     const L = [];
+    const solid = ["==", ["get", "d"], 0], dashed = ["==", ["get", "d"], 1];
     const inner = (id, src, filter, paint, layout = {}) => L.push({ id, type: "line", source: src, filter,
       layout: { "line-join": "round", ...layout }, paint });
     // Street lines (buses, RapidRide, streetcars) are one stack and trains another on top of it,
@@ -472,12 +474,12 @@
       }
       for (const g of stack) {
         const f = ["==", ["get", "g"], g];
-        L.push({ id: `line-${g}`, type: "line", source: "net", filter: ["all", f, ["==", ["get", "d"], 0]],
+        L.push({ id: `line-${g}`, type: "line", source: "net", filter: ["all", f, solid],
           layout: { "line-cap": "round", "line-join": "round", "line-sort-key": ["get", "s"] },
           paint: { "line-color": ["get", "c"], "line-width": px("wm"), "line-opacity": LINE_OP } });
-        L.push({ id: `dash-${g}`, type: "line", source: "net", filter: ["all", f, ["==", ["get", "d"], 1]],
+        L.push({ id: `dash-${g}`, type: "line", source: "net", filter: ["all", f, dashed],
           layout: { "line-join": "round" },
-          paint: { "line-color": ["get", "c"], "line-width": px("wm"), "line-dasharray": [2.2, 1.3], "line-opacity": LINE_OP } });
+          paint: { "line-color": ["get", "c"], "line-width": px("wm"), "line-dasharray": ROUTE_DASH, "line-opacity": LINE_OP } });
         inner(`glass-${g}`, "net", ["all", f, ["==", ["get", "h"], 1]],
           { "line-color": P.shine, "line-opacity": 0.38, "line-width": px("hm"), "line-blur": 0.6 }, { "line-cap": "round" });
         inner(`center-${g}`, "net", ["all", f, ["==", ["get", "h"], 2]],
@@ -495,19 +497,21 @@
         paint: { "line-color": ["get", "c"], "line-width": px("gm", 2.0), "line-opacity": 0, "line-blur": 6 } });
       L.push({ id: `${sl}-case`, type: "line", source: sl, layout: { "line-cap": "round", "line-join": "round" },
         paint: { "line-color": P.casing, "line-width": px("cm", 1.6), "line-opacity": 0 } });
-      L.push({ id: `${sl}-line`, type: "line", source: sl, layout: { "line-cap": "round", "line-join": "round" },
+      L.push({ id: `${sl}-line`, type: "line", source: sl, filter: solid, layout: { "line-cap": "round", "line-join": "round" },
         paint: { "line-color": ["get", "c"], "line-width": px("wm", 1.65), "line-opacity": 0 } });
+      inner(`${sl}-dash`, sl, dashed,
+        { "line-color": ["get", "c"], "line-width": px("wm", 1.65), "line-dasharray": ROUTE_DASH, "line-opacity": 0 });
     }
     // selected route, drawn again on top
     L.push({ id: "sel-glow", type: "line", source: "sel", layout: { "line-cap": "round", "line-join": "round" },
       paint: { "line-color": ["get", "c"], "line-opacity": 0.28, "line-blur": 4, "line-width": px("gm") } });
     L.push({ id: "sel-case", type: "line", source: "sel", layout: { "line-cap": "round", "line-join": "round" },
       paint: { "line-color": P.casing, "line-width": px("cm") } });
-    L.push({ id: "sel-line", type: "line", source: "sel", filter: ["==", ["get", "d"], 0], layout: { "line-cap": "round", "line-join": "round" },
+    L.push({ id: "sel-line", type: "line", source: "sel", filter: solid, layout: { "line-cap": "round", "line-join": "round" },
       paint: { "line-color": ["get", "c"], "line-width": px("wm") } });
-    L.push({ id: "sel-dash", type: "line", source: "sel", filter: ["==", ["get", "d"], 1], layout: { "line-join": "round" },
-      paint: { "line-color": ["get", "c"], "line-width": px("wm"), "line-dasharray": [2.2, 1.3] } });
-    inner("sel-shine", "sel", ["==", ["get", "d"], 0], { "line-color": P.shine, "line-opacity": 0.45, "line-width": px("hm"), "line-blur": 0.6 }, { "line-cap": "round" });
+    inner("sel-dash", "sel", dashed,
+      { "line-color": ["get", "c"], "line-width": px("wm"), "line-dasharray": ROUTE_DASH });
+    inner("sel-shine", "sel", solid, { "line-color": P.shine, "line-opacity": 0.45, "line-width": px("hm"), "line-blur": 0.6 }, { "line-cap": "round" });
     // one-way arrows: on every one-way stretch when zoomed in, and along the selected route
     const arrowLayer = (id, src, minzoom, spacing, size) => L.push({ id, type: "symbol", source: src, minzoom, filter: ["!=", ["get", "ar"], 0],
       layout: { "symbol-placement": "line", "symbol-spacing": spacing, "icon-image": ["concat", "arr:", ["get", "c"]],
@@ -542,14 +546,14 @@
       { id: "access-fill", type: "fill", source: "access", paint: { "fill-color": acc, "fill-opacity": 0.08 } },
       { id: "access-line", type: "line", source: "access", paint: { "line-color": acc, "line-width": 1.4, "line-dasharray": [3, 2], "line-opacity": 0.8 } },
       { id: "dart-fill", type: "fill", source: "dart", paint: { "fill-color": LINE[th].dart, "fill-opacity": 0.1 } },
-      { id: "dart-line", type: "line", source: "dart", paint: { "line-color": LINE[th].dart, "line-width": 1.2, "line-dasharray": [2, 2] } },
+      { id: "dart-line", type: "line", source: "dart", paint: { "line-color": LINE[th].dart, "line-width": 1.2, "line-dasharray": ROUTE_DASH } },
       { id: "flex-fill", type: "fill", source: "flex", paint: { "fill-color": FLEX[th], "fill-opacity": th === "dark" ? 0.12 : 0.09 } },
       { id: "flex-line", type: "line", source: "flex", paint: { "line-color": FLEX[th], "line-opacity": 0.85,
         "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1, 13, 2, 16, 2.6] } },
       // Glowing highlight layers for hovered / selected DART service area
       { id: "dart-hl-fill", type: "fill", source: "darthl", paint: { "fill-color": LINE[th].dart, "fill-opacity": th === "dark" ? 0.35 : 0.28 } },
       { id: "dart-hl-casing", type: "line", source: "darthl", paint: { "line-color": "#ffffff", "line-width": 5.0, "line-opacity": 0.95 } },
-      { id: "dart-hl-line", type: "line", source: "darthl", paint: { "line-color": LINE[th].dart, "line-width": 3.0, "line-dasharray": [3, 1.5], "line-opacity": 1.0 } },
+      { id: "dart-hl-line", type: "line", source: "darthl", paint: { "line-color": LINE[th].dart, "line-width": 3.0, "line-dasharray": ROUTE_DASH, "line-opacity": 1.0 } },
       // 1. Casing for multi-use trails and protected bike lanes
       { id: "trail-case", type: "line", source: "trails",
         filter: ["in", ["get", "facility"], ["literal", ["trail", "pbl"]]],
@@ -4974,16 +4978,16 @@
       return `<svg viewBox="0 0 46 32" aria-hidden="true"><path d="M4 16 H42" stroke="${trailCase}" stroke-width="9" stroke-linecap="round"/><path d="M4 16 H42" stroke="${trailCol}" stroke-width="5" stroke-linecap="round"/><path d="M7 16 H39" stroke="#fff" stroke-opacity=".34" stroke-width="1.1" stroke-linecap="round"/></svg>`;
     }
     if (type === "greenway") {
-      return `<svg viewBox="0 0 46 32" aria-hidden="true"><path d="M4 16 H42" stroke="${trailGreenway}" stroke-width="4.2" stroke-linecap="round" stroke-dasharray="8 4"/></svg>`;
+      return `<svg viewBox="0 0 46 32" aria-hidden="true"><path d="M4 16 H42" stroke="${trailGreenway}" stroke-width="4.2" stroke-linecap="round" stroke-dasharray="9 7"/></svg>`;
     }
     if (type === "lane") {
       return `<svg viewBox="0 0 46 32" aria-hidden="true"><path d="M4 16 H42" stroke="${trailLane}" stroke-width="4.2" stroke-linecap="round"/></svg>`;
     }
     if (type === "sharrow") {
-      return `<svg viewBox="0 0 46 32" aria-hidden="true"><path d="M4 16 H42" stroke="${trailSharrow}" stroke-width="3.8" stroke-linecap="round" stroke-dasharray="1.2 4"/></svg>`;
+      return `<svg viewBox="0 0 46 32" aria-hidden="true"><path d="M4 16 H42" stroke="${trailSharrow}" stroke-width="3.8" stroke-linecap="round" stroke-dasharray="1.2 6.8"/></svg>`;
     }
     if (type === "unpaved") {
-      return `<svg viewBox="0 0 46 32" aria-hidden="true"><path d="M4 16 H42" stroke="${trailDash}" stroke-width="4" stroke-linecap="round" stroke-dasharray="5 3"/></svg>`;
+      return `<svg viewBox="0 0 46 32" aria-hidden="true"><path d="M4 16 H42" stroke="${trailDash}" stroke-width="4" stroke-linecap="round" stroke-dasharray="5 6"/></svg>`;
     }
     return `<svg viewBox="0 0 46 32"></svg>`;
   }
@@ -4992,7 +4996,7 @@
     const P = LINE[theme];
     const tube = (c, w, y, kind) => {
       const d = `M6 ${y} H24`;
-      let s = `<path d="${d}" stroke="${c}" stroke-width="${w}" stroke-linecap="round" fill="none"${kind === "dash" ? ' stroke-dasharray="3.5 2.5"' : ""}/>`;
+      let s = `<path d="${d}" stroke="${c}" stroke-width="${w}" stroke-linecap="round" fill="none"${kind === "dash" ? ' stroke-dasharray="4 6"' : ""}/>`;
       if (kind === "glass") s += `<path d="${d}" stroke="#fff" stroke-opacity=".45" stroke-width="${(w * 0.34).toFixed(2)}" stroke-linecap="round" fill="none"/>`;
       if (kind === "solid") s += `<path d="${d}" stroke="#fff" stroke-width="${(w * 0.3).toFixed(2)}" stroke-linecap="round" fill="none"/>`;
       if (kind === "dots") s += `<path d="${d}" stroke="#fff" stroke-width="${(w * 0.34).toFixed(2)}" stroke-linecap="round" stroke-dasharray="0.1 3.4" fill="none"/>`;
@@ -9831,6 +9835,7 @@
     if (map.getLayer(`${sl}-glow`)) map.setPaintProperty(`${sl}-glow`, "line-opacity", v * 0.45);
     map.setPaintProperty(`${sl}-case`, "line-opacity", v);
     map.setPaintProperty(`${sl}-line`, "line-opacity", Math.min(1, v * 1.4));
+    map.setPaintProperty(`${sl}-dash`, "line-opacity", Math.min(1, v * 1.4));
     map.setPaintProperty(`${sl}-arrows`, "icon-opacity", v);
   }
   function hoverFade(i, to, dur) {

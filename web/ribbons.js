@@ -64,7 +64,7 @@ const KCTMRibbons = (() => {
       if (!p.d || p.g !== "water") stroke("case", p.cm * widthScale * (hover ? 0.97 : 1));
       const w = p.wm * widthScale;
       stroke(p.d ? "dash" : "body", w, p.d ? 1 : 0, !p.d);
-      if (!hover && p.hm > 0) stroke(p.h === 3 ? "dots" : p.h === 4 ? "ties" : "shine", p.hm, p.h === 3 ? 2 : p.h === 4 ? 3 : 0, p.h !== 4);
+      if (!hover && !p.d && p.hm > 0) stroke(p.h === 3 ? "dots" : p.h === 4 ? "ties" : "shine", p.hm, p.h === 3 ? 2 : p.h === 4 ? 3 : 0, p.h !== 4);
     }
     const order = ["shadow", "glow", "case", "body", "dash", "shine", "dots", "ties"];
     return [...buckets.values()].sort((a, b) => a.stack - b.stack || order.indexOf(a.role) - order.indexOf(b.role))
@@ -104,8 +104,8 @@ const KCTMRibbons = (() => {
             float aa = min(1.0, 0.85 / max(0.1, v_half));
             float alpha = 1.0 - smoothstep(1.0 - max(aa, u_soft), 1.0, abs(v_side));
             if (u_pattern > 0.5) {
-              float period = u_pattern < 1.5 ? 3.5 : u_pattern < 2.5 ? 2.6 : 2.8;
-              float dash = u_pattern < 1.5 ? 2.2 : u_pattern < 2.5 ? 0.2 : 1.2;
+              float period = u_pattern < 1.5 ? 5.5 : u_pattern < 2.5 ? 2.6 : 2.8;
+              float dash = u_pattern < 1.5 ? 2.5 : u_pattern < 2.5 ? 0.2 : 1.2;
               float along = mod(v_distance, period);
               if (u_pattern > 1.5 && u_pattern < 2.5) {
                 float dx = min(along, period - along) * 2.0;
