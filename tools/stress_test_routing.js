@@ -10,6 +10,8 @@ const readJSON = (rel) => JSON.parse(fs.readFileSync(path.join(ROOT, rel), 'utf8
 const routesData = readJSON('site/data/routes.json').routes;
 const stopsData = readJSON('site/data/stops.json');
 const schedData = readJSON('site/data/schedule.json');
+for (const p of schedData.patterns) if (p.b != null) { const b = schedData.patterns[p.b]; p.c = b.c; p.d = b.d; p.s = b.s; } // shared-path patterns
+
 const netData = readJSON('site/data/network.json');
 
 const stopIndex = {};

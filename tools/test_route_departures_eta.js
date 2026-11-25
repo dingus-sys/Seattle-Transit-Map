@@ -7,6 +7,8 @@ console.log('=== TEST SUITE: Route Departures & Live ETA ===');
 const appJs = fs.readFileSync('web/app.js', 'utf8');
 const appCss = fs.readFileSync('web/app.css', 'utf8');
 const sched = JSON.parse(fs.readFileSync('site/data/schedule.json'));
+for (const p of sched.patterns) if (p.b != null) { const b = sched.patterns[p.b]; p.c = b.c; p.d = b.d; p.s = b.s; } // shared-path patterns
+
 const routesData = JSON.parse(fs.readFileSync('site/data/routes.json'));
 const stopsData = JSON.parse(fs.readFileSync('site/data/stops.json'));
 

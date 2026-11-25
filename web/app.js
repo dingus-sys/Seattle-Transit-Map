@@ -211,7 +211,7 @@
     "metro-44", "metro-48", "metro-49", "metro-60", "metro-62", "metro-65", "metro-67", "metro-70",
     "metro-101", "metro-106", "metro-124", "metro-131", "metro-132", "metro-150", "metro-160", "metro-165",
     "metro-181", "metro-182", "metro-187", "metro-255", "metro-271", "metro-345", "metro-348", "metro-372",
-    "st-512", "st-522", "st-545", "st-550", "st-554",
+    "sound-transit-512", "sound-transit-522", "sound-transit-545", "sound-transit-550", "sound-transit-554",
     "ct-swift-blue", "ct-swift-green", "ct-swift-orange"
   ]);
   const isSnowRoute = (r) => !!(r && (SNOW_IDS.has(r.id) || r.cat === "link" || r.cat === "rapidride"));
@@ -231,7 +231,7 @@
     if (!r || !alerts || !alerts.byRoute) return false;
     const list = routeAlerts(r.id);
     if (!list.length) return false;
-    return list.some((a) => a.level === 2 && /\b(suspended|cancelled|canceled|not operating|no service)\b/i.test(a.title));
+    return list.some((a) => a.level === 2 && (!a.wholeRoutes || a.wholeRoutes.has(r.id)) && /\b(suspended|cancelled|canceled|not operating|no service)\b/i.test(a.title));
   };
   const stopIdsOf = (s) => (s ? [s.id, s.key, ...(s.stops || [])].filter(Boolean) : []);
   const stopIsSuspended = (stopId) => {
@@ -244,7 +244,6 @@
     }
     if (!list.length) return false;
     return list.some((a) => {
-      if (a.level === 2) return true;
       const t = ((a.title || "") + " " + (a.desc || "")).toLowerCase();
       return /\b(closed|closure|suspend|suspended|not served|bypassed|missed|no service|out of service|out of order|relocated)\b/.test(t);
     });
@@ -307,7 +306,7 @@
 
   // ---------------------------------------------------------------- bundled tile archives
   let MANIFEST = null;
-  const archives = {};
+  const archives = new Map();
   function b64ToBytes(s) {
     s = s.trim();
     if (Uint8Array.fromBase64) return Uint8Array.fromBase64(s);
@@ -315,19 +314,24 @@
     for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
     return out;
   }
+  const ARCHIVE_KEEP = 14; // decoded archives kept at once: the newest few, not every one visited
   function loadArchive(name) {
-    if (!archives[name]) {
-      archives[name] = fetch(`tiles/${name}.txt`).then((r) => {
-        if (!r.ok) throw new Error(`tiles/${name}.txt: ${r.status}`);
-        return r.text();
-      }).then((txt) => {
-        const buf = b64ToBytes(txt).buffer;
-        const n = new DataView(buf).getUint32(0, true);
-        const index = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, n)));
-        return { index, buf, base: 4 + n };
-      });
-    }
-    return archives[name];
+    let hit = archives.get(name);
+    if (hit) { archives.delete(name); archives.set(name, hit); return hit; } // most recent last
+    hit = fetch(`tiles/${name}.txt`).then((r) => {
+      if (!r.ok) throw new Error(`tiles/${name}.txt: ${r.status}`);
+      return r.text();
+    }).then((txt) => {
+      const buf = b64ToBytes(txt).buffer;
+      const n = new DataView(buf).getUint32(0, true);
+      const index = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, n)));
+      return { index, buf, base: 4 + n };
+    });
+    // a failed download is forgotten, so the next request tries again
+    hit.catch(() => { if (archives.get(name) === hit) archives.delete(name); });
+    archives.set(name, hit);
+    while (archives.size > ARCHIVE_KEEP) archives.delete(archives.keys().next().value);
+    return hit;
   }
   async function gunzip(bytes) {
     const ds = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
@@ -353,7 +357,10 @@
       const stack = m ? decodeURIComponent(m[1]).split(",")[0].trim() : "";
       const slug = FONTS[stack] || "regular";
       try {
-        glyphs = glyphs || fetch("fonts/glyphs.json").then((r) => r.json());
+        if (!glyphs) {
+          const attempt = glyphs = fetch("fonts/glyphs.json").then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); });
+          attempt.catch(() => { if (glyphs === attempt) glyphs = null; }); // try again next time
+        }
         const b64 = (await glyphs)[`${slug}/${m[2]}`];
         if (!b64) return { data: new ArrayBuffer(0) };
         const bytes = b64ToBytes(b64);
@@ -1389,6 +1396,7 @@
         const m = e.data;
         if (m.type === "route") {
           const done = routeFlight; routeFlight = null;
+          if (done && done.id === m.id && m.buildId === appliedSeq) rememberRoute(done.idxs, m.feats);
           if (!queuedRoute && done?.id === m.id && !map.isMoving() && m.buildId === appliedSeq) done.cb(m.feats, m.mesh);
           if (queuedRoute) { const next = queuedRoute; queuedRoute = null; if (!map.isMoving()) sendRoute(next); }
           return;
@@ -1421,8 +1429,20 @@
     routeFlight = request;
     worker.postMessage({ type: "route", id: request.id, idxs: request.idxs });
   }
+  // Hover paths already drawn for the layout on screen, so pointing at a route again (or moving
+  // back and forth between two) shows it at once instead of waiting on the worker.
+  const routeCache = new Map();
+  const routeCacheKey = (idxs) => appliedSeq + "|" + idxs.join(",");
+  function rememberRoute(idxs, feats) {
+    const k = routeCacheKey(idxs);
+    routeCache.delete(k);
+    routeCache.set(k, feats);
+    if (routeCache.size > 40) routeCache.delete(routeCache.keys().next().value);
+  }
   function requestRoutePaths(idxs, center, cb) {
     if (!worker) { cb(engine ? engine.routePaths(idxs, center) : []); return; }
+    const hit = routeCache.get(routeCacheKey(idxs));
+    if (hit) { cb(hit, null); return; }
     const request = { id: ++routeSeq, idxs, cb };
     if (routeFlight) queuedRoute = request;
     else sendRoute(request);
@@ -1430,6 +1450,7 @@
   function applyBuild(m) {
     if (m.id < appliedSeq || !map || !map.getSource("net")) return;
     appliedSeq = m.id;
+    routeCache.clear();
     drawStats.applied++;
     lastFeats = m.feats;
     lastSelFeats = m.selFeats;
@@ -1786,9 +1807,9 @@
       if (!selected) {
         showHome(panelView !== "corridor");
       } else if (selected.type === "route") {
-        showRoute(selected.id);
+        if (RBY[selected.id]) showRoute(RBY[selected.id]);
       } else if (selected.type === "stop") {
-        showStop(selected.id);
+        if (stopIndex[selected.id]) showStop(stopIndex[selected.id]);
       }
     } catch {}
     map.triggerRepaint();
@@ -2077,7 +2098,7 @@
             sub((g, w) => {
               if (g === 1 && w === 2) { e.agency = str(); return true; }
               if (g === 2 && w === 2) { e.route = str(); return true; }
-              if (g === 4 && w === 2) return sub((h, x) => { if (h === 5 && x === 2) { e.route = e.route || str(); return true; } return false; });
+              if (g === 4 && w === 2) { e.trip = true; return sub((h, x) => { if (h === 5 && x === 2) { e.route = e.route || str(); return true; } return false; }); }
               if (g === 5 && w === 2) { e.stop = str(); return true; }
               return false;
             });
@@ -2108,10 +2129,12 @@
     for (const a of raw) {
       const live = !a.periods.length || a.periods.some((q) => (!q.s || q.s <= now + 3600) && (!q.e || q.e >= now));
       if (!live) continue;
-      const routes = new Set(), stops = new Set();
+      const routes = new Set(), stops = new Set(), wholeRoutes = new Set();
+      let agencyWide = !a.ents.length;
       for (const e of a.ents) {
         const ag = e.agency && e.agency !== "0" ? e.agency : feedAgency;
-        if (e.route) { const r = RTMAP.get(`${ag}_${e.route}`); if (r) routes.add(r.id); }
+        if (e.agency && !e.route && !e.stop && !e.trip) agencyWide = true;
+        if (e.route) { const r = RTMAP.get(`${ag}_${e.route}`); if (r) { routes.add(r.id); if (!e.trip) wholeRoutes.add(r.id); } }
         if (e.stop) stops.add(`${STOP_PREFIX[ag] || ag}-${e.stop}`);
       }
       // some feeds put the whole notice in the title: its first line is the title
@@ -2121,7 +2144,7 @@
       if (!title) continue;
       const start = Math.min(...a.periods.map((q) => q.s || Infinity), Infinity), end = Math.max(...a.periods.map((q) => q.e || 0), 0);
       out.push({ id: `${feedAgency}:${a.id || title}`, agency: feedAgency, title, desc, url: /^https?:/i.test(a.url) ? a.url : "",
-        level: alertLevel(title + " " + desc, a.effect), start: isFinite(start) ? start : 0, end, routes, stops });
+        level: alertLevel(title + " " + desc, a.effect), start: isFinite(start) ? start : 0, end, routes, stops, wholeRoutes, agencyWide: agencyWide && !routes.size && !stops.size });
     }
     return out;
   }
@@ -2208,10 +2231,12 @@
     // the same notice can come through two agencies' feeds: keep it once, with every route it names
     const byText = new Map();
     for (const a of found) {
-      if (!a.routes.size && ![...a.stops].some((sid) => stopIndex[sid])) continue; // nothing on this map
-      const k = a.title.toLowerCase().replace(/\s+/g, " ");
+      if (!a.agencyWide && !a.routes.size && ![...a.stops].some((sid) => stopIndex[sid])) continue; // nothing on this map
+      // identical notices (the same text, dates and agency family) merge; a different description,
+      // time window or agency stays its own notice
+      const k = [a.title, a.desc, a.start, a.end].join("\u0001").toLowerCase().replace(/\s+/g, " ");
       const prev = byText.get(k);
-      if (prev) { a.routes.forEach((x) => prev.routes.add(x)); a.stops.forEach((x) => prev.stops.add(x)); prev.level = Math.max(prev.level, a.level); }
+      if (prev) { if (a.wholeRoutes) { if (!prev.wholeRoutes) prev.wholeRoutes = new Set(); a.wholeRoutes.forEach((x) => prev.wholeRoutes.add(x)); } a.routes.forEach((x) => prev.routes.add(x)); a.stops.forEach((x) => prev.stops.add(x)); prev.level = Math.max(prev.level, a.level); }
       else byText.set(k, a);
     }
     alerts.list = [...byText.values()].sort((x, y) => (y.level - x.level) || (y.start - x.start));
@@ -2514,16 +2539,24 @@
     return pacificAt(new Date());
   }
   let schedPromise = null;
-  function loadSchedule() { return schedPromise || (schedPromise = loadScheduleOnce()); }
+  let schedFailedAt = 0;
+  // a failed download is retried (at most every 5 s) instead of being remembered for the session
+  function loadSchedule(force) {
+    if (schedPromise && !force && !(schedFailedAt && Date.now() - schedFailedAt > 5000)) return schedPromise;
+    schedFailedAt = 0;
+    return (schedPromise = loadScheduleOnce());
+  }
   async function loadScheduleOnce() {
     try {
       const d = await fetch("data/schedule.json").then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); });
+      // a pattern with "b" shares another's path, distances and stops and carries only its own timing
+      for (const p of d.patterns) if (p.b != null) { const b = d.patterns[p.b]; p.c = b.c; p.d = b.d; p.s = b.s; }
       for (const p of d.patterns) { p.pts = p.c.map(([x, y]) => toM(x, y)); p.cum = cumLen(p.pts); p.route = ROUTES[p.r]; }
       SCHED = d;
       buildDepIndex();
       renderVehicles();
       updateLiveUI();
-    } catch (e) { console.warn("timetable estimates unavailable", e); }
+    } catch (e) { schedFailedAt = Date.now(); console.warn("timetable estimates unavailable", e); }
   }
   function estPos(p, frac) {
     const f = p.f, d = p.d;
@@ -2629,7 +2662,11 @@
     live.liveCount = liveCount;
     live.estCount = estCount;
     map.getSource("vehicles").setData({ type: "FeatureCollection", features: feats });
-    if (typeof updateLiveHud === "function") updateLiveHud();
+    // the HUD text changes at most once a second: no need to rewrite it every frame
+    if (typeof updateLiveHud === "function" && (!renderVehicles.hudAt || performance.now() - renderVehicles.hudAt > 1000)) {
+      renderVehicles.hudAt = performance.now();
+      updateLiveHud();
+    }
   }
   const renderLive = renderVehicles;
   // Live positions are GPS fixes on the street; the map draws lines in lanes and simplified, so a
@@ -2676,7 +2713,8 @@
     }
     return [toLonLat(hit.q), finalB];
   }
-  setInterval(() => { if (map && enabled.has("live") && !document.hidden && !map.isMoving()) renderVehicles(); }, 1000);
+  // the animation loop already redraws vehicles while it runs; this only covers when it isn't
+  setInterval(() => { if (map && enabled.has("live") && !document.hidden && !map.isMoving() && !liveAnimRaf) renderVehicles(); }, 1000);
 
   // Live vehicle status: early (< -60s), on schedule (< 3m), delayed (3–7m), late (> 7m)
   function vehicleStatus(v) {
@@ -2743,7 +2781,8 @@
   function fillVehicleTrip(vid, fallbackHead) {
     vehicleTrip(vid).then((t) => {
       const el = popup && popup.getElement() && popup.getElement().querySelector(".vtrip-slot");
-      if (el) el.innerHTML = vehicleTripHTML(t, (t && t.head) || fallbackHead);
+      // only the popup that asked: a slow answer for bus A must not land in bus B's popup
+      if (el && el.dataset.vid === String(vid)) el.innerHTML = vehicleTripHTML(t, (t && t.head) || fallbackHead);
     });
   }
   function vehicleLines(id, est) {
@@ -2798,9 +2837,9 @@
     liveAnimRaf = 0;
     if (!enabled.has("live") || document.hidden || !map || !map.getSource("vehicles")) return;
     lastActiveTime = Date.now();
-    // ~28 fps normally; while a pan or pinch is under way the camera gets the frame, so the
+    // ~15 fps normally (enough for the eased glide); while a pan or pinch is under way the camera gets the frame, so the
     // markers refresh at ~8 fps (they are world-anchored, and settle fully on moveend)
-    if (now - lastAnimMs >= (map.isMoving() ? 120 : 35)) {
+    if (now - lastAnimMs >= (map.isMoving() ? 120 : 66)) {
       lastAnimMs = now;
       renderVehicles(now);
     }
@@ -3312,7 +3351,7 @@
     for (const k of keys) {
       for (const [pi, i] of DEP.get(k) || []) {
         const p = SCHED.patterns[pi];
-        if (!p.f || i >= p.f.length - 1) continue; // the end of the line: buses arrive, they don't leave
+        if (!p.f || i >= p.f.length - 1 || (p.nb && p.nb.includes(i))) continue; // the end of the line, or no pickup here
         for (const [day, off] of [[now.day, 0], [now.prev, 86400]]) {
           for (const [s0, du] of (SCHED.byPat[day] && SCHED.byPat[day].get(pi)) || []) {
             const t = s0 + p.f[i] * du - off - now.secs;
@@ -3498,7 +3537,7 @@
       for (const k of keys) {
         for (const [pi, i] of DEP.get(k) || []) {
           const p = SCHED.patterns[pi];
-          if (!p || !p.f || i >= p.f.length - 1) continue;
+          if (!p || !p.f || i >= p.f.length - 1 || (p.nb && p.nb.includes(i))) continue;
           const rObj = ROUTES[p.r];
           if (!rObj || (rObj.id !== r.id && rObj.label !== r.label)) continue;
           const toSid = p.s[p.s.length - 1];
@@ -3939,10 +3978,13 @@
     // the selected route shows its own arrows; the faded network's would only be noise
     if (map.getLayer("arrows")) map.setLayoutProperty("arrows", "visibility", dim ? "none" : "visible");
   }
+  // history entries this page pushed itself: Back may only go "back" onto one of those, never off
+  // to whatever site the visitor came from
+  let appPushes = 0;
   function setHash(h, push = false) {
     const url = h ? "#" + h : location.pathname + location.search;
     try {
-      if (push) history.pushState({ hash: h }, "", url);
+      if (push) { history.pushState({ hash: h }, "", url); appPushes++; }
       else history.replaceState({ hash: h }, "", url);
     } catch { /* sandboxed */ }
   }
@@ -5365,7 +5407,7 @@
   function isThroughRoutedPair(r1, r2) {
     if (!r1 || !r2) return false;
     const info = getThroughRouteInfo(r1);
-    return !!(info && info.partners.some((p) => p.id === r2.id || p.short === r2.short));
+    return !!(info && r1.id !== r2.id && info.partners.some((p) => p.id === r2.id && (p.agency || "") === (r2.agency || "")));
   }
 
   function showRoute(r) {
@@ -5444,7 +5486,7 @@
         showCorridor(null);
         return;
       }
-      if (history.length > 1 && window.history.state?.hash) {
+      if (appPushes > 0 && window.history.state?.hash) {
         history.back();
       } else {
         clearSelection({ push: false });
@@ -5661,7 +5703,7 @@
         showCorridor(null);
         return;
       }
-      if (history.length > 1 && window.history.state?.hash) {
+      if (appPushes > 0 && window.history.state?.hash) {
         history.back();
       } else {
         panelView = "home";
@@ -6226,7 +6268,11 @@
     };
 
     let lastTransitItems = [];
+    // bumped whenever the results are dismissed or the query changes, so a slow address lookup
+    // can't reopen the list or move the map after the user has moved on
+    let searchGen = 0;
     const onSearchInput = () => {
+      const gen = ++searchGen;
       const val = input.value.trim();
       if (!val) {
         box.hidden = true;
@@ -6241,9 +6287,9 @@
       if (willGeocode) {
         clearTimeout(searchDebounceTimer);
         searchDebounceTimer = setTimeout(async () => {
-          if (input.value.trim() !== val) return;
+          if (input.value.trim() !== val || gen !== searchGen) return;
           const pois = await searchAddressesAndPois(val);
-          if (input.value.trim() !== val) return;
+          if (input.value.trim() !== val || gen !== searchGen) return;
           const addressItems = pois.map((p) => ({ kind: "address", place: p }));
           renderResults(lastTransitItems, addressItems, false);
         }, 220);
@@ -6267,8 +6313,10 @@
           choose(Math.max(0, activeSearchIdx));
         } else if (input.value.trim().length >= 3) {
           const val = input.value.trim();
+          const gen = ++searchGen;
           showToast("Locating address…");
           searchAddressesAndPois(val).then((pois) => {
+            if (gen !== searchGen || input.value.trim() !== val) return; // dismissed or edited meanwhile
             if (pois.length) {
               box.hidden = true;
               input.value = "";
@@ -6280,6 +6328,7 @@
           });
         }
       } else if (e.key === "Escape") {
+        searchGen++;
         box.hidden = true;
         input.blur();
       }
@@ -6289,7 +6338,7 @@
       if (b) choose(+b.dataset.i);
     });
     document.addEventListener("click", (e) => {
-      if (!e.target.closest(".search")) box.hidden = true;
+      if (!e.target.closest(".search")) { searchGen++; box.hidden = true; }
     });
   }
 
@@ -6392,6 +6441,8 @@
     calViewYear = curDate.getFullYear();
     calViewMonth = curDate.getMonth();
     renderCustomDatePicker();
+    // on a phone it sits in the sheet's flow: scroll the sheet so the whole picker (and Done) shows
+    requestAnimationFrame(() => { try { picker.scrollIntoView({ block: "nearest", behavior: "smooth" }); } catch (e) { picker.scrollIntoView(); } });
   }
 
   function closeCustomDatePicker() {
@@ -7011,7 +7062,7 @@
     for (const bk of bKeys) {
       for (const [pi, i] of DEP.get(bk) || []) {
         const p = SCHED.patterns[pi];
-        if (!p || !p.f || i >= p.f.length - 1) continue;
+        if (!p || !p.f || i >= p.f.length - 1 || (p.nb && p.nb.includes(i))) continue;
         const pRoute = ROUTES[p.r];
         if (!pRoute || pRoute.id !== route.id) continue;
 
@@ -7019,7 +7070,7 @@
         for (let k = i + 1; k < p.s.length; k++) {
           const sid = p.s[k];
           const st = stopIndex[sid];
-          if (aKeys.has(sid) || (st && aKeys.has(st.key))) {
+          if ((aKeys.has(sid) || (st && aKeys.has(st.key))) && !(p.na && p.na.includes(k))) {
             j = k;
             break;
           }
@@ -7066,6 +7117,9 @@
   const TRANSFER_WALK_M = 360;          // a walk between stops
   const HUB_TRANSFER_WALK_M = 650;      // ...between a station or ferry terminal and a stop
   const WALK_ONLY_MAX_M = 2500;
+  // streets are never a straight line: every straight-line walking distance is stretched by this
+  // (the usual planner allowance), so a walk is not shown faster than the streets allow
+  const WALK_CIRCUITY = 1.2;
   let raptorNet = null;
   const isHubRoute = (r) => r && (r.cat === "link" || r.cat === "sounder" || r.cat === "amtrak" || r.cat === "ferry" || r.cat === "watertaxi" || r.cat === "monorail");
 
@@ -7097,7 +7151,10 @@
         (stopPatsTmp[s] || (stopPatsTmp[s] = [])).push(pi, i);
         if (isHubRoute(route)) hub[s] = true;
       }
-      pats[pi] = { pi, route, stops, f: p.f };
+      let nb = null, na = null;
+      if (p.nb) { nb = new Uint8Array(p.s.length); for (const i of p.nb) nb[i] = 1; }
+      if (p.na) { na = new Uint8Array(p.s.length); for (const i of p.na) na[i] = 1; }
+      pats[pi] = { pi, route, stops, f: p.f, nb, na };
     }
     const n = stopId.length;
     const stopPats = new Array(n);
@@ -7146,9 +7203,9 @@
       net.near(net.lat[s], net.lon[s], HUB_TRANSFER_WALK_M, (q, d) => {
         if (seen.has(q)) return;
         const limit = net.hub[s] || net.hub[q] ? HUB_TRANSFER_WALK_M : TRANSFER_WALK_M;
-        if (d > limit) return;
+        if (d * WALK_CIRCUITY > limit) return; // the cap is on the walk along streets, not the straight line
         seen.add(q);
-        tmp.push(q, Math.max(60, Math.round(d / WALK_MPM * 60)), Math.round(d));
+        tmp.push(q, Math.max(60, Math.round(d * WALK_CIRCUITY / WALK_MPM * 60)), Math.round(d * WALK_CIRCUITY));
       });
     }
     out = Int32Array.from(tmp);
@@ -7233,12 +7290,12 @@
         const start = qpos[pi]; qpos[pi] = -1;
         const pat = net.pats[pi], tt = T.get(pi);
         if (!pat || !tt || (banned && banned.has(pat.route.id))) continue;
-        const st = pat.stops, f = pat.f, len = st.length;
+        const st = pat.stops, f = pat.f, len = st.length, nbArr = pat.nb, naArr = pat.na;
         let trip = -1, boardPos = -1;
         for (let pos = start; pos < len; pos++) {
           const s = st[pos];
           if (s < 0) continue;
-          if (trip >= 0) {
+          if (trip >= 0 && !(naArr && naArr[pos])) {
             const a = tt.s0[trip] + f[pos] * tt.du[trip];
             if (a < best[s] && a < target) {
               cur[s] = a; best[s] = a; kd[s] = 1; si[s] = k;
@@ -7247,7 +7304,7 @@
             }
           }
           const pa = prevArr[s];
-          if (pa === Infinity || pos === len - 1) continue;
+          if (pa === Infinity || pos === len - 1 || (nbArr && nbArr[pos])) continue;
           // the way we got here decides the buffer: none from the street, none to stay on a
           // through-routed bus, two minutes for any other change
           let buffer = 0;
@@ -7409,7 +7466,7 @@
   function raptorEnds(net, pt, radii) {
     for (const R of radii) {
       const out = [];
-      net.near(pt.lat, pt.lon, R, (s, d) => { if (net.stopPats[s].length) out.push([s, Math.round(d / WALK_MPM * 60), Math.round(d)]); });
+      net.near(pt.lat, pt.lon, R, (s, d) => { if (net.stopPats[s].length) out.push([s, Math.round(d * WALK_CIRCUITY / WALK_MPM * 60), Math.round(d * WALK_CIRCUITY)]); });
       if (out.length) return out;
     }
     return [];
@@ -7419,7 +7476,7 @@
     if (!orig || !dest) return null;
     // a point with no real coordinates (Infinity sent the stop search into an endless loop)
     if (![orig.lat, orig.lon, dest.lat, dest.lon].every(Number.isFinite) || !Number.isFinite(planningTime && planningTime.secs)) return null;
-    const directWalkDist = distMeters(orig.lat, orig.lon, dest.lat, dest.lon);
+    const directWalkDist = distMeters(orig.lat, orig.lon, dest.lat, dest.lon) * WALK_CIRCUITY;
     const directWalkTime = Math.round(directWalkDist / WALK_MPM);
     const nowSecs = planningTime.secs;
     const directWalk = directWalkDist <= WALK_ONLY_MAX_M ? {
@@ -7632,10 +7689,38 @@
     const walk1Min = it.walk1Time || 0;
     const minEarliestSec = planningTime.secs + walk1Min * 60;
 
+    // the timetable trip this itinerary was built on; a live bus counts only if it is headed where
+    // that trip is, so a branch that never reaches the rider's stop isn't shown as "soonest"
+    const plannedTrip = it.schedTrip || (it.type === "transfer" && it.schedTrip1) || (it.type === "multi" && it.legs?.[0]?.schedTrip) || timetableTripTimes(route, it.boardStop, it.type === "direct" ? it.alightStop : (it.transferStop1 || it.transferStop), minEarliestSec, planningTime.day, planningTime.prev, planningTime);
+    const normPlace = (x) => String(x || "").toLowerCase().replace(/\b(to|via|station|bay|stop)\b/g, "").replace(/[^a-z0-9]+/g, "");
+    // Which headsigns of this route reach the rider's stop after the boarding stop, and which don't.
+    // A live bus is skipped only when its headsign belongs to a branch known NOT to get there; an
+    // unknown headsign is accepted (agencies word them differently from stop names).
+    const servesHeads = [], otherHeads = [];
+    try {
+      const alightTarget = it.type === "direct" ? it.alightStop : (it.transferStop1 || it.transferStop);
+      const aIds = alightTarget ? stopIdsOf(alightTarget) : [];
+      if (aIds.length) {
+        for (const pt of route.patterns || []) {
+          if (!pt.stops || !pt.headsign) continue;
+          const bi = pt.stops.findIndex((x) => sIds.includes(x));
+          const ai = pt.stops.findLastIndex((x) => aIds.includes(x));
+          (bi >= 0 && ai > bi ? servesHeads : otherHeads).push(normPlace(pt.headsign));
+        }
+      }
+    } catch (e) { /* no branch information: accept every live bus of the route */ }
+    const headMatch = (n, list) => list.some((h) => h && (n.includes(h) || h.includes(n)));
+    const sameDest = (d) => {
+      const n = normPlace(d.toName);
+      if (!n || !servesHeads.length) return true;
+      if (headMatch(n, servesHeads)) return true;
+      return !headMatch(n, otherHeads);
+    };
+
     // 1. Live departures check from agency
     const live = isFuturePlan ? [] : liveDepartures(sIds, 30);
     if (live && live.length) {
-      const match = live.find((d) => d.r && (d.r.id === route.id || d.r === route) && (d.t >= walk1Min * 60 - 60));
+      const match = live.find((d) => d.r && (d.r.id === route.id || d.r === route) && (d.t >= walk1Min * 60 - 60) && sameDest(d));
       if (match) {
         const waitMin = Math.max(0, Math.round(match.t / 60));
         const clockTime = new Date(Date.now() + Math.max(0, match.t) * 1000);
@@ -7656,7 +7741,7 @@
     }
 
     // 2. Timetable schedule departures check
-    const schedTrip = it.schedTrip || (it.type === "transfer" && it.schedTrip1) || (it.type === "multi" && it.legs?.[0]?.schedTrip) || timetableTripTimes(route, it.boardStop, it.type === "direct" ? it.alightStop : (it.transferStop1 || it.transferStop), minEarliestSec, planningTime.day, planningTime.prev, planningTime);
+    const schedTrip = plannedTrip;
     if (schedTrip) {
       // minutes from now until it leaves the stop (not the wait left after walking there)
       const waitMin = Number.isFinite(schedTrip.depSec) ? Math.max(0, Math.round((schedTrip.depSec - planningTime.secs) / 60)) : schedTrip.waitMin;
@@ -7954,7 +8039,17 @@
       // the timetable is still on its way: say so, and plan as soon as it lands
       setView(`${backBtn}<div class="home-view"><div class="planner-summary-card" aria-live="polite"><div class="planner-summary-title"><span>${poiIconSVG("clock", 17)} Loading timetables…</span></div><p class="planner-sub">Trips are planned from every agency's published schedule. This takes a moment the first time.</p></div></div>`);
       $("#back")?.addEventListener("click", closeTripPlanner);
-      loadSchedule().then(() => { if (SCHED && dirOrigin && dirDest) executeTripPlan(); });
+      loadSchedule().then(() => {
+        if (SCHED && dirOrigin && dirDest) { executeTripPlan(); return; }
+        if (!SCHED && $("#back") && $(".planner-summary-title")) {
+          $(".planner-summary-title").innerHTML = `<span>${poiIconSVG("alert", 17)} Couldn't load the timetables</span>`;
+          const sub = $(".planner-sub");
+          if (sub) {
+            sub.innerHTML = `Check your connection. <button type="button" class="press" id="retrySched">Try again</button>`;
+            $("#retrySched")?.addEventListener("click", () => { loadSchedule(true); executeTripPlan(); });
+          }
+        }
+      });
       return;
     }
     const sug = $("#dirSuggestions");
@@ -9522,7 +9617,9 @@
         if (!tipLive) highlightStop(null);
         const ln = pickLine(e.point);
         if (ln) {
-          const strandRoute = ln.r >= 0 ? LINES[ln.r] : (ln.routes && ln.routes[0]);
+          // a band shared by several routes belongs to none of them: it highlights the street and a tap offers the choice
+          const sharedBand = !!(ln.f && ln.f.properties.r < 0 && ln.routes && ln.routes.length > 1);
+          const strandRoute = sharedBand ? null : (ln.r >= 0 ? LINES[ln.r] : (ln.routes && ln.routes[0]));
           if (selected && selected.type === "route") {
             // When a route is actively selected and displaying its info,
             // hovering other routes must NOT highlight them or pop up other route tooltips.
@@ -9636,6 +9733,7 @@
     map.on("dragstart", () => {
       if (locateMode !== "idle") {
         locateMode = "idle";
+        stopLocating();
         const btn = $("#locateBtn");
         if (btn) {
           btn.classList.remove("active", "compass", "locating");
@@ -9691,7 +9789,7 @@
         }
         if (v && r) {
           const age = v.ts ? Math.max(0, Math.round(Date.now() / 1000 - v.ts)) : null;
-          openPopup(vh[0].geometry.coordinates, `<div class="pop"><h3>${esc(routeTitle(r))}</h3><p>${esc(r.name)}</p>${vesselLine(v.id, "p")}<div class="vtrip-slot">${vehicleTripHTML(null, v.head)}</div><p class="vs-row">${vehicleLines(v.id, false)}</p>${v.label && !v.name ? `<p>Vehicle ${esc(v.label)}</p>` : ""}${routeRows([r])}</div>`, "280px");
+          openPopup(vh[0].geometry.coordinates, `<div class="pop"><h3>${esc(routeTitle(r))}</h3><p>${esc(r.name)}</p>${vesselLine(v.id, "p")}<div class="vtrip-slot" data-vid="${esc(String(v.id))}">${vehicleTripHTML(null, v.head)}</div><p class="vs-row">${vehicleLines(v.id, false)}</p>${v.label && !v.name ? `<p>Vehicle ${esc(v.label)}</p>` : ""}${routeRows([r])}</div>`, "280px");
           fillVehicleTrip(v.id, v.head);
           return;
         }
@@ -9725,17 +9823,19 @@
       const rs = routesAt(e.point, isNarrow() ? 10 : 6);
       const hoveredRoute = (cur && cur.kind === "line" && cur.id >= 0) ? LINES[cur.id] : null;
       const ln = pickLine(e.point);
+      const sharedBand = !!(ln && ln.f && ln.f.properties.r < 0 && ln.routes && ln.routes.length > 1);
       const strandRoute = (hoveredRoute && rs.some((r) => r.id === hoveredRoute.id))
         ? hoveredRoute
-        : (ln ? (ln.r >= 0 ? LINES[ln.r] : (ln.routes && ln.routes[0])) : (rs.length === 1 ? rs[0] : null));
+        : (ln ? (sharedBand ? null : (ln.r >= 0 ? LINES[ln.r] : (ln.routes && ln.routes[0]))) : (rs.length === 1 ? rs[0] : null));
 
       if (strandRoute) {
         selectRoute(strandRoute.id, { fit: true });
         return;
       }
-      if (rs.length > 1) {
-        showCorridor(rs);
-        focusRoutes(rs);
+      if (rs.length > 1 || sharedBand) {
+        const choices = rs.length > 1 ? rs : ln.routes;
+        showCorridor(choices);
+        focusRoutes(choices);
         return;
       }
       const trailsHit = map.queryRenderedFeatures([[e.point.x - 7, e.point.y - 7], [e.point.x + 7, e.point.y + 7]], {
@@ -9860,7 +9960,7 @@
     hovStopsKey = "";
     document.querySelectorAll(".route-row.is-hovered").forEach((el) => el.classList.remove("is-hovered"));
     if (!map || !map.getSource("hover")) return;
-    hoverFade(hSlot, 0, 190);
+    hoverFade(hSlot, 0, 150);
     setHoverDim(null);
     popOut("hov", () => { if (!hoverKey) map.getSource("hoverstops").setData(fc([])); });
     if (selected && selected.type === "route") {
@@ -9908,6 +10008,11 @@
     if (key === hoverKey && !again) return;
     hoverKey = key;
     hoverRoutes = routes;
+    if (!again) {
+      // the route that was lit lets go now, not when the new one's path arrives from the worker
+      hoverFade(hSlot, 0, 140);
+      if (glow) setHoverDim(new Set(routes.map((r) => r.id)));
+    }
     requestRoutePaths(routes.map((r) => LINEIDX[r.id]), false, (feats, mesh) => {
       if (hoverKey !== key) return;
       const lines = withColor(feats);
@@ -9918,7 +10023,7 @@
         map.getSource(HOVER_SLOTS[next]).setData(fc(lines));
         if (ribbons) ribbons.update(HOVER_SLOTS[next], drawing);
         hoverFade(hSlot, 0, 140);
-        hoverFade(next, 1, 200);
+        hoverFade(next, 1, 160);
         hSlot = next;
       }
       if (glow) setHoverDim(new Set(routes.map((r) => r.id)));
@@ -9936,11 +10041,17 @@
     });
   }
   const focusRoute = (r) => focusRoutes([r]);
-  // pointer off every line: let go after a moment (crossing a gap between lines doesn't blink)
+  // Pointer off every line: the highlight lets go at once (the line picker already holds the
+  // current line until the pointer is clearly off it). The rest of the map brightens back after
+  // a short grace, so crossing the hairline gap to the next line doesn't flash the whole network.
+  const HOVER_GRACE = 60;
   function setHover(feat) {
     if (feat) return;
     clearTimeout(hoverTimer);
-    if (hoverKey) hoverTimer = setTimeout(focusOff, 200);
+    if (!hoverKey) return;
+    hoverKey = ""; hoverRoutes = []; queuedRoute = null;
+    hoverFade(hSlot, 0, 140);
+    hoverTimer = setTimeout(focusOff, HOVER_GRACE);
   }
 
   // ---------------------------------------------------------------- route tags you can point at
@@ -10153,7 +10264,7 @@
       if (tipInside) return;
       tip.classList.add("tip-leaving");
       tipOut = setTimeout(gone, 170);
-    }, tipLive ? 480 : 160);
+    }, tipLive ? 480 : HOVER_GRACE);
   }
 
   // ---------------------------------------------------------------- phone sheet (peek / half / full)
@@ -10170,15 +10281,19 @@
   }
   function openSheet(state = "full") {
     if (!isNarrow()) return;
-    if (DETENTS.indexOf(state) > DETENTS.indexOf(sheetState) || state === "half") setSheet(state);
+    // "peek" always collapses (going back home must uncover the map); others only ever raise the sheet
+    if (state === "peek" || DETENTS.indexOf(state) > DETENTS.indexOf(sheetState) || state === "half") setSheet(state);
   }
   function setupSheet() {
     setSheet(isNarrow() ? "peek" : "full");
     $("#grabber").addEventListener("click", () => setSheet(sheetState === "full" ? "peek" : DETENTS[DETENTS.indexOf(sheetState) + 1]));
-    let y0 = null, t0 = 0;
-    $("#sheetHead").addEventListener("pointerdown", (e) => { if (!isNarrow() || e.target.closest("input,button:not(.grabber)")) return; y0 = e.clientY; t0 = performance.now(); });
+    let y0 = null, t0 = 0, pid = null;
+    $("#sheetHead").addEventListener("pointerdown", (e) => { if (!isNarrow() || e.target.closest("input,button:not(.grabber)")) return; y0 = e.clientY; t0 = performance.now(); pid = e.pointerId; });
+    // the browser took the touch over (a scroll, a system gesture): forget the drag
+    window.addEventListener("pointercancel", (e) => { if (pid === e.pointerId) { y0 = null; pid = null; } });
     window.addEventListener("pointerup", (e) => {
-      if (y0 == null) return;
+      if (y0 == null || e.pointerId !== pid) return;
+      pid = null;
       const dy = e.clientY - y0, fast = performance.now() - t0 < 400, i = DETENTS.indexOf(sheetState);
       if ((dy < -30 || (fast && dy < -10)) && i < 2) setSheet(DETENTS[i + 1]);
       else if ((dy > 30 || (fast && dy > 10)) && i > 0) setSheet(DETENTS[i - 1]);
@@ -10340,6 +10455,8 @@
         return out;
       },
       hoverDim: () => ({ v: hovDim.v, to: hovDim.to, ids: hovDim.ids ? [...hovDim.ids] : null }),
+      // the hover highlight right now: which target, and each cross-fading slot's strength
+      hoverState: () => ({ key: hoverKey, slot: hSlot, v: hAnim.map((a) => +a.v.toFixed(3)), to: hAnim.map((a) => a.to) }),
       planner: { timetableTripTimes, planTransitTrip, planArriveBy, currentVehWord, modeIcon, getSoonestBus },
       timetableTripTimes, planTransitTrip, planArriveBy, pacificAt, currentVehWord, sched: () => SCHED,
       idle: () => new Promise((res) => { if (!inFlight && !queued && !needsRebuild) res(); else idleWaiters.push(res); }),
@@ -10529,8 +10646,10 @@
   function updateLiveHudStats() {
     let onTime = 0, delayed = 0, late = 0;
     if (live && live.status) {
-      for (const st of live.status.values()) {
-        if (st.dev != null) {
+      const cutoff = Date.now() - 10 * 60000;
+      for (const [key, st] of live.status) {
+        if (st.got < cutoff) { live.status.delete(key); continue; } // a vehicle that stopped reporting
+        if (st.dev != null && st.predicted) {
           if (st.dev < 180) onTime++;
           else if (st.dev < 420) delayed++;
           else late++;
@@ -10617,6 +10736,17 @@
     }
   }
 
+  // stop the GPS watch and the compass listeners (idle UI must mean idle hardware: battery)
+  function stopLocating() {
+    if (watchId != null) { try { navigator.geolocation.clearWatch(watchId); } catch (e) { /* ignore */ } watchId = null; }
+    window.removeEventListener("deviceorientation", handleOrientation, true);
+    window.removeEventListener("deviceorientationabsolute", handleOrientation, true);
+    orientationListening = false;
+    userCoords = null;
+    currentHeading = null;
+    if (userMarker) { userMarker.remove(); userMarker = null; }
+  }
+
   function updateUserPosition(pos, isInitial = false) {
     const { longitude: lng, latitude: lat, heading } = pos.coords;
     userCoords = { lng, lat };
@@ -10674,7 +10804,7 @@
             (err) => {
               btn.classList.remove("locating", "active", "compass");
               locateMode = "idle";
-              if (watchId != null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+              stopLocating();
               const msg = err.code === 1 ? "Location permission denied" : "Could not determine location";
               showToast(msg);
             },
@@ -10696,6 +10826,7 @@
         }
       } else if (locateMode === "compass") {
         locateMode = "idle";
+        stopLocating();
         btn.classList.remove("active", "compass", "locating");
         btn.setAttribute("aria-label", "Find my location");
         btn.title = "Find my location";
@@ -10740,7 +10871,7 @@
     mq.addEventListener("change", () => { label(); applyTheme(); });
     new MutationObserver(() => { label(); applyTheme(); }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
     window.addEventListener("hashchange", applyHash);
-    window.addEventListener("popstate", () => applyHash(true));
+    window.addEventListener("popstate", () => { if (appPushes > 0) appPushes--; applyHash(true); });
     if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
       window.addEventListener("load", () => {
         navigator.serviceWorker.register("sw.js").catch(() => {});

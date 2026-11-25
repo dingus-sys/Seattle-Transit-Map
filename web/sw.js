@@ -1,45 +1,61 @@
-/* Seattle Transit Map Service Worker - Reliable Offline & Dynamic Cache (v10.3) */
-const CACHE_NAME = "seattle-transit-v10-3";
+/* Seattle Transit Map Service Worker - Reliable Offline & Dynamic Cache (v10.4) */
+const CACHE_PREFIX = "seattle-transit-";
+const CACHE_NAME = "seattle-transit-v10-4";
 const STATIC_ASSETS = [
-  "./",
-  "index.html",
-  "app.css",
-  "app.js",
-  "geom.js",
-  "ribbons.js",
-  "logo-mark.svg",
-  "manifest.json",
   "data/network.json",
   "data/routes.json",
   "data/stops.json",
   "data/areas.json",
   "data/schedule.json",
+  "manifest.json",
+  "logo-mark.svg",
   "https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.js",
   "https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.css"
 ];
 
+// Cache a response without ever letting a storage failure escape as an unhandled rejection.
+function safePut(req, response) {
+  return caches.open(CACHE_NAME).then((cache) => cache.put(req, response)).catch(() => {});
+}
+
+// The built page links its scripts, styles, logos and preloaded data with ?v=hash URLs, so read
+// them from the page itself instead of guessing; each asset is cached on its own, so one
+// unavailable file can't stop the rest.
+async function precache() {
+  const cache = await caches.open(CACHE_NAME);
+  const urls = new Set(STATIC_ASSETS);
+  try {
+    const res = await fetch("./", { cache: "reload" });
+    if (res && res.ok) {
+      const html = await res.clone().text();
+      await cache.put("./", res);
+      for (const m of html.matchAll(/(?:src|href)="([^"#]+)"/g)) {
+        const u = m[1];
+        if (/^(https?:)?\/\//.test(u) && !/cdnjs\.cloudflare\.com/.test(u)) continue;
+        if (/^(data:|blob:|mailto:|javascript:)/.test(u)) continue;
+        if (/\.(js|css|json|svg|png|webp|ico)(\?|$)/.test(u)) urls.add(u);
+      }
+    }
+  } catch (e) { /* offline during install: the static list below still gets tried */ }
+  await Promise.allSettled([...urls].map((u) =>
+    fetch(u).then((r) => { if (r && (r.ok || r.type === "opaque")) return cache.put(u, r); })
+  ));
+}
+
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(STATIC_ASSETS).catch((err) => {
-        console.warn("SW: pre-caching partial failure", err);
-      });
-    }).then(() => self.skipWaiting())
-  );
+  event.waitUntil(precache().catch(() => {}).then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((keys) => {
-      return Promise.all(
-        keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))
-      );
-    }).then(() => self.clients.claim()).then(() => {
-      // Notify active clients that an updated service worker is running
-      return self.clients.matchAll().then((clients) => {
+    caches.keys().then((keys) => Promise.all(
+      // only this app's own old caches: other projects on the same origin keep theirs
+      keys.filter((k) => k.startsWith(CACHE_PREFIX) && k !== CACHE_NAME).map((k) => caches.delete(k))
+    )).then(() => self.clients.claim()).then(() =>
+      self.clients.matchAll().then((clients) => {
         clients.forEach((client) => client.postMessage({ type: "SW_UPDATED", version: CACHE_NAME }));
-      });
-    })
+      })
+    )
   );
 });
 
@@ -65,13 +81,12 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       fetch(req).then((response) => {
         if (response && response.status === 200) {
-          const cloned = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(req, cloned));
+          event.waitUntil(safePut(req, response.clone()));
         }
         return response;
-      }).catch(() => {
-        return caches.match(req).then((cached) => cached || caches.match("./") || caches.match("index.html"));
-      })
+      }).catch(() =>
+        caches.match(req).then((cached) => cached || caches.match("./")).then((cached) => cached || caches.match("index.html"))
+      )
     );
     return;
   }
@@ -81,8 +96,7 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       fetch(req).then((response) => {
         if (response && response.status === 200) {
-          const cloned = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(req, cloned));
+          event.waitUntil(safePut(req, response.clone()));
         }
         return response;
       }).catch(() => caches.match(req))
@@ -102,19 +116,11 @@ self.addEventListener("fetch", (event) => {
         if (response.type !== "basic" && response.type !== "cors" && response.type !== "opaque") {
           return response;
         }
-        const cloned = response.clone();
-        caches.open(CACHE_NAME).then((cache) => {
-          // Cache vector tiles, fonts, and static assets dynamically
-          if (url.pathname.includes("/tiles/") || url.pathname.includes("/fonts/") || url.pathname.endsWith(".js") || url.pathname.endsWith(".css") || url.pathname.endsWith(".svg") || url.hostname.includes("cdnjs.cloudflare.com")) {
-            cache.put(req, cloned);
-          }
-        });
-        return response;
-      }).catch((err) => {
-        if (req.mode === "navigate") {
-          return caches.match("./");
+        // Cache vector tiles, fonts, and static assets dynamically
+        if (url.pathname.includes("/tiles/") || url.pathname.includes("/fonts/") || url.pathname.endsWith(".js") || url.pathname.endsWith(".css") || url.pathname.endsWith(".svg") || url.hostname.includes("cdnjs.cloudflare.com")) {
+          event.waitUntil(safePut(req, response.clone()));
         }
-        throw err;
+        return response;
       });
     })
   );

@@ -198,9 +198,15 @@ def load_feeds():
                 stops[col] = ""
         stops["stop_id"] = stops.stop_id.map(lambda v: safe_id(key, v))
         stops["parent_station"] = stops.parent_station.map(lambda v: safe_id(key, v) if v else "")
-        st = pd.read_csv(z.open("stop_times.txt"), usecols=["trip_id", "stop_id", "departure_time", "stop_sequence"],
-                         dtype={"trip_id": str, "stop_id": str, "departure_time": str, "stop_sequence": int},
+        st_cols = ["trip_id", "stop_id", "departure_time", "stop_sequence", "pickup_type", "drop_off_type"]
+        have = set(pd.read_csv(z.open("stop_times.txt"), nrows=0, encoding="utf-8-sig").columns)
+        st = pd.read_csv(z.open("stop_times.txt"), usecols=[c for c in st_cols if c in have],
+                         dtype={"trip_id": str, "stop_id": str, "departure_time": str, "stop_sequence": int,
+                                "pickup_type": str, "drop_off_type": str},
                          keep_default_na=False, encoding="utf-8-sig")
+        for col in ("pickup_type", "drop_off_type"):
+            if col not in st:
+                st[col] = ""
         st["trip_id"] = st.trip_id.map(p(1))
         st = st[st.trip_id.isin(set(trips.trip_id))]
         st["stop_id"] = st.stop_id.map(lambda v: safe_id(key, v))
@@ -651,6 +657,9 @@ def special_days(recs, pat_route, day_services, horizon_services):
     return dates, variants
 
 
+PROFILE_TOL_SEC = 45  # trips whose stop times stay within this of a pattern's profile share it
+
+
 def export_schedule(trips, st, stops_idx, shapes, day_services, gtfs_to_slug, slug_index, path, cal=None, cal_dates=None):
     """Timetable for estimated vehicle positions.
 
@@ -674,19 +683,61 @@ def export_schedule(trips, st, stops_idx, shapes, day_services, gtfs_to_slug, sl
     sub["t"] = sub.departure_time.map(lambda t: to_sec(t) if t else np.nan)
     g = sub.groupby("trip_id", sort=False)
     stop_lists, time_lists = g.stop_id.agg(tuple).to_dict(), g.t.agg(list).to_dict()
+    # pickup_type / drop_off_type 1 = none, so the planner never boards or leaves there
+    nb_lists = g.pickup_type.agg(lambda v: tuple(i for i, x in enumerate(v) if str(x).strip() == "1")).to_dict()
+    na_lists = g.drop_off_type.agg(lambda v: tuple(i for i, x in enumerate(v) if str(x).strip() == "1")).to_dict()
     coord = {sid: ((float(r.stop_lon) - LON0) * KX, (float(r.stop_lat) - LAT0) * KY) for sid, r in stops_idx.iterrows()}
 
     pat_index, pat_out, pat_d, pat_fracs, recs = {}, [], [], defaultdict(list), []
+    prof_reps = defaultdict(list)
+    geo_base = {}
     for tr in act.itertuples(index=False):
         stops_t, times = stop_lists.get(tr.trip_id), time_lists.get(tr.trip_id)
         if not stops_t or len(stops_t) < 2 or any(sid not in coord for sid in stops_t):
             continue
-        key = (tr.shape_id, stops_t)
-        if key not in pat_index:
+        nb_t, na_t = nb_lists.get(tr.trip_id, ()), na_lists.get(tr.trip_id, ())
+        # trips that share stops but run on materially different timings (an express run, a
+        # pad at a terminal) get their own pattern: one median profile would put a timed stop
+        # many minutes off its real departure
+        tarr = np.array(times, dtype=float)
+        tok = ~np.isnan(tarr)
+        offs = None
+        if tok.sum() >= 2:
+            tarr = np.interp(np.arange(len(tarr)), np.where(tok)[0], tarr[tok])
+            offs = tarr - tarr[0]
+        prof = 0
+        if offs is not None and offs[-1] > 0:
+            reps = prof_reps[(tr.shape_id, stops_t, nb_t, na_t)]
+            for ci, rep in enumerate(reps):
+                if np.abs(rep * offs[-1] - offs).max() <= PROFILE_TOL_SEC:
+                    prof = ci
+                    break
+            else:
+                prof = len(reps)
+                reps.append(offs / offs[-1])
+        key = (tr.shape_id, stops_t, nb_t, na_t, prof)
+        gkey = (tr.shape_id, stops_t)
+        if key not in pat_index and gkey in geo_base:
+            # same path and stops, different timing: only its own timing profile is stored; the
+            # path, distances and stop list come from the first pattern ("b")
+            bi = geo_base[gkey]
+            if bi is None:
+                pat_index[key] = None
+            else:
+                pat_index[key] = len(pat_out)
+                entry = {"r": pat_out[bi]["r"], "b": bi}
+                if nb_t:
+                    entry["nb"] = list(nb_t)
+                if na_t:
+                    entry["na"] = list(na_t)
+                pat_out.append(entry)
+                pat_d.append(pat_d[bi])
+        elif key not in pat_index:
             xy = np.array([((lon - LON0) * KX, (lat - LAT0) * KY) for lon, lat in shapes[tr.shape_id]])
             pts = np.array(LineString(xy).simplify(5).coords)
             if len(pts) < 2:
                 pat_index[key] = None
+                geo_base[gkey] = None
                 continue
             a, b = pts[:-1], pts[1:]
             ab = b - a
@@ -710,8 +761,14 @@ def export_schedule(trips, st, stops_idx, shapes, day_services, gtfs_to_slug, sl
                 d.append(last)
             lonlat = [[round(x / KX + LON0, 5), round(y / KY + LAT0, 5)] for x, y in pts]
             pat_index[key] = len(pat_out)
+            geo_base[gkey] = len(pat_out)
             # s: the stops themselves, so the page can list a stop's next departures
-            pat_out.append({"r": slug_index[gtfs_to_slug[tr.route_id]], "c": lonlat, "d": [round(v, 1) for v in d], "s": list(stops_t)})
+            entry = {"r": slug_index[gtfs_to_slug[tr.route_id]], "c": lonlat, "d": [round(v, 1) for v in d], "s": list(stops_t)}
+            if nb_t:
+                entry["nb"] = list(nb_t)
+            if na_t:
+                entry["na"] = list(na_t)
+            pat_out.append(entry)
             pat_d.append(np.array(d))
         pi = pat_index[key]
         if pi is None:
@@ -732,7 +789,8 @@ def export_schedule(trips, st, stops_idx, shapes, day_services, gtfs_to_slug, sl
         f[0], f[-1] = 0, 1
         pat_out[pi]["f"] = [round(float(v), 4) for v in f]
     for p in pat_out:
-        p.setdefault("f", [round(i / (len(p["d"]) - 1), 4) for i in range(len(p["d"]))])
+        n_stops = len(p["d"] if "d" in p else pat_out[p["b"]]["d"])
+        p.setdefault("f", [round(i / (n_stops - 1), 4) for i in range(n_stops)])
     days = {}
     for k, sv in day_services.items():
         days[k] = sorted([[pi, s0, du] for pi, s0, du, sid in recs if sid in sv], key=lambda x: x[1])

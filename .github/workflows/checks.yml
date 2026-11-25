@@ -41,6 +41,7 @@ jobs:
           node tools/test_overflow_tag_corridor.js
           python3 tools/validate_data.py
           python3 tools/check_repair.py
+          python3 tools/check_parallel_copies.py
       - name: Build the keyless website
         run: python3 pipeline/build_site.py
       - name: Run Playwright browser test sweep
@@ -51,3 +52,4 @@ jobs:
           sleep 2
           node tools/sweep.js
           node tools/test_hover_cards.js
+          node tools/test_hover_release.js

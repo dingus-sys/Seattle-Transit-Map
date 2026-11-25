@@ -141,7 +141,8 @@ const idle = (page) => page.evaluate(() => new Promise((res) => { const m = wind
     await page.waitForTimeout(500);
     const pop = await page.locator('.glass-pop').count();
     const card = await page.locator('.hero h2').count();
-    check('click corridor opens route list or route', pop > 0 || card > 0, `popup=${pop} card=${card}`);
+    const choose = await page.locator('.corridor-picker').count(); // a shared band offers "Choose a route"
+    check('click corridor opens route list or route', pop > 0 || card > 0 || choose > 0, `popup=${pop} card=${card} choose=${choose}`);
     if (pop > 0) {
       await page.screenshot({ path: path.join(OUT, 'sweep-popup.png') });
       await page.locator('.glass-pop [data-route]').first().click();
@@ -229,5 +230,7 @@ const idle = (page) => page.evaluate(() => new Promise((res) => { const m = wind
 
   await browser.close();
   for (const r of results) console.log(r[0], '-', r[1], r[2] ? `(${r[2]})` : '');
-  console.log(`${results.filter((r) => r[0] === 'PASS').length}/${results.length} passed`);
+  const passedCount = results.filter((r) => r[0] === 'PASS').length;
+  console.log(`${passedCount}/${results.length} passed`);
+  if (passedCount !== results.length) process.exitCode = 1;
 })();

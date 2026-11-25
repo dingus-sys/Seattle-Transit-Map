@@ -48,6 +48,7 @@ jobs:
           node tools/stress_test_routing.js
           python3 tools/validate_data.py
           python3 tools/check_repair.py
+          python3 tools/check_parallel_copies.py   # routes on one street share one bundle
       - uses: actions/configure-pages@v5
       # The page (index.html, app.js, app.css, geom.js, ribbons.js, logos/) is built here from web/ and is
       # not kept in the repository; the data in site/data and site/tiles is.

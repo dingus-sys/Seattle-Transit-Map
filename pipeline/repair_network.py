@@ -15,6 +15,7 @@ import shapely
 from shapely.geometry import LineString, Point, Polygon
 from shapely.ops import substring, unary_union
 
+from merge_parallel import merge_parallel_copies
 from restore_turnarounds import restore_turnarounds
 
 
@@ -333,8 +334,8 @@ def open_skinny_loops(g, min_roundness=0.15, min_stub=15.0):
     return opened, removed
 
 
-def main():
-    path = os.path.join(graph.SITE, "data", "network.json")
+def load_network(path):
+    """The finished network as a Graph of its surface edges (other layers pass through)."""
     with open(path) as f:
         net = json.load(f)
     routes, rank, _ = graph.load_routes()
@@ -356,22 +357,10 @@ def main():
     g = graph.Graph(positions, raw)
     for edge, (slugs, directions) in zip(g.edges.values(), metadata):
         edge.update(lines=frozenset(slugs), order=slugs, dirs=dict(zip(slugs, directions)))
-    mask = graph.freeway_mask()
-    filled = graph.fill_gaps(g, surface, mask, max_span=20000)
-    bridged = graph.bridge_loose_ends(g, surface, mask, max_span=20000)
-    restored = restore_spans(g, surface)
-    stops_by_slug = load_stops_by_route()
-    stop_spans = restore_stop_spans(g, surface, stops_by_slug)
-    comp_bridged = bridge_route_components(g, surface, max_gap=25000.0)
-    raw = {}
-    if graph.MATCHED:
-        raw_routes, _, _ = graph.load_routes(prefer_matched=False)
-        raw = {slug: shape for slug, (layer, shape) in raw_routes.items() if layer == "surface"}
-    turnarounds = restore_turnarounds(g, surface, raw)
-    opened, spikes = open_skinny_loops(g)
-    print(f"final continuity: {filled} gaps filled, {bridged} loose ends reconnected, "
-          f"{restored} omitted spans, {stop_spans} stop spans, {comp_bridged} component gaps reconnected and {turnarounds} turnarounds restored; "
-          f"{opened} out-and-back loops drawn as dead ends, {spikes} spikes removed", flush=True)
+    return net, g, other, surface, rank
+
+
+def write_network(path, net, g, other, surface, rank, mask):
     # Infer direction only for new links; split links retain their original metadata.
     new = graph.Graph(g.pos, [])
     source_ids = {}
@@ -402,6 +391,34 @@ def main():
     net["edges"] = other
     with open(path, "w") as f:
         json.dump(net, f, separators=(",", ":"))
+
+
+def main():
+    path = os.path.join(graph.SITE, "data", "network.json")
+    net, g, other, surface, rank = load_network(path)
+    mask = graph.freeway_mask()
+    filled = graph.fill_gaps(g, surface, mask, max_span=20000)
+    bridged = graph.bridge_loose_ends(g, surface, mask, max_span=20000)
+    restored = restore_spans(g, surface)
+    stops_by_slug = load_stops_by_route()
+    stop_spans = restore_stop_spans(g, surface, stops_by_slug)
+    comp_bridged = bridge_route_components(g, surface, max_gap=25000.0)
+    raw = {}
+    if graph.MATCHED:
+        raw_routes, _, _ = graph.load_routes(prefer_matched=False)
+        raw = {slug: shape for slug, (layer, shape) in raw_routes.items() if layer == "surface"}
+    turnarounds = restore_turnarounds(g, surface, raw)
+    opened, spikes = open_skinny_loops(g)
+    print(f"final continuity: {filled} gaps filled, {bridged} loose ends reconnected, "
+          f"{restored} omitted spans, {stop_spans} stop spans, {comp_bridged} component gaps reconnected and {turnarounds} turnarounds restored; "
+          f"{opened} out-and-back loops drawn as dead ends, {spikes} spikes removed", flush=True)
+    # Every step above adds a route's missing piece from that route's own shape, so routes
+    # repaired along one street are separate copies a few meters apart: put them on one edge.
+    stretches, duplicates, welded = merge_parallel_copies(g, mask=mask)
+    opened, spikes = open_skinny_loops(g)
+    print(f"shared streets: {stretches} stretches and {duplicates} duplicate edges merged onto one "
+          f"bundle, {welded} pieces welded; {opened} more dead ends, {spikes} more spikes removed", flush=True)
+    write_network(path, net, g, other, surface, rank, mask)
 
 
 if __name__ == "__main__":

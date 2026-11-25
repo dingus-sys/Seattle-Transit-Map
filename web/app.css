@@ -284,13 +284,24 @@ button, input { font: inherit; color: inherit; letter-spacing: inherit; }
 .dir-custom-picker::after {
   display: none !important;
 }
-:root[data-theme="dark"] .dir-custom-picker,
+:root[data-theme="dark"] .dir-custom-picker {
+  background: #1e1e21 !important;
+  background-color: #1e1e21 !important;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .15);
+}
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .dir-custom-picker {
     background: #1e1e21 !important;
     background-color: #1e1e21 !important;
     box-shadow: 0 20px 48px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .15);
   }
+}
+
+/* phones and short windows: the picker joins the sheet's scrolling content instead of floating past its edge */
+@media (max-width: 700px), (max-height: 760px) {
+  /* only while the picker is open does the head scroll (the search dropdown must not be clipped) */
+  .sheet-head:has(.dir-custom-picker:not([hidden])) { flex: 1 1 auto; min-height: 0; max-height: 100%; overflow-y: auto; overscroll-behavior: contain; }
+  .dir-custom-picker { position: static; margin-top: 6px; box-shadow: 0 0 0 1px var(--rim), 0 4px 12px rgba(0, 0, 0, .08); }
 }
 
 .cal-presets {

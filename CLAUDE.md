@@ -69,6 +69,7 @@ export MAPLIBRE_JS=/path/to/maplibre-gl.js    #   set this if the sandbox can't 
 node tools/sweep.js                           # 51 checks: expect "51/51 passed"
 node tools/test_hover_cards.js                # 13 checks: +N tag & stop safe bridge micro-traversals
 node tools/test_hover_dim.js                  # 10 checks: hover fades the rest to 0.65, selection's 0.38 wins
+node tools/test_hover_release.js              # 7 checks: the old highlight lets go within a few frames
 node tools/stress_test_routing.js             # 18 planner tests: every leg timetabled, 2-min buffers, walk caps
 node tools/test_planner_edges.js              # picker above cards & Seattle time from any zone, Arrive by latest,
                                               #   holiday timetables, "X Station" search, Escape, bad links
@@ -78,6 +79,7 @@ node tools/zoomgap2.js tag                    # pinch-zoom check (lines must sta
 node tools/strandorder.js                     # strand swaps at junctions (0 current; gate <= 8)
 node tools/geometry_check.js                  # all routes/zoom levels, selection/hover agreement
 python3 tools/check_repair.py                 # omitted branches, anchored repairs, direction metadata
+python3 tools/check_parallel_copies.py        # routes on one street share one bundle (gate: <= 2 km of copies)
 node tools/deployed_watch.js https://dingus-sys.github.io/Seattle-Transit-Map/   # live data on the real site
 python3 tools/near.py -122.15 47.58 250       # network segments near a point
 ```
@@ -102,7 +104,10 @@ then `process_gtfs` (routes, stops, schedules) then `build_areas` (DART, Access,
 `match_shapes` (snaps every bus and streetcar shape onto the real street network with an HMM)
 then `build_graph` (the shared-corridor network, `site/data/network.json`) then `tidy_junctions`,
 `repair_network` (remaining source-path omissions and 2 m simplification; an out-and-back restored
-as a flat loop, e.g. Island Transit 4 out to Troxell Rd, becomes a dead-end stub: `open_skinny_loops`),
+as a flat loop, e.g. Island Transit 4 out to Troxell Rd, becomes a dead-end stub: `open_skinny_loops`;
+then `merge_parallel.merge_parallel_copies` puts routes that the repairs restored as separate copies
+along one street onto one shared edge: within 15 m and parallel, splits under 60 m folded in, a
+closed bubble on a freeway within 40 m; `tools/check_parallel_copies.py` gates it at 2 km),
 then `build_site`.
 - `network.json`: `{lines: [route ids], edges: [{c: [[lon,lat]...], l: [line indexes], d: [direction per line]}]}`.
   Three separate layers: surface, rail, water.
@@ -142,6 +147,12 @@ one file for the artifact):
   cross-fading hover layers; the tooltip glides, morphs between cards and fades. Hover opacity
   changes do not rebuild width expressions, and queued hover work keeps only the newest target.
   Route hit tests use a spatial index of the displayed geometry, not tiled line-width queries.
+  The old highlight lets go at once: leaving every line fades it immediately (only the rest of the
+  map's brightening waits `HOVER_GRACE` 60 ms, so crossing to a neighbouring line doesn't flash the
+  network), and a new target fades the old one before its path arrives from the worker. Recent
+  hover paths are cached per layout (`routeCache`). `__atlas.hoverState()` exposes the two slots.
+- Overview one-way arrows: where the one-way service types on a street all go the same way, only
+  the most important one carries chevrons (`arrowFor` in `geom.js`), one row per bundle.
 - Shared-band hover highlights the street only. Tapping a band opens `showCorridor`: all visible
   surface routes on the street, without a 16-route cutoff, with a route/destination filter and
   large buttons. Choosing one highlights its full path and stops. Back returns to the choices.

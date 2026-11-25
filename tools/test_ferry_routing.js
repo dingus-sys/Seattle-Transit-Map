@@ -7,6 +7,8 @@ const fs = require("fs");
 const ROUTES = JSON.parse(fs.readFileSync("site/data/routes.json", "utf8")).routes;
 const STOPS = JSON.parse(fs.readFileSync("site/data/stops.json", "utf8"));
 const SCHED = JSON.parse(fs.readFileSync("site/data/schedule.json", "utf8"));
+for (const p of SCHED.patterns) if (p.b != null) { const b = SCHED.patterns[p.b]; p.c = b.c; p.d = b.d; p.s = b.s; } // shared-path patterns
+
 
 const LINES = ROUTES;
 const LINEIDX = {};

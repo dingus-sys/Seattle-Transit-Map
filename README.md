@@ -33,6 +33,7 @@ pipeline/         Python build steps (run in this order by build_all.py)
   build_graph.py    the shared-corridor network and ribbon order
   tidy_junctions.py  folds small junction knots and removes stray stubs
   repair_network.py restores gaps and turnarounds from route shapes and simplifies to 2 m
+  merge_parallel.py  (run by repair_network) puts routes repaired along one street on one edge
   build_site.py     builds the page from web/: site/index.html with app.js, app.css, geom.js,
                     ribbons.js and logos/ beside it (+ artifact.html, one self-contained file)
 web/              page template, styles, app script, geom.js (layout) and ribbons.js (drawing)
@@ -159,6 +160,16 @@ the existing route. Compact one-way turnarounds are restored from agency shapes 
 arriving and departing paths show the same approach and connect to the rest of the route.
 Redundant surface-network points within 2 m are removed while junction endpoints, rail
 and water geometry are kept.
+
+Each of those repairs comes from one route's own shape, so routes repaired along the same
+street (at a transit center loop, for example Totem Lake, every route restored its own turn)
+would be separate copies a few meters apart that the page draws as crossing strands.
+`merge_parallel.py` merges them: wherever one edge runs within 15 m of another and roughly
+parallel, the weaker one's routes move onto the stronger edge's geometry and what is left of
+it joins there. A separation shorter than 60 m is folded into the bundle; a fork at a
+shallow angle, a parallel street a block away and a city street under a freeway stay apart.
+`tools/check_parallel_copies.py` fails the deploy if more than 2 km of such copies come back
+(there were 316 km in 216 places before the merge).
 
 The base map shows highway numbers (Interstate, US and state routes) now and then along each
 freeway, and on the website, where the full map tiles are available, places to find your

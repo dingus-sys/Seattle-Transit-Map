@@ -905,6 +905,20 @@ const KCTMGeom = (() => {
       // for the selected/previewed route, instead of drawing dozens of hairlines at once.
       const hrOf = (c) => (c.inner === "glass" ? 0.34 : c.inner === "solid" ? 0.3 : c.inner === "dots" ? 0.32 : c.inner === "ties" ? 0.62 : 0);
       const keyLane = (v) => (Lo) => [Lo.pos.get(v), Lo.wk.get(v) * Lo.s / 2];
+      // One row of one-way arrows per bundle: where the one-way service types on a street all go
+      // the same way, only the most important of them carries the chevrons (each band's own row
+      // would land at its own spacing, a scatter of arrows across one street). Bands that go
+      // opposite ways keep their own rows; two-way bands have none anyway.
+      const arrowOwner = new Map();
+      const arrowFor = (E) => {
+        if (arrowOwner.has(E.k)) return arrowOwner.get(E.k);
+        const oneway = (lay[E.k] ? lay[E.k].keys : []).filter((v) => E.kdir.get(v));
+        const d0 = oneway.length > 1 ? E.kdir.get(oneway[0]) : 0;
+        const owner = d0 && oneway.every((v) => E.kdir.get(v) === d0)
+          ? oneway.reduce((a, v) => (CAT[v].prio < CAT[a].prio ? v : a)) : null;
+        arrowOwner.set(E.k, owner);
+        return owner;
+      };
       for (const [v, chains] of KEY_CHAINS) {
         const c = CAT[v];
         if (!keyOn[v]) continue;
@@ -919,7 +933,7 @@ const KCTMGeom = (() => {
                 hm: water || c.inner === "glass" && Lo.rl.get(v).length > 1 ? 0 : w * hrOf(c),
                 sh: water ? 0 : w + 0.55 * Lo.s, ws: w * S, n: Lo.rl.get(v).length,
                 g: c.group, c: color(v), s: 20 - c.prio, d: c.dash ? 1 : 0, h: HMODE[c.inner] || 0,
-                ar: water ? 0 : arrow(st.E.kdir.get(v), st.fwd) },
+                ar: water || (arrowFor(st.E) || v) !== v ? 0 : arrow(st.E.kdir.get(v), st.fwd) },
                 geometry: { type: "LineString", coordinates: coords.map(toLL) } });
             }, water, !water, easeAt);
           }

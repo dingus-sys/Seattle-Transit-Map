@@ -59,6 +59,8 @@ async function runInPage(scriptPath, options = {}) {
       return result.passed === result.total;
     } else {
       console.log('Script returned:', result);
+      // a script that reports a list of failures (route_check.js: {bad: [...]}) fails when it is non-empty
+      if (result && Array.isArray(result.bad)) return result.bad.length === 0;
       return true;
     }
   } finally {
