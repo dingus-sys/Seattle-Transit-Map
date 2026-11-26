@@ -30,6 +30,10 @@ service is a corridor, lines follow the real streets, and the look is Apple "liq
    and builds with `--with-key`, using JSON escaping rather than shell substitution.
    - Test live data with `python3 pipeline/build_site.py --with-key`, then rebuild without
      `--with-key` when you're done.
+   - **Live proxy:** `worker/live-proxy.js` is a Cloudflare Worker (`transit-proxy` on Nicholas's
+     account) holding the keys as Worker secrets. With `LIVE_PROXY` set (`pipeline/config.py` or the
+     Actions variable), `build_site.py` writes no keys even with `--with-key`; the page sends "proxy"
+     in place of each key. `node tools/test_live_proxy.mjs` checks the Worker.
    - Before every commit: `git grep --cached -F "<the key>"` finds nothing. Don't paste keys into
      chat or print them.
 2. **Don't hand-edit `site/data/*.json`.** The weekly workflow (`refresh-data.yml`, Mondays) rebuilds
@@ -68,8 +72,9 @@ export NODE_PATH=$(npm root -g):$(echo ~/.npm/_npx/*/node_modules 2>/dev/null | 
 export MAPLIBRE_JS=/path/to/maplibre-gl.js    #   set this if the sandbox can't reach CDN for maplibre-gl.js
 node tools/sweep.js                           # 51 checks: expect "51/51 passed"
 node tools/test_hover_cards.js                # 13 checks: +N tag & stop safe bridge micro-traversals
-node tools/test_hover_dim.js                  # 10 checks: hover fades the rest to 0.65, selection's 0.38 wins
-node tools/test_hover_release.js              # 7 checks: the old highlight lets go within a few frames
+node tools/test_hover_dim.js                  # 10 checks: hover fades the rest to 0.5, selection's 0.38 wins
+node tools/test_hover_release.js              # 7 checks: the old highlight lets go within a few frames (limits in frames)
+node tools/test_live_proxy.mjs                # 9 checks: the key proxy swaps in keys, refuses other sites and paths
 node tools/stress_test_routing.js             # 18 planner tests: every leg timetabled, 2-min buffers, walk caps
 node tools/test_audit_planner.js              # 9 checks: dwell, minimum transfers, stay-aboard, headsign, Arrive-by midnight/now
 node tools/test_audit_browser.js              # 20 checks: no walk over water, ferry cards, Night Owl, alerts, WSF bulletins, Cascades clock
@@ -142,7 +147,7 @@ one file for the artifact):
   layout. The mesh uses its own VAO, transfers typed buffers, and releases superseded GPU buffers.
 - Hover dim (`setHoverDim`/`syncHoverDim` in `app.js`): hovering a route eases everything else
   (net mesh via `dim: netDim * hovDim.v`, tags, stops, stations, vehicles via the `o` property,
-  trails, DART/Flex/Access areas) to `HOVER_DIM` 0.65 with MapLibre paint transitions; the route's
+  trails, DART/Flex/Access areas) to `HOVER_DIM` 0.5 with MapLibre paint transitions; the route's
   own tags are redrawn at full strength in `hov-badges-0/1` (two cross-fading slots). Only while
   `netDim === 1`: a selection's 0.38 always wins. Never animate a data-driven paint expression
   (that re-tiles the source); constant values with `*-transition` are free.
@@ -218,6 +223,15 @@ the map tiles; the bundled tiles keep only named places of the kinds in `POI_KEE
 
 ## Gotchas
 
+- Bus lines are plain solid lines (no white "shine" stripe: it made every line look faded at rest).
+  Lines are full opacity at rest; only hover (0.5) or a selection (0.38) dims the rest.
+- Start-up errors are specific (`showStartupError`: webgl / maplibre / data). "WebGL is turned off"
+  in a browser is a browser setting (Zen had it off), not a data problem.
+- The MapLibre CSS is vendored in `web/vendor/` (build works offline); the script loads from cdnjs
+  with SRI and falls back to jsdelivr. Playwright scripts load via `tools/pw.js`, and a local
+  `MAPLIBRE_JS` fulfil needs `Access-Control-Allow-Origin: *` because of `crossorigin`.
+- The home panel footer (unofficial note, privacy, MIT licence, timetable date from `META.built`)
+  is `aboutFooterHTML()`; the subtitle turns amber after `STALE_DAYS` (14).
 - `MPP0` in `geom.js` is 78271.5 × cos(lat) because MapLibre's world is 512 px wide at zoom 0.
   An earlier value twice as big made lanes sit twice as far apart as the lines were wide.
   Don't "fix" it.

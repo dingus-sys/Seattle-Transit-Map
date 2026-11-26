@@ -5712,7 +5712,7 @@
     $("#routeShareBtn")?.addEventListener("click", () => {
       shareTarget({
         title: `${routeTitle(r)} - ${r.name}`,
-        text: `Seattle Transit Map: ${routeTitle(r)}`,
+        text: `King County Transit Map: ${routeTitle(r)}`,
         url: `${location.origin}${location.pathname}#route-${r.id}`
       });
     });
@@ -5930,7 +5930,7 @@
     $("#stopShareBtn")?.addEventListener("click", () => {
       shareTarget({
         title: `${s.name} - Transit Stop`,
-        text: `Seattle Transit Map: ${s.name}`,
+        text: `King County Transit Map: ${s.name}`,
         url: `${location.origin}${location.pathname}#stop-${s.id}`
       });
     });
@@ -6375,8 +6375,8 @@
     $("#placeShareBtn")?.addEventListener("click", () => {
       const q = encodeURIComponent(`${place.lat},${place.lon}`);
       shareTarget({
-        title: `${place.name} - Seattle Transit Map`,
-        text: `Seattle Transit Map location: ${place.name}`,
+        title: `${place.name} - King County Transit Map`,
+        text: `King County Transit Map location: ${place.name}`,
         url: `https://www.google.com/maps/search/?api=1&query=${q}`
       });
     });

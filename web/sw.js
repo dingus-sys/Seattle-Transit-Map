@@ -1,4 +1,4 @@
-/* Seattle Transit Map Service Worker - Reliable Offline & Dynamic Cache (v11) */
+/* King County Transit Map service worker - Reliable Offline & Dynamic Cache (v11) */
 const CACHE_PREFIX = "seattle-transit-";
 const CACHE_NAME = "seattle-transit-v11";
 // The page shell only. The data files (about 4 MB compressed) are cached as the page itself
@@ -6,6 +6,7 @@ const CACHE_NAME = "seattle-transit-v11";
 const STATIC_ASSETS = [
   "manifest.json",
   "logo-mark.svg",
+  "icon-192.png",
   "https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.js",
   "https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.css"
 ];
