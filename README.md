@@ -232,3 +232,12 @@ run before app.js in a separate local test page; it is never included in `site/`
 
 Frequencies are counted from the published schedule for one sample Wednesday,
 Saturday and Sunday, in the busier direction, from each trip's first stop.
+
+## Licence and data
+
+The code is under the MIT licence (`LICENSE`). This is an unofficial map, not affiliated with or
+endorsed by King County Metro, Sound Transit, WSDOT or any other agency. Timetables come from the
+agencies' public GTFS feeds and stay under their terms; base-map data is OpenStreetMap (ODbL).
+Live data comes from OneBusAway Puget Sound and WSDOT through a small key-holding proxy
+(`worker/`); the page sets no cookies and doesn't track visitors.
+

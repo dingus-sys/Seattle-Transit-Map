@@ -152,7 +152,7 @@ def main():
     full = build_website(page, css, js, geom, ribbons, logos, "--with-key" in sys.argv)
     open(os.path.join(SITE, "artifact.html"), "w").write(artifact)
     open(os.path.join(SITE, "index.html"), "w").write(full)
-    for extra in ("manifest.json", "sw.js", "logo-mark.svg"):
+    for extra in ("manifest.json", "sw.js", "logo-mark.svg", "icon-180.png", "icon-192.png", "icon-512.png"):
         src = os.path.join(web, extra)
         if os.path.exists(src):
             shutil.copy2(src, os.path.join(SITE, extra))
