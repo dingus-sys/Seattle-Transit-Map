@@ -27,7 +27,11 @@ serves it.
 pipeline/         Python build steps (run in this order by build_all.py)
   config.py         map area (REGION) and data sources
   build_basemap.py  base map tiles + label fonts from OpenFreeMap, trimmed and packed
-  process_gtfs.py   routes, categories, frequencies, hours, stops (Puget Sound GTFS)
+  build_water.py   a small picture of where the water is (from the base-map tiles), so the planner
+                    never walks anyone across a bay: site/data/water.json
+  process_gtfs.py   routes, categories, frequencies, hours, stops, and schedule.json (the timetable:
+                    feed times read in Seattle time, one-day slips removed, stop dwell, vehicle-block
+                    stay-aboard links, minimum transfer times, every route that runs on any planned date)
   build_areas.py    DART areas, Access area, Metro Flex zones
   match_shapes.py   snaps every bus and streetcar route onto the real street network
   build_graph.py    the shared-corridor network and ribbon order

@@ -624,9 +624,9 @@ class TestTier1FeatureCoverage(E2EBaseTestCase):
         self.assertIn("site/artifact.html", gitignore)
 
     def test_t1_f13_05_sw_cache_version_consistent(self):
-        """F13: Service worker cache version matches v10-4."""
+        """F13: Service worker cache version matches v10-5."""
         sw_js = (WEB / "sw.js").read_text()
-        self.assertIn("seattle-transit-v10-4", sw_js)
+        self.assertIn("seattle-transit-v10-5", sw_js)
 
     # --- Feature F14: Secret Hygiene & Safe Deployment ---
     def test_t1_f14_01_no_committed_api_keys_in_repo(self):

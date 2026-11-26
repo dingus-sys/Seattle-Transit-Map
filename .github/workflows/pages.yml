@@ -47,6 +47,8 @@ jobs:
           node tools/test_routing_engine.js
           node tools/stress_test_routing.js
           python3 tools/validate_data.py
+          python3 tools/check_schedule_release.py   # known timetable mistakes: restrictions, Amtrak times, route identity
+          python3 tools/check_stop_coverage.py --max-far 3   # stops on a route's own patterns sit on its drawn line
           python3 tools/check_repair.py
           python3 tools/check_parallel_copies.py   # routes on one street share one bundle
       - uses: actions/configure-pages@v5
@@ -60,8 +62,14 @@ jobs:
         run: |
           python3 pipeline/build_site.py --with-key
           rm site/artifact.html   # the one-file claude.ai preview, not part of the website
+      # The artifact's name carries the attempt number: re-running a failed job adds a second
+      # artifact called "github-pages" to the same run, and deploy-pages refuses to choose
+      # between two ("Multiple artifacts named github-pages were unexpectedly found").
       - uses: actions/upload-pages-artifact@v3
         with:
+          name: github-pages-${{ github.run_attempt }}
           path: site
       - id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          artifact_name: github-pages-${{ github.run_attempt }}

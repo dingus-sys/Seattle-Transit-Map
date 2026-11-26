@@ -189,19 +189,33 @@
   const enabledCat = (cat) => LAYERS.some((l) => l.cats.includes(cat) && enabled.has(l.key));
 
   let specialFilter = null; // null | "nightowl" | "snow"
-  const NIGHT_OWL_IDS = new Set([
-    "sound-transit-1-line", "sound-transit-2-line",
-    "metro-a-line", "metro-c-line", "metro-d-line", "metro-e-line", "metro-g-line", "metro-h-line",
-    "metro-1", "metro-2", "metro-3", "metro-4", "metro-5", "metro-7", "metro-8", "metro-11",
-    "metro-14", "metro-21", "metro-36", "metro-40", "metro-44", "metro-48", "metro-49", "metro-62",
-    "metro-70", "metro-120", "metro-124", "metro-160",
-    "ct-swift-blue", "ct-swift-green", "ct-swift-orange"
-  ]);
-  const isNightOwl = (r) => !!(r && (
-    NIGHT_OWL_IDS.has(r.id) ||
-    (r.sched?.weekday?.late_n >= 3 && r.cat !== "peak") ||
-    (r.sched?.weekday?.span_h >= 21.5)
-  ));
+  // Night Owl: routes with a trip actually running between midnight and 5 AM, from the timetable (a trip
+  // that started the evening before counts, and so does one that starts after midnight). Until the
+  // timetable has loaded, the route table's late-night departures stand in.
+  let NIGHT = null;  // route id -> trips in the midnight-5 AM window on the busiest day
+  const NIGHT_END = 5 * 3600, NIGHT_MIN = 20 * 60, ALL_NIGHT_TRIPS = 6;
+  function buildNightIndex() {
+    NIGHT = new Map();
+    if (!SCHED) return;
+    const ids = (pi) => { const r = ROUTES[SCHED.patterns[pi].r]; return r && r.id; };
+    const best = (id, n) => { if (n > (NIGHT.get(id) || 0)) NIGHT.set(id, n); };
+    for (const key of ["weekday", "saturday", "sunday"]) {
+      const early = new Map(), over = new Map();
+      for (const [pi, s0, du] of SCHED.days[key] || []) {
+        const id = ids(pi);
+        if (!id) continue;
+        // at least 20 minutes of the trip inside the window (a first bus leaving at 4:50 is the morning, not the night)
+        if (Math.min(s0 + du, NIGHT_END) - Math.max(s0, 0) >= NIGHT_MIN) early.set(id, (early.get(id) || 0) + 1);
+        if (Math.min(s0 + du, 86400 + NIGHT_END) - Math.max(s0, 86400) >= NIGHT_MIN) over.set(id, (over.get(id) || 0) + 1);
+      }
+      for (const [id, n] of early) best(id, n);
+      for (const [id, n] of over) best(id, n);
+    }
+  }
+  const nightTrips = (r) => (NIGHT ? NIGHT.get(r.id) || 0 : 0);
+  const isNightOwl = (r) => !!r && (NIGHT
+    ? NIGHT.has(r.id)
+    : (r.sched?.weekday?.late_n >= 3 && r.cat !== "peak") || (r.sched?.weekday?.span_h >= 21.5));
 
   const SNOW_IDS = new Set([
     "sound-transit-1-line", "sound-transit-2-line", "sound-transit-t-line",
@@ -227,11 +241,18 @@
     const w = r.sched.weekday, sa = r.sched.saturday, su = r.sched.sunday;
     return !!(w && sa && su && (sa.mid_n > 0 || sa.trips > 5) && (su.mid_n > 0 || su.trips > 5));
   };
+  // is the notice in force this moment? (an advance notice is kept a little before its start so it can be
+  // shown, but nothing is styled as suspended until it begins)
+  const alertActive = (a, nowSec = Date.now() / 1000) => {
+    const ps = a && a.periods && a.periods.length ? a.periods : null;
+    if (ps) return ps.some(([s, e]) => (!s || s <= nowSec) && (!e || e >= nowSec));
+    return !a || ((!a.start || a.start <= nowSec) && (!a.end || a.end >= nowSec));
+  };
   const isRouteSuspended = (r) => {
     if (!r || !alerts || !alerts.byRoute) return false;
     const list = routeAlerts(r.id);
     if (!list.length) return false;
-    return list.some((a) => a.level === 2 && (!a.wholeRoutes || a.wholeRoutes.has(r.id)) && /\b(suspended|cancelled|canceled|not operating|no service)\b/i.test(a.title));
+    return list.some((a) => a.level === 2 && alertActive(a) && (!a.wholeRoutes || a.wholeRoutes.has(r.id)) && /\b(suspended|cancelled|canceled|not operating|no service)\b/i.test(a.title));
   };
   const stopIdsOf = (s) => (s ? [s.id, s.key, ...(s.stops || [])].filter(Boolean) : []);
   const stopIsSuspended = (stopId) => {
@@ -244,6 +265,7 @@
     }
     if (!list.length) return false;
     return list.some((a) => {
+      if (!alertActive(a)) return false;
       const t = ((a.title || "") + " " + (a.desc || "")).toLowerCase();
       return /\b(closed|closure|suspend|suspended|not served|bypassed|missed|no service|out of service|out of order|relocated)\b/.test(t);
     });
@@ -2100,6 +2122,7 @@
               if (g === 2 && w === 2) { e.route = str(); return true; }
               if (g === 4 && w === 2) { e.trip = true; return sub((h, x) => { if (h === 5 && x === 2) { e.route = e.route || str(); return true; } return false; }); }
               if (g === 5 && w === 2) { e.stop = str(); return true; }
+              if (g === 6 && w === 0) { e.dir = vi() + 1; return true; } // one direction only
               return false;
             });
             a.ents.push(e);
@@ -2134,7 +2157,8 @@
       for (const e of a.ents) {
         const ag = e.agency && e.agency !== "0" ? e.agency : feedAgency;
         if (e.agency && !e.route && !e.stop && !e.trip) agencyWide = true;
-        if (e.route) { const r = RTMAP.get(`${ag}_${e.route}`); if (r) { routes.add(r.id); if (!e.trip) wholeRoutes.add(r.id); } }
+        // a notice naming a route AND a stop, a trip or a direction is about that part of it, not the whole route
+        if (e.route) { const r = RTMAP.get(`${ag}_${e.route}`); if (r) { routes.add(r.id); if (!e.trip && !e.stop && !e.dir) wholeRoutes.add(r.id); } }
         if (e.stop) stops.add(`${STOP_PREFIX[ag] || ag}-${e.stop}`);
       }
       // some feeds put the whole notice in the title: its first line is the title
@@ -2144,7 +2168,8 @@
       if (!title) continue;
       const start = Math.min(...a.periods.map((q) => q.s || Infinity), Infinity), end = Math.max(...a.periods.map((q) => q.e || 0), 0);
       out.push({ id: `${feedAgency}:${a.id || title}`, agency: feedAgency, title, desc, url: /^https?:/i.test(a.url) ? a.url : "",
-        level: alertLevel(title + " " + desc, a.effect), start: isFinite(start) ? start : 0, end, routes, stops, wholeRoutes, agencyWide: agencyWide && !routes.size && !stops.size });
+        level: alertLevel(title + " " + desc, a.effect), start: isFinite(start) ? start : 0, end, routes, stops, wholeRoutes,
+        periods: a.periods.map((q) => [q.s || 0, q.e || 0]), agencyWide: agencyWide && !routes.size && !stops.size });
     }
     return out;
   }
@@ -2157,6 +2182,16 @@
     [/muk(ilteo)?\s*\/\s*clin|clinton/i, ["wsf-clinton-mukilteo"]],
     [/\bpd\s*\/\s*tah|point defiance|tahlequah/i, ["wsf-point-defiance-tahlequah"]],
   ];
+  // the San Juan Islands and Port Townsend–Coupeville, by the words a bulletin heading uses
+  function wsfIslandRoutes(head) {
+    const out = [];
+    if (/port\s*townsend|coupeville|keystone|\bpt\s*\/\s*cou|\bcou\s*\/\s*pt/i.test(head)) out.push("wsf-coupeville-port-townsend");
+    const named = ["friday", "lopez", "orcas", "shaw"].filter((n) => new RegExp(`\\b${n}`, "i").test(head));
+    const sj = ROUTES.filter((r) => /^wsf-(anacortes|friday-harbor|lopez-island|orcas-island|shaw-island)/.test(r.id)).map((r) => r.id);
+    if (named.length) out.push(...sj.filter((id) => named.some((n) => id.includes(n))));
+    else if (/san\s*juans?|\bana(cortes)?\b|\bsj\b|inter-?island/i.test(head) && !/sidney/i.test(head)) out.push(...sj);
+    return out;
+  }
   const stripHTML = (h) => { const d = document.createElement("div"); d.innerHTML = String(h || "").replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n\n"); return (d.textContent || "").replace(/\n{3,}/g, "\n\n").trim(); };
   function wsfAlerts(list, now) {
     const out = [];
@@ -2166,12 +2201,16 @@
       const head = title.split(/ - |: /)[0];
       let ids = [];
       if (b.AllRoutesFlag) ids = ROUTES.filter((r) => r.id.startsWith("wsf-")).map((r) => r.id);
-      else for (const [re, rs] of WSF_ROUTE_WORDS) if (re.test(head)) ids.push(...rs);
-      ids = ids.filter((id) => RBY[id] && LINEIDX[id] != null);
-      if (!ids.length) continue; // a route outside this map (the San Juans, Port Townsend)
+      else {
+        for (const [re, rs] of WSF_ROUTE_WORDS) if (re.test(head)) ids.push(...rs);
+        ids.push(...wsfIslandRoutes(head));
+      }
+      ids = [...new Set(ids)].filter((id) => RBY[id] && LINEIDX[id] != null);
+      // a bulletin that names no route this map has is still the ferry system's news: keep it with the agency
       const desc = stripHTML(b.BulletinText || b.HomepageAlertText || "");
       out.push({ id: `95:${b.BulletinID}`, agency: "95", title, desc, url: "https://wsdot.wa.gov/travel/washington-state-ferries",
-        level: alertLevel(title + " " + desc, 0), start: Math.round(wsfDate(b.PublishDate) / 1000), end: 0, routes: new Set(ids), stops: new Set() });
+        level: alertLevel(title + " " + desc, 0), start: Math.round(wsfDate(b.PublishDate) / 1000), end: 0, routes: new Set(ids), stops: new Set(),
+        agencyWide: !ids.length });
     }
     return out;
   }
@@ -2240,14 +2279,17 @@
       else byText.set(k, a);
     }
     alerts.list = [...byText.values()].sort((x, y) => (y.level - x.level) || (y.start - x.start));
+    indexAlerts();
+    alerts.got = Date.now();
+    alerts.polling = false;
+    onAlerts();
+  }
+  function indexAlerts() {
     alerts.byRoute = new Map(); alerts.byStop = new Map();
     for (const a of alerts.list) {
       for (const id of a.routes) { if (!alerts.byRoute.has(id)) alerts.byRoute.set(id, []); alerts.byRoute.get(id).push(a); }
       for (const id of a.stops) { if (!alerts.byStop.has(id)) alerts.byStop.set(id, []); alerts.byStop.get(id).push(a); }
     }
-    alerts.got = Date.now();
-    alerts.polling = false;
-    onAlerts();
   }
   const routeAlerts = (id) => alerts.byRoute.get(id) || [];
   function stopAlerts(ids) {
@@ -2538,6 +2580,46 @@
   function pacificNow() {
     return pacificAt(new Date());
   }
+  // ---- where the water is (data/water.json, drawn by pipeline/build_water.py): a walk over a bay is not a walk
+  let WATER = null, waterPromise = null;
+  const WATER_WALK_MAX_M = 450;  // longest stretch of open water a walking line may run over (a bridge or a pier is shorter)
+  function loadWater() {
+    if (!waterPromise) {
+      waterPromise = fetch("data/water.json").then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(async (d) => {
+        const img = new Image();
+        img.src = "data:image/png;base64," + d.png;
+        await img.decode();
+        const cv = document.createElement("canvas");
+        cv.width = d.w; cv.height = d.h;
+        const cx = cv.getContext("2d", { willReadFrequently: true });
+        cx.drawImage(img, 0, 0);
+        const px = cx.getImageData(0, 0, d.w, d.h).data, m = new Uint8Array(d.w * d.h);
+        for (let i = 0; i < m.length; i++) m[i] = px[i * 4] > 127 ? 1 : 0;
+        WATER = { z: d.z, x0: d.x0, y0: d.y0, px: d.px, w: d.w, h: d.h, m };
+      }).catch((e) => { waterPromise = null; console.warn("water map unavailable; walks are not checked against it", e); });
+    }
+    return waterPromise;
+  }
+  function isWater(lat, lon) {
+    const n = 2 ** WATER.z, r = lat * Math.PI / 180;
+    const x = Math.floor(((lon + 180) / 360 * n - WATER.x0) * WATER.px);
+    const y = Math.floor(((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * n - WATER.y0) * WATER.px);
+    return x >= 0 && y >= 0 && x < WATER.w && y < WATER.h && WATER.m[y * WATER.w + x] === 1;
+  }
+  // can a person walk the straight line between two points? Not if it runs over open water for hundreds
+  // of metres (the water is unknown, so the walk is allowed, when the map didn't load)
+  function walkable(la1, lo1, la2, lo2, dist) {
+    if (!WATER) return true;
+    const d = dist != null ? dist : distMeters(la1, lo1, la2, lo2);
+    if (d < WATER_WALK_MAX_M / 2) return true;
+    const steps = Math.max(2, Math.ceil(d / 40)), step = d / steps;
+    let run = 0;
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      if (isWater(la1 + (la2 - la1) * t, lo1 + (lo2 - lo1) * t)) { run += step; if (run > WATER_WALK_MAX_M) return false; } else run = 0;
+    }
+    return true;
+  }
   let schedPromise = null;
   let schedFailedAt = 0;
   // a failed download is retried (at most every 5 s) instead of being remembered for the session
@@ -2548,12 +2630,15 @@
   }
   async function loadScheduleOnce() {
     try {
+      await loadWater();  // before the planner can start: its walking links depend on it
       const d = await fetch("data/schedule.json").then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); });
       // a pattern with "b" shares another's path, distances and stops and carries only its own timing
       for (const p of d.patterns) if (p.b != null) { const b = d.patterns[p.b]; p.c = b.c; p.d = b.d; p.s = b.s; }
       for (const p of d.patterns) { p.pts = p.c.map(([x, y]) => toM(x, y)); p.cum = cumLen(p.pts); p.route = ROUTES[p.r]; }
       SCHED = d;
       buildDepIndex();
+      buildNightIndex();
+      if (specialFilter === "nightowl" && typeof refreshStations === "function") { refreshStations(); rebuild(); applyLayerToggles(); renderLive(); if (panelView === "home") showHome(true); }
       renderVehicles();
       updateLiveUI();
     } catch (e) { schedFailedAt = Date.now(); console.warn("timetable estimates unavailable", e); }
@@ -3338,6 +3423,20 @@
       if (!DEP.has(k)) DEP.set(k, []);
       DEP.get(k).push([pi, i]);
     }));
+    // trips of one vehicle block that go on as another route (agency block_id), by trip
+    SCHED.thr = new Map();
+    for (const [a, sa, b, sb] of SCHED.through || []) {
+      const k = a + "|" + sa;
+      if (!SCHED.thr.has(k)) SCHED.thr.set(k, []);
+      SCHED.thr.get(k).push([b, sb]);
+    }
+    // the agencies' minimum transfer times: "from stop|to stop" -> [[from route, to route, seconds]]
+    SCHED.xferMap = new Map();
+    for (const [fs, ts, ra, rb, sec] of SCHED.xfer || []) {
+      const k = fs + "|" + ts;
+      if (!SCHED.xferMap.has(k)) SCHED.xferMap.set(k, []);
+      SCHED.xferMap.get(k).push([ra, rb, sec]);
+    }
     SCHED.byPat = {};
     for (const [day, trips] of Object.entries(SCHED.days)) {
       const m = new Map();
@@ -3356,8 +3455,8 @@
           for (const [s0, du] of (SCHED.byPat[day] && SCHED.byPat[day].get(pi)) || []) {
             const t = s0 + p.f[i] * du - off - now.secs;
             if (t < -20 || t > windowS) continue;
-            const r = ROUTES[p.r], to = p.s[p.s.length - 1];
-            out.push({ t, r, to, key: r.id + "|" + placeName(to) });
+            const r = ROUTES[p.r], to = p.s[p.s.length - 1], toName = patternDest(p);
+            out.push({ t, r, to, toName, key: r.id + "|" + toName });
           }
         }
       }
@@ -3374,6 +3473,10 @@
     return res;
   }
   const placeName = (sid) => ((stopIndex[sid] && stopIndex[sid].name) || "").replace(/\s*[-–]\s*Bay\s*\w+$/i, "").replace(/\s+Bay\s+\w+$/i, "");
+  // where a timetable pattern ends, as a rider reads it: the vehicle's sign (a trip headsign, kept in
+  // the timetable only where it says more than the last stop's name or the stop is off the map's
+  // list, as Portland is for the Cascades), else the last stop
+  const patternDest = (p) => (p && (p.h || placeName(p.s[p.s.length - 1]))) || "";
 
   // ---------------------------------------------------------------- real departures
   // The timetable above answers the moment a rider points at a stop and is always there.
@@ -3465,7 +3568,7 @@
     if (!list) return "";
     if (!list.length) return `<div class="sc-foot">No departures in the next 90 minutes</div>`;
     const rows = list.map((d) => {
-      const to = useLive ? d.toName : placeName(d.to);
+      const to = useLive ? d.toName : d.toName || placeName(d.to);
       const dot = useLive && d.live ? `<span class="sc-live" aria-hidden="true"></span>` : "";
       const occ = useLive && d.occ != null
         ? `<span class="sc-occ vo-${OCC_CLS[d.occ]}" role="img" aria-label="${esc(OCC_TEXT[d.occ])}" title="${esc(OCC_TEXT[d.occ])}">${occMeter(d.occ)}</span>` : "<span></span>";
@@ -3506,6 +3609,29 @@
   let activeRoutePatIdx = 0;
   let activeRouteObj = null;
 
+  // does a timetable pattern leaving this stop go the way the chosen direction (a route pattern) goes?
+  // A stop the chosen pattern doesn't serve says nothing, so everything counts then.
+  function patternGoesTheWay(p, i, pat, stopIds) {
+    if (!pat || !pat.stops || pat.stops.length < 2) return true;
+    const here = pat.stops.findIndex((x) => stopIds.includes(x));
+    if (here < 0) return true;
+    const ahead = new Set(pat.stops.slice(here + 1));
+    if (!ahead.size) return true; // the chosen direction ends here: boarding at its terminus, so every way out counts
+    const rest = p.s.slice(i + 1);
+    // most of what comes next on the pattern is what comes next on the chosen direction
+    return rest.length > 0 && rest.filter((x) => ahead.has(x)).length * 2 >= rest.length;
+  }
+  // a live departure's headsign against the chosen direction: dropped only when it names another
+  // direction of the same route (agencies word headsigns differently from stop names, so an
+  // unknown one is accepted)
+  function liveHeadsignFits(r, pat, toName) {
+    const n = (x) => String(x || "").toLowerCase().replace(/\b(to|via|station|bay|stop)\b/g, "").replace(/[^a-z0-9]+/g, "");
+    const want = n(pat && pat.headsign), got = n(toName);
+    if (!want || !got || want.includes(got) || got.includes(want)) return true;
+    const others = (r.patterns || []).filter((q) => q !== pat && q.headsign && n(q.headsign) !== want).map((q) => n(q.headsign));
+    return !others.some((o) => o && (got.includes(o) || o.includes(got)));
+  }
+
   function getRouteDeparturesForStop(r, stop, pat = null) {
     if (!r || !stop) return { list: [], hasLive: false, heroEta: null, stop: null };
     const st = typeof stop === "object" && stop ? stop : (stopIndex[stop] || { id: stop, key: stop, name: STOPNAMES[stop] || stop });
@@ -3520,8 +3646,9 @@
     if (live && live.length) {
       for (const d of live) {
         if (!d.r) continue;
-        const match = (d.r.id === r.id || d.r.short === r.short || d.r.label === r.label || d.r === r);
-        if (!match) continue;
+        // the same route, by identity: two routes can share a label ("Ferry") or a number (Metro 1, Everett 1)
+        if (d.r.id !== r.id && d.r !== r) continue;
+        if (!liveHeadsignFits(r, pat, d.toName)) continue;
         liveMatches.push({
           t: d.t,
           isLive: !!d.live,
@@ -3539,9 +3666,9 @@
           const p = SCHED.patterns[pi];
           if (!p || !p.f || i >= p.f.length - 1 || (p.nb && p.nb.includes(i))) continue;
           const rObj = ROUTES[p.r];
-          if (!rObj || (rObj.id !== r.id && rObj.label !== r.label)) continue;
-          const toSid = p.s[p.s.length - 1];
-          const toName = placeName(toSid);
+          if (!rObj || rObj.id !== r.id) continue;
+          if (!patternGoesTheWay(p, i, pat, stopIds)) continue;
+          const toName = patternDest(p);
           for (const [day, off] of [[now.day, 0], [now.prev, 86400]]) {
             for (const [s0, du] of (SCHED.byPat[day] && SCHED.byPat[day].get(pi)) || []) {
               const t = s0 + p.f[i] * du - off - nowSecs;
@@ -3644,18 +3771,12 @@
     const heroText = heroEta ? heroEta.text : "No service right now";
     const heroIsLive = heroEta ? heroEta.isLive : false;
 
-    let agencyTag = "Metro Bus";
-    if (r.cat === "rapidride") agencyTag = "RapidRide";
-    else if (r.cat === "link") agencyTag = "Link Light Rail";
-    else if (r.cat === "sounder") agencyTag = "Sounder Train";
-    else if (r.cat === "streetcar") agencyTag = "Streetcar";
-    else if (r.cat === "ferry") agencyTag = "WSF Ferry";
-    else if (r.agency === "Community Transit") agencyTag = "Community Transit";
-    else if (r.agency === "Sound Transit") agencyTag = "Sound Transit";
-    else if (r.agency === "Pierce Transit") agencyTag = "Pierce Transit";
-    else if (r.agency === "Everett Transit") agencyTag = "Everett Transit";
-    else if (r.agency === "Kitsap Transit") agencyTag = "Kitsap Transit";
-    else if (r.agency) agencyTag = r.agency;
+    // the operator and kind of service, from the route itself (Kitsap's fast ferries are not WSF's)
+    const KIND_TAG = { rapidride: "RapidRide", link: "Link Light Rail", sounder: "Sounder Train", streetcar: "Streetcar",
+      monorail: "Monorail", amtrak: "Amtrak Cascades", watertaxi: "Water Taxi", swift: "Swift BRT" };
+    let agencyTag = KIND_TAG[r.cat] || r.agency || "";
+    if (r.cat === "ferry") agencyTag = r.agencyShort === "WSF" ? "WSF Ferry" : r.agencyShort === "KT" ? "Kitsap Fast Ferry" : `${r.agency || ""} Ferry`.trim();
+    else if (!KIND_TAG[r.cat] && r.agencyShort === "Metro") agencyTag = "Metro Bus";
 
     let rowsHTML = "";
     if (list.length > 0) {
@@ -4375,14 +4496,28 @@
   function renderFavTripRow(t) {
     return `<li><div class="row trip-fav-row">
       <span class="icon" style="color:#ffcc00; display:inline-flex; align-items:center; justify-content:center"><svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25z"/></svg></span>
-      <span class="txt" style="cursor:pointer" data-fav-trip-plan="${esc(t.id)}">
+      <button type="button" class="txt trip-fav-open" data-fav-trip-plan="${esc(t.id)}" title="Plan this trip again">
         <span class="name">${esc(t.name)}</span>
         <span class="desc">${t.duration ? `${t.duration} min · ` : ""}${esc(t.summary || "Saved trip")}</span>
-      </span>
+      </button>
       <button type="button" class="fav-del-btn press" data-del-trip="${esc(t.id)}" title="Remove saved trip" aria-label="Remove saved trip">
         <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/><path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/></svg>
       </button>
     </div></li>`;
+  }
+  // A saved end that says "Your location" meant where the rider was then. Reopening the trip names where
+  // they are now; with no fix, it keeps the old coordinates under an honest name instead.
+  function resolveSavedEnd(pt) {
+    if (!pt || !pt.isLocation) return Promise.resolve(pt);
+    const here = (lat, lon) => ({ lat, lon, name: "Your location", isLocation: true });
+    const earlier = { lat: pt.lat, lon: pt.lon, name: "Earlier location", isLocation: false };
+    if (userCoords) return Promise.resolve(here(userCoords.lat, userCoords.lng));
+    if (!navigator.geolocation) return Promise.resolve(earlier);
+    return new Promise((done) => navigator.geolocation.getCurrentPosition(
+      (pos) => { userCoords = { lat: pos.coords.latitude, lng: pos.coords.longitude }; done(here(pos.coords.latitude, pos.coords.longitude)); },
+      () => done(earlier),
+      { enableHighAccuracy: true, timeout: 6000, maximumAge: 60000 }
+    ));
   }
   function bindFavListEvents() {
     for (const b of body().querySelectorAll("[data-route]")) {
@@ -4396,7 +4531,7 @@
       b.addEventListener("click", () => {
         const id = b.dataset.favTripPlan;
         const trip = (getFavs().trips || []).find((t) => t.id === id);
-        if (trip) openTripPlanner({ orig: trip.orig, dest: trip.dest });
+        if (trip) Promise.all([resolveSavedEnd(trip.orig), resolveSavedEnd(trip.dest)]).then(([orig, dest]) => openTripPlanner({ orig, dest }));
       });
     }
     for (const b of body().querySelectorAll("[data-del-trip]")) {
@@ -4458,14 +4593,16 @@
 
     if (specialFilter === "nightowl") {
       const owlRoutes = ROUTES.filter((r) => isNightOwl(r) && LINEIDX[r.id] != null).sort(tagOrder);
+      const allNightRoutes = owlRoutes.filter((r) => nightTrips(r) >= ALL_NIGHT_TRIPS || !NIGHT), fewNightRoutes = owlRoutes.filter((r) => NIGHT && nightTrips(r) < ALL_NIGHT_TRIPS);
       const html = `<div class="home-view">
         <div class="hero">
           <span class="icon" style="background:#5e5ce6; color:#fff"><svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M6 .278a.768.768 0 0 1 .08.858 7.208 7.208 0 0 0-.878 3.46c0 4.021 3.278 7.277 7.318 7.277.527 0 1.04-.055 1.533-.16a.787.787 0 0 1 .81.316.733.733 0 0 1-.031.893A8.349 8.349 0 0 1 8.344 16C3.734 16 0 12.286 0 7.71 0 4.266 2.114 1.312 5.124.06A.752.752 0 0 1 6 .278z"/></svg></span>
           <div><h2>Night Owl Network</h2><p>Service from Midnight to 5:00 AM</p></div>
         </div>
-        <p class="hint">All-night & 24-hour service connecting Downtown Seattle, Capitol Hill, Ballard, West Seattle, Sea-Tac Airport, and Federal Way.</p>
-        <h3 class="section">${owlRoutes.length} Night Owl routes</h3>
-        ${routeRows(owlRoutes)}
+        <p class="hint">Routes with a trip running between midnight and 5:00 AM on the timetable${NIGHT ? "" : " (loading the timetable…)"}. All-night service runs through the small hours; the rest has only a few trips then.</p>
+        ${allNightRoutes.length ? `<h3 class="section">${allNightRoutes.length} all-night route${allNightRoutes.length > 1 ? "s" : ""}</h3>${routeRows(allNightRoutes)}` : ""}
+        ${fewNightRoutes.length ? `<h3 class="section">${fewNightRoutes.length} with a few overnight trips</h3>${routeRows(fewNightRoutes)}` : ""}
+        ${owlRoutes.length ? "" : `<p class="hint">No route runs in those hours on the timetable.</p>`}
       </div>`;
       setView(html);
       for (const b of body().querySelectorAll("[data-route]")) {
@@ -5111,6 +5248,21 @@
     return { dayKey, period, decHour };
   }
 
+  // this route's trips on the service day it is now (from the timetable), and the trips from the day
+  // before that are still running after midnight; null until the timetable has loaded
+  function routeTripsToday(r) {
+    if (!SCHED || !r) return null;
+    const ri = ROUTES.findIndex((x) => x.id === r.id);
+    if (ri < 0) return null;
+    const now = pacificNow();
+    const mine = ([pi]) => SCHED.patterns[pi] && SCHED.patterns[pi].r === ri;
+    return {
+      special: now.special || String(now.prev)[0] === "v",
+      trips: (SCHED.days[now.day] || []).filter(mine),
+      running: (SCHED.days[now.prev] || []).filter((t) => mine(t) && t[1] + t[2] - 86400 > now.secs),
+    };
+  }
+
   function scheduleTable(r) {
     if (!r.sched) return `<p class="hint">No published schedule table available for this route.</p>`;
     const curSlot = getCurrentSchedSlot();
@@ -5156,6 +5308,21 @@
           statusDetail = `No departures scheduled during ${curPeriodLabel.toLowerCase()} (${curPeriodHours}).`;
         }
       }
+    }
+
+    // The table above is the typical weekday, Saturday or Sunday. What runs today can differ (a holiday
+    // timetable, a service change), and the timetable knows: say what today's trips are.
+    const today = routeTripsToday(r);
+    if (today && !today.trips.length && !today.running.length) {
+      isServiceActive = false;
+      statusTitle = "No service today";
+      statusDetail = today.special ? "Today runs a holiday or special timetable with no trips on this route." : "The timetable has no trips on this route today.";
+    } else if (today && today.special) {
+      const meta = curPeriodMeta;
+      const n = meta ? today.trips.filter(([, s0]) => s0 >= meta[2] * 3600 && s0 < meta[3] * 3600).length : 0;
+      isServiceActive = n > 0 || today.running.length > 0;
+      statusTitle = n > 0 ? `${n} scheduled trip${n > 1 ? "s" : ""} in this period` : today.running.length ? "A trip is running now" : "No service right now";
+      statusDetail = `${curPeriodLabel}${curPeriodHours ? ` (${curPeriodHours})` : ""} · Today runs a holiday or special timetable`;
     }
 
     const statusBanner = `<div class="sched-now-status${isServiceActive ? " active" : " off"}">
@@ -7081,7 +7248,7 @@
           for (const [s0, du] of (SCHED.byPat[dayName] && SCHED.byPat[dayName].get(pi)) || []) {
             const depTimeSec = s0 + p.f[i] * du - off;
             if (depTimeSec >= earliestSec - 30) {
-              const arrTimeSec = s0 + p.f[j] * du - off;
+              const arrTimeSec = s0 + p.f[j] * du - off - (p.w ? p.w[j] || 0 : 0);
               const rideSec = Math.max(60, arrTimeSec - depTimeSec);
               if (!best || depTimeSec < best.depSec) {
                 best = {
@@ -7154,7 +7321,7 @@
       let nb = null, na = null;
       if (p.nb) { nb = new Uint8Array(p.s.length); for (const i of p.nb) nb[i] = 1; }
       if (p.na) { na = new Uint8Array(p.s.length); for (const i of p.na) na[i] = 1; }
-      pats[pi] = { pi, route, stops, f: p.f, nb, na };
+      pats[pi] = { pi, route, stops, f: p.f, nb, na, w: p.w || null, ri: p.r };
     }
     const n = stopId.length;
     const stopPats = new Array(n);
@@ -7204,6 +7371,7 @@
         if (seen.has(q)) return;
         const limit = net.hub[s] || net.hub[q] ? HUB_TRANSFER_WALK_M : TRANSFER_WALK_M;
         if (d * WALK_CIRCUITY > limit) return; // the cap is on the walk along streets, not the straight line
+        if (!walkable(net.lat[s], net.lon[s], net.lat[q], net.lon[q], d)) return; // not across a bay
         seen.add(q);
         tmp.push(q, Math.max(60, Math.round(d * WALK_CIRCUITY / WALK_MPM * 60)), Math.round(d * WALK_CIRCUITY));
       });
@@ -7215,18 +7383,22 @@
 
   // The timetable for one service day, per pattern, sorted by departure: trips still running
   // after midnight from the day before, the day itself, and the next morning (for late searches).
-  function raptorTrips(net, day, prev, next) {
-    const key = `${day}|${prev}|${next}`;
+  function raptorTrips(net, day, prev, next, from = 0) {
+    // "from": the earliest second (on the planned day's clock, negative = the evening before) that
+    // matters, so an Arrive-by search reaching back before midnight still has the previous day's
+    // trips that ended before it
+    from = Math.min(0, Math.floor(from / 3600) * 3600);
+    const key = `${day}|${prev}|${next}|${from}`;
     let T = net.trips.get(key);
     if (T) return T;
     const lists = new Map();
     const add = (list, off, lateOnly) => {
       for (const [pi, s0, du] of list || []) {
         if (!net.pats[pi]) continue;
-        if (lateOnly && s0 + du + off <= 0) continue;
+        if (lateOnly && s0 + du + off <= from) continue;
         let a = lists.get(pi);
         if (!a) lists.set(pi, a = []);
-        a.push(s0 + off, du);
+        a.push(s0 + off, du, s0);
       }
     };
     add(SCHED.days[prev], -86400, true);
@@ -7235,14 +7407,45 @@
     T = new Map();
     for (const [pi, a] of lists) {
       const order = [];
-      for (let i = 0; i < a.length; i += 2) order.push(i);
+      for (let i = 0; i < a.length; i += 3) order.push(i);
       order.sort((x, y) => a[x] - a[y]);
-      const s0 = new Float64Array(order.length), du = new Float64Array(order.length);
-      order.forEach((i, j) => { s0[j] = a[i]; du[j] = a[i + 1]; });
-      T.set(pi, { s0, du });
+      const s0 = new Float64Array(order.length), du = new Float64Array(order.length), raw = new Float64Array(order.length);
+      order.forEach((i, j) => { s0[j] = a[i]; du[j] = a[i + 1]; raw[j] = a[i + 2]; });
+      T.set(pi, { s0, du, raw, rawIx: null });
     }
     net.trips.set(key, T);
     return T;
+  }
+
+  // The trip of pattern pi that the vehicle of trip ft (pattern fpi) goes on as, per the agency's
+  // vehicle blocks (-1 if it doesn't): the rider stays aboard, no walk, no wait at a curb.
+  function throughTrip(T, fpi, ft, pi) {
+    const ftt = T.get(fpi), tt = T.get(pi);
+    if (!ftt || !tt || !SCHED.thr) return -1;
+    const list = SCHED.thr.get(fpi + "|" + ftt.raw[ft]);
+    if (!list) return -1;
+    for (const [bp, bs] of list) {
+      if (bp !== pi) continue;
+      // the same service day as the trip it follows (the lists hold yesterday's, today's and tomorrow's trips)
+      const want = ftt.s0[ft] + (bs - ftt.raw[ft]);
+      if (!tt.rawIx) { tt.rawIx = new Map(); for (let i = 0; i < tt.s0.length; i++) if (!tt.rawIx.has(tt.s0[i])) tt.rawIx.set(tt.s0[i], i); }
+      const j = tt.rawIx.get(want);
+      if (j != null) return j;
+    }
+    return -1;
+  }
+
+  // seconds a change at stop s from one pattern's route to another's takes: the planner's own two
+  // minutes, or more where the agency's feed asks for more (transfers.txt)
+  function minTransferSec(net, fromPat, pat, s) {
+    const rules = SCHED.xferMap;
+    if (!rules || !rules.size) return MIN_TRANSFER_SEC;
+    const sid = net.stopId[s];
+    let sec = MIN_TRANSFER_SEC;
+    for (const k of [sid + "|" + sid, "|" + sid, sid + "|", "|"]) {
+      for (const [ra, rb, t] of rules.get(k) || []) if ((ra < 0 || ra === fromPat.ri) && (rb < 0 || rb === pat.ri) && t > sec) sec = t;
+    }
+    return sec;
   }
 
   // earliest trip leaving position pos at or after t (trips of one pattern keep their order)
@@ -7270,7 +7473,6 @@
     const results = [];
     let target = Infinity;
     const qpos = new Int32Array(net.pats.length).fill(-1);
-    const through = typeof isThroughRoutedPair === "function" ? isThroughRoutedPair : () => false;
     for (let k = 1; k <= R && marked.length; k++) {
       const prevArr = arr[k - 1], prevKind = kind[k - 1], prevSet = setIn[k - 1];
       const cur = arr[k] = prevArr.slice(), kd = kind[k] = prevKind.slice(), si = setIn[k] = prevSet.slice();
@@ -7296,7 +7498,8 @@
           const s = st[pos];
           if (s < 0) continue;
           if (trip >= 0 && !(naArr && naArr[pos])) {
-            const a = tt.s0[trip] + f[pos] * tt.du[trip];
+            // in when the vehicle arrives, not when it leaves (it may wait at the stop)
+            const a = tt.s0[trip] + f[pos] * tt.du[trip] - (pat.w ? pat.w[pos] || 0 : 0);
             if (a < best[s] && a < target) {
               cur[s] = a; best[s] = a; kd[s] = 1; si[s] = k;
               pPat[k][s] = pi; pTrip[k][s] = trip; pBoard[k][s] = boardPos; pAlight[k][s] = pos;
@@ -7305,20 +7508,25 @@
           }
           const pa = prevArr[s];
           if (pa === Infinity || pos === len - 1 || (nbArr && nbArr[pos])) continue;
-          // the way we got here decides the buffer: none from the street, none to stay on a
-          // through-routed bus, two minutes for any other change
-          let buffer = 0;
+          // the way we got here decides the buffer: none from the street, none to stay on the same
+          // vehicle as it goes on as another route (the agency's block says it does), two minutes
+          // (or the agency's own longer minimum) for any other change
+          let buffer = 0, stay = -1;
           const how = prevKind[s];
           if (how === 1 || how === 2) {
             buffer = MIN_TRANSFER_SEC;
             if (how === 1) {
-              const r0 = prevSet[s], fromPat = net.pats[pPat[r0][s]];
-              if (fromPat && through(fromPat.route, pat.route)) buffer = 0;
+              const r0 = prevSet[s], fpi = pPat[r0][s], fromPat = net.pats[fpi];
+              if (fromPat) {
+                buffer = minTransferSec(net, fromPat, pat, s);
+                if (pos === 0 && pAlight[r0][s] === fromPat.stops.length - 1) stay = throughTrip(T, fpi, pTrip[r0][s], pi);
+              }
             }
           }
           const need = pa + buffer;
-          if (trip >= 0 && need > tt.s0[trip] + f[pos] * tt.du[trip]) continue;
-          const t2 = raptorEarliest(tt, f[pos], need);
+          if (trip >= 0 && need > tt.s0[trip] + f[pos] * tt.du[trip] && stay < 0) continue;
+          let t2 = raptorEarliest(tt, f[pos], need);
+          if (stay >= 0 && tt.s0[stay] + f[pos] * tt.du[stay] >= pa - 30 && (t2 < 0 || tt.s0[stay] + f[pos] * tt.du[stay] < tt.s0[t2] + f[pos] * tt.du[t2])) t2 = stay;
           if (t2 >= 0 && (trip < 0 || tt.s0[t2] + f[pos] * tt.du[t2] < tt.s0[trip] + f[pos] * tt.du[trip])) { trip = t2; boardPos = pos; }
         }
       }
@@ -7380,8 +7588,10 @@
       if (rp.stops && rp.stops[rp.stops.length - 1] === p.s[p.s.length - 1]) score += 2;
       if (score > bestScore) { bestScore = score; best = rp; }
     }
-    const last = stopIndex[p.s[p.s.length - 1]];
-    const out = best && best.headsign ? best : { ...(best || {}), stops: p.s, headsign: best?.headsign || (last ? last.name : "") };
+    // the headsign is the one on this timetable pattern's own trips (the short and long runs of one
+    // route end at different places), not that of whichever route pattern overlaps it most
+    const headsign = patternDest(p) || best?.headsign || "";
+    const out = { ...(best || {}), stops: p.s, headsign };
     net.patOf.set(pi, out);
     return out;
   }
@@ -7407,12 +7617,15 @@
     const walk2Dist = egr[1], walk2Time = Math.round(walk2Dist / WALK_MPM);
     const clockAt = (sec) => CLOCK.format(new Date((planningTime.date instanceof Date ? planningTime.date.getTime() : Date.now()) + (sec - nowSecs) * 1000));
     const legs = [];
-    let pendingWalk = null, prevArrSec = t0 + acc[1];
+    let pendingWalk = null, prevArrSec = t0 + acc[1], prevL = null;
     for (const L of j.legs) {
       if (L.walk) { pendingWalk = L; continue; }
       const pat = net.pats[L.pi], tt = T.get(L.pi), sp = SCHED.patterns[L.pi];
       const depSec = tt.s0[L.trip] + pat.f[L.b] * tt.du[L.trip];
-      const arrSec = tt.s0[L.trip] + pat.f[L.a] * tt.du[L.trip];
+      const arrSec = tt.s0[L.trip] + pat.f[L.a] * tt.du[L.trip] - (pat.w ? pat.w[L.a] || 0 : 0);
+      const stayOn = !!prevL && !pendingWalk && L.b === 0 && prevL.a === net.pats[prevL.pi].stops.length - 1
+        && throughTrip(T, prevL.pi, prevL.trip, L.pi) >= 0;
+      prevL = L;
       const boardStop = stopIndex[sp.s[L.b]], alightStop = stopIndex[sp.s[L.a]];
       const walkSec = pendingWalk ? pendingWalk.sec : 0;
       const readyAt = prevArrSec + walkSec;
@@ -7425,7 +7638,7 @@
         route: pat.route, pattern: raptorRoutePattern(net, L.pi), boardStop, alightStop,
         intermediateStopIds: sp.s.slice(L.b + 1, L.a), numStops: L.a - L.b,
         rideTime: schedTrip.rideMin, waitTime: legs.length ? Math.max(0, Math.round((depSec - readyAt) / 60)) : schedTrip.waitMin,
-        schedTrip, transferWalkDist: pendingWalk ? pendingWalk.metres : 0,
+        schedTrip, stayOn, transferWalkDist: pendingWalk ? pendingWalk.metres : 0,
         transferWalkTime: pendingWalk ? Math.max(1, Math.round(pendingWalk.metres / WALK_MPM)) : 0,
         depSec, arrSec,
       });
@@ -7456,7 +7669,7 @@
         transferWalkDist: second.transferWalkDist, transferWalkTime: second.transferWalkTime,
         intermediateStops1: first.intermediateStopIds, intermediateStops2: second.intermediateStopIds,
         numStops1: first.numStops, numStops2: second.numStops, ride1: first.rideTime, ride2: second.rideTime,
-        wait1: first.waitTime, wait2: Math.max(0, second.waitTime), schedTrip: first.schedTrip, schedTrip1: first.schedTrip, schedTrip2: second.schedTrip,
+        stayOn: !!second.stayOn, wait1: first.waitTime, wait2: Math.max(0, second.waitTime), schedTrip: first.schedTrip, schedTrip1: first.schedTrip, schedTrip2: second.schedTrip,
         score: totalDuration };
     }
     return { ...base, type: "multi", legs, schedTrip: first.schedTrip };
@@ -7466,7 +7679,7 @@
   function raptorEnds(net, pt, radii) {
     for (const R of radii) {
       const out = [];
-      net.near(pt.lat, pt.lon, R, (s, d) => { if (net.stopPats[s].length) out.push([s, Math.round(d * WALK_CIRCUITY / WALK_MPM * 60), Math.round(d * WALK_CIRCUITY)]); });
+      net.near(pt.lat, pt.lon, R, (s, d) => { if (net.stopPats[s].length && walkable(pt.lat, pt.lon, net.lat[s], net.lon[s], d)) out.push([s, Math.round(d * WALK_CIRCUITY / WALK_MPM * 60), Math.round(d * WALK_CIRCUITY)]); });
       if (out.length) return out;
     }
     return [];
@@ -7479,14 +7692,14 @@
     const directWalkDist = distMeters(orig.lat, orig.lon, dest.lat, dest.lon) * WALK_CIRCUITY;
     const directWalkTime = Math.round(directWalkDist / WALK_MPM);
     const nowSecs = planningTime.secs;
-    const directWalk = directWalkDist <= WALK_ONLY_MAX_M ? {
+    const directWalk = directWalkDist <= WALK_ONLY_MAX_M && walkable(orig.lat, orig.lon, dest.lat, dest.lon) ? {
       type: "walk", dist: directWalkDist, totalDuration: directWalkTime, walkTotal: directWalkDist, rides: 0,
       planningTime, departSec: nowSecs, arrivalSec: nowSecs + directWalkTime * 60, tags: [],
     } : null;
     const net = raptorNetwork();
     if (!net) return { direct: [], transfer: [], multi: [], directWalk, options: [], pending: true };
     const { day, prev } = planningTime;
-    const T = raptorTrips(net, day, prev, planNextDay(planningTime));
+    const T = raptorTrips(net, day, prev, planNextDay(planningTime), planningTime.secs - 3600);
     const t0 = nowSecs;
 
     const seen = new Map();
@@ -7589,18 +7802,21 @@
   // Plans from there and from a little earlier give each way of going at its latest departure.
   function planArriveBy(orig, dest, requested) {
     const deadline = requested.secs;
+    // "now" on the requested day's clock: nothing may ask a rider to have left already
+    const nowSec = requested.date instanceof Date ? requested.secs + (Date.now() - requested.date.getTime()) / 1000 : -Infinity;
     const at = (secs) => ({ ...requested, secs, date: requested.date instanceof Date ? new Date(requested.date.getTime() + (secs - requested.secs) * 1000) : requested.date });
     let walk = null;
     const firstArrival = (t) => {
       const plan = planTransitTrip(orig, dest, at(t), { quick: true });
-      if (plan && plan.directWalk && !walk) walk = { ...plan.directWalk, departSec: deadline - plan.directWalk.totalDuration * 60, arrivalSec: deadline };
+      if (plan && plan.directWalk && !walk && deadline - plan.directWalk.totalDuration * 60 >= nowSec - 30) walk = { ...plan.directWalk, departSec: deadline - plan.directWalk.totalDuration * 60, arrivalSec: deadline };
       const opts = (plan && plan.options) || [];
       return opts.length ? Math.min(...opts.map((o) => o.arrivalSec)) : Infinity;
     };
-    let lo = deadline - 3 * 3600;
+    let lo = Math.max(deadline - 3 * 3600, nowSec);
+    // the deadline is already behind us, or too close for any trip to make it from now
     if (!(firstArrival(lo) <= deadline + 30)) {
-      lo = deadline - 10 * 3600; // long trips, sparse service, early-morning deadlines
-      if (!(firstArrival(lo) <= deadline + 30)) return { options: [], directWalk: walk };
+      lo = Math.max(deadline - 10 * 3600, nowSec); // long trips, sparse service, early-morning deadlines
+      if (!(firstArrival(lo) <= deadline + 30)) return { options: [], directWalk: walk, tooSoon: nowSec > deadline - 60 || lo === nowSec };
     }
     let hi = deadline;
     while (hi - lo > 60) {
@@ -7609,7 +7825,7 @@
     }
     const keep = new Map();
     for (const back of [0, 20 * 60, 50 * 60]) {
-      const plan = planTransitTrip(orig, dest, at(lo - back));
+      const plan = planTransitTrip(orig, dest, at(Math.max(lo - back, nowSec)));
       for (const o of (plan && plan.options) || []) {
         if (o.arrivalSec > deadline + 30) continue;
         const key = o.sig.split("#")[0].replace(/@[^|]*/g, ""), old = keep.get(key);
@@ -7622,6 +7838,8 @@
       && (b.departSec > a.departSec + 60 || b.rides < a.rides || b.walkTotal + 50 < a.walkTotal);
     options = options.filter((a) => !options.some((b) => b !== a && beats(b, a)));
     options = options.sort((a, b) => b.departSec - a.departSec || a.rides - b.rides).slice(0, 6);
+    options = options.filter((o) => o.departSec >= nowSec - 60);
+    if (!options.length) return { options, directWalk: walk, tooSoon: true };
     for (const o of options) { o.tags = []; o.totalDuration = clockSpanMin(o.planningTime, o.departSec, o.arrivalSec); }
     if (options[0]) options[0].tags.push("Leave latest");
     const fewest = options.slice().sort((a, b) => a.rides - b.rides || b.departSec - a.departSec)[0];
@@ -8017,6 +8235,7 @@
   }
 
   let lastPlanNoStops = null;
+  let lastPlanTooSoon = false;
   // a clock time ("10:42 AM") for seconds-after-midnight on the plan's own day
   function tripClock(planningTime, sec) {
     const pt = planningTime || pacificNow();
@@ -8063,8 +8282,10 @@
     // another route, the next departure). Arrive by: each way of going at its latest departure.
     let allItins;
     lastPlanNoStops = null;
+    lastPlanTooSoon = false;
     if (requestedTime.mode === "arrive-by") {
       const plan = planArriveBy(dirOrigin, dirDest, requestedTime);
+      lastPlanTooSoon = !!plan.tooSoon;
       allItins = plan.options.slice();
       if (plan.directWalk) allItins.push(plan.directWalk);
       for (const it of allItins) {
@@ -8143,7 +8364,9 @@
               <button class="planner-reverse-btn press" id="planRevBtn" type="button">Reverse ⇄</button>
             </div>
           </div>
-          <p class="planner-sub">${lastPlanNoStops
+          <p class="planner-sub">${lastPlanTooSoon && !lastPlanNoStops
+            ? "No trip can get there by that time from now. Choose a later arrival time, or leave now to see the next trips."
+            : lastPlanNoStops
             ? `There is no transit stop within 3.5 km of your ${lastPlanNoStops === "origin" ? "starting point" : "destination"}, so this map can't plan that trip. Try a place closer to a bus, train or ferry stop.`
             : "No published trip connects these points at the selected time. Try another departure time, or a start or end point closer to a frequent route."}</p>
         </div>
@@ -8176,7 +8399,7 @@
         const t1 = it.transferStop1 || it.transferStop;
         const t2 = it.transferStop2 || it.transferStop;
         const tName = (t1 && t2 && t1.id !== t2.id && t1.name !== t2.name) ? `${esc(t1.name)} / ${esc(t2.name)}` : esc(t1.name);
-        const isThrough = isThroughRoutedPair(it.r1, it.r2);
+        const isThrough = !!it.stayOn;
         descHtml = isThrough
           ? `<span class="tr-stay-on-pill">${poiIconSVG("transfer", 13)} Stay on board</span> at <b>${tName}</b> · continues as Route ${esc(it.r2.short || it.r2.label)} · ${it.numStops1 + it.numStops2} total stops`
           : `Transfer at <b>${tName}</b> · ${it.numStops1 + it.numStops2} total stops`;
@@ -8321,15 +8544,15 @@
           <span class="step-line"></span>
           <span class="step-icon">${poiIconSVG("transfer", 16)}</span>
           <div class="step-content">
-            <div class="step-main">${isThroughRoutedPair(cur.r1, cur.r2) ? `<span style="color:#059669;font-weight:700">Stay on the bus:</span> bus continues through Downtown as ${esc(routeTitle(cur.r2))}` : cur.transferStop1 && cur.transferStop2 && cur.transferStop1.id !== cur.transferStop2.id && cur.transferStop1.name !== cur.transferStop2.name ? `Transfer: Walk ${cur.transferWalkTime || 1} min from ${esc(cur.transferStop1.name)} to ${esc(cur.transferStop2.name)}` : `Transfer at ${esc((cur.transferStop1 || cur.transferStop).name)}`}</div>
-            <div class="step-meta">${isThroughRoutedPair(cur.r1, cur.r2) ? "Through-route transition · No transfer needed" : `Connection buffer ~${cur.wait2} min`}</div>
+            <div class="step-main">${cur.stayOn ? `<span style="color:#059669;font-weight:700">Stay on the bus:</span> the same bus continues as ${esc(routeTitle(cur.r2))}` : cur.transferStop1 && cur.transferStop2 && cur.transferStop1.id !== cur.transferStop2.id && cur.transferStop1.name !== cur.transferStop2.name ? `Transfer: Walk ${cur.transferWalkTime || 1} min from ${esc(cur.transferStop1.name)} to ${esc(cur.transferStop2.name)}` : `Transfer at ${esc((cur.transferStop1 || cur.transferStop).name)}`}</div>
+            <div class="step-meta">${cur.stayOn ? "Through-route transition · No transfer needed" : `Connection buffer ~${cur.wait2} min`}</div>
           </div>
         </div>
         <div class="step-row">
           <span class="step-line"></span>
           <span class="step-icon transit">${modeIcon(cur.r2)}</span>
           <div class="step-content">
-            <div class="step-main">${isThroughRoutedPair(cur.r1, cur.r2) ? `Continue on ${badgeHTML(cur.r2)} towards ${esc(String(cur.p2.headsign || "Destination").replace(/^to\s+/i, ""))}` : `Board ${badgeHTML(cur.r2)} towards ${esc(String(cur.p2.headsign || "Destination").replace(/^to\s+/i, ""))}`}</div>
+            <div class="step-main">${cur.stayOn ? `Continue on ${badgeHTML(cur.r2)} towards ${esc(String(cur.p2.headsign || "Destination").replace(/^to\s+/i, ""))}` : `Board ${badgeHTML(cur.r2)} towards ${esc(String(cur.p2.headsign || "Destination").replace(/^to\s+/i, ""))}`}</div>
             <div class="step-meta">${cur.ride2} min · ${cur.numStops2} stops</div>
           </div>
         </div>
@@ -8357,9 +8580,9 @@
         rows.push(`<div class="step-row"><span class="step-line"></span><span class="step-icon transit">${modeIcon(leg.route)}</span><div class="step-content"><div class="step-main">Board ${badgeHTML(leg.route)} towards ${esc(String(leg.pattern.headsign || "Destination").replace(/^to\s+/i, ""))}</div><div class="step-meta">${firstDeparture}${leg.rideTime} min · ${leg.numStops} stop${leg.numStops === 1 ? "" : "s"}</div></div></div>`);
         if (index < cur.legs.length - 1) {
           const next = cur.legs[index + 1];
-          const isThrough = isThroughRoutedPair(leg.route, next.route);
+          const isThrough = !!next.stayOn;
           const transferName = isThrough
-            ? `<span style="color:#059669;font-weight:700">Stay on the bus:</span> bus continues through Downtown as ${esc(routeTitle(next.route))}`
+            ? `<span style="color:#059669;font-weight:700">Stay on the bus:</span> the same bus continues as ${esc(routeTitle(next.route))}`
             : leg.alightStop.id !== next.boardStop.id && leg.alightStop.name !== next.boardStop.name
               ? `Walk ${next.transferWalkTime} min from ${esc(leg.alightStop.name)} to ${esc(next.boardStop.name)}`
               : `Transfer at ${esc(leg.alightStop.name)}`;
@@ -9902,6 +10125,14 @@
     map.on("moveend", onMoveEnd);
     // tags are placed afresh after a move: re-take the hovered route's tags once they settle
     map.on("moveend", () => { if (hovDim.ids) map.once("idle", () => { if (hovDim.ids) { hovDim.key = hovDim.key || " "; hoverTags(); } }); });
+    // anything drawn as a button but not built as one (role="button") opens with Enter and Space, as it does with a click
+    document.addEventListener("keydown", (e) => {
+      if ((e.key !== "Enter" && e.key !== " ") || e.defaultPrevented || e.repeat) return;
+      const el = e.target;
+      if (!(el instanceof Element) || !el.matches('[role="button"]') || el.matches("button, a, input, select, textarea, summary")) return;
+      e.preventDefault();
+      el.click();
+    });
     document.addEventListener("keydown", (e) => {
       if (e.key !== "Escape" || e.target.closest("input") || e.defaultPrevented || !$("#dirCustomPicker")?.hidden) return;
       if (!$("#tip").hidden && tipLive) { tipHide(true); focusOff(); return; }
@@ -10457,6 +10688,10 @@
       hoverDim: () => ({ v: hovDim.v, to: hovDim.to, ids: hovDim.ids ? [...hovDim.ids] : null }),
       // the hover highlight right now: which target, and each cross-fading slot's strength
       hoverState: () => ({ key: hoverKey, slot: hSlot, v: hAnim.map((a) => +a.v.toFixed(3)), to: hAnim.map((a) => a.to) }),
+      // test fixtures: run notices through the real alert code and read back what the page would style
+      alertTools: { readAlerts, wsfAlerts, isRouteSuspended, stopIsSuspended, alertActive, load: (list) => { alerts.list = list; indexAlerts(); } },
+      isNightOwl, nightTrips, walkable, routeTripsToday, resolveSavedEnd, showNearbyDepartures, routeDeparturesFor: getRouteDeparturesForStop,
+      routeDeparturesCardHTML, scheduleTable, renderFavTripRow, stopIndex: (id) => stopIndex[id],
       planner: { timetableTripTimes, planTransitTrip, planArriveBy, currentVehWord, modeIcon, getSoonestBus },
       timetableTripTimes, planTransitTrip, planArriveBy, pacificAt, currentVehWord, sched: () => SCHED,
       idle: () => new Promise((res) => { if (!inFlight && !queued && !needsRebuild) res(); else idleWaiters.push(res); }),
@@ -10534,7 +10769,9 @@
     const allStops = [...(STOPS.stations || []), ...(STOPS.stops || [])];
     if (!allStops.length) return;
     const cosLat = Math.cos(lat * Math.PI / 180);
-    const candidateStops = allStops.map((s) => {
+    const candidateStops = allStops.map((raw) => {
+      // the indexed copy carries the timetable key and platforms the departure lookups need
+      const s = stopIndex[raw.id] || raw;
       const dx = (s.lon - lng) * 111320 * cosLat;
       const dy = (s.lat - lat) * 110540;
       const dist = Math.hypot(dx, dy);
@@ -10575,7 +10812,7 @@
       let depsHTML = "";
       if (list.length) {
         depsHTML = `<div class="nearby-deps">${list.map((d) => {
-          const to = d.live ? d.toName : placeName(d.to);
+          const to = d.live ? d.toName : d.toName || placeName(d.to);
           const dot = d.live ? `<span class="sc-live" aria-hidden="true"></span>` : "";
           const tText = d.t < 60 ? "now" : `${Math.round(d.t / 60)} min`;
           return `<div class="nearby-dep-row press" data-route="${esc(d.r.id)}" role="button" tabindex="0" title="Highlight route ${esc(shortLabel(d.r))}">
@@ -10640,6 +10877,15 @@
         pop.hidden = true;
         hud.setAttribute("aria-expanded", "false");
       }
+    });
+    // Escape closes the panel and gives focus back to the button that opened it
+    hud.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape" || pop.hidden) return;
+      pop.hidden = true;
+      hud.setAttribute("aria-expanded", "false");
+      e.preventDefault();
+      e.stopPropagation();
+      hud.focus();
     });
   }
 

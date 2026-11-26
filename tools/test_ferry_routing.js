@@ -42,6 +42,11 @@ for (const [day, trips] of Object.entries(SCHED.days)) {
   byPat[day] = m;
 }
 SCHED.byPat = byPat;
+SCHED.thr = new Map();       // stay-aboard links and minimum transfer times (built by the page's buildDepIndex)
+SCHED.xferMap = new Map();
+function walkable() { return true; }  // the water map is a PNG the page decodes; test_audit_browser.js covers it
+const placeName = (sid) => ((stopIndex[sid] && stopIndex[sid].name) || "").replace(/\s*[-–]\s*Bay\s*\w+$/i, "").replace(/\s+Bay\s+\w+$/i, "");
+const patternDest = (p) => (p && (p.h || placeName(p.s[p.s.length - 1]))) || "";
 
 let plannerStopsCache = null;
 const CLOCK = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", hour: "numeric", minute: "2-digit" });

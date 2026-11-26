@@ -41,6 +41,19 @@ for (const [day, trips] of Object.entries(schedData.days)) {
   byPat[day] = m;
 }
 schedData.byPat = byPat;
+// the stay-aboard links and the agencies' minimum transfer times, indexed as the page does (buildDepIndex)
+schedData.thr = new Map();
+for (const [a, sa, b, sb] of schedData.through || []) {
+  const k = a + '|' + sa;
+  if (!schedData.thr.has(k)) schedData.thr.set(k, []);
+  schedData.thr.get(k).push([b, sb]);
+}
+schedData.xferMap = new Map();
+for (const [fs_, ts, ra, rb, sec] of schedData.xfer || []) {
+  const k = fs_ + '|' + ts;
+  if (!schedData.xferMap.has(k)) schedData.xferMap.set(k, []);
+  schedData.xferMap.get(k).push([ra, rb, sec]);
+}
 
 const SCHED = schedData;
 const ROUTES = routesData;
@@ -53,6 +66,9 @@ const pacificNow = () => ({ secs: 36000, day: 'weekday', prev: 'weekday' });
 let mockLive = [];
 const liveDepartures = () => mockLive;
 const stopIdsOf = (s) => [s.id, ...(s.stops || [])];
+const placeName = (sid) => ((stopIndex[sid] && stopIndex[sid].name) || '').replace(/\s*[-–]\s*Bay\s*\w+$/i, '').replace(/\s+Bay\s+\w+$/i, '');
+const patternDest = (p) => (p && (p.h || placeName(p.s[p.s.length - 1]))) || '';
+const walkable = () => true; // the water map is a PNG the page decodes; the browser tests (test_planner_edges.js) cover it
 
 // Extract EXACT routing functions from web/app.js
 const appCode = fs.readFileSync(path.join(ROOT, 'web/app.js'), 'utf8');
@@ -60,7 +76,7 @@ const glyphBlock = appCode.slice(appCode.indexOf('  function poiIconSVG('), appC
 const block = appCode.slice(appCode.indexOf('let plannerStopsCache = null;'), appCode.indexOf('  function renderTripOnMap('));
 
 const routingModule = new Function(
-  'SCHED', 'DEP', 'ROUTES', 'RBY', 'LINEIDX', 'STOPS', 'NET', 'stopIndex', 'pacificNow', 'CLOCK', 'liveDepartures', 'stopIdsOf',
+  'SCHED', 'DEP', 'ROUTES', 'RBY', 'LINEIDX', 'STOPS', 'NET', 'stopIndex', 'pacificNow', 'CLOCK', 'liveDepartures', 'stopIdsOf', 'walkable', 'patternDest', 'placeName',
   `
   let map = null, selected = null, netDim = 1;
   function setNetDim() {}
@@ -69,7 +85,7 @@ const routingModule = new Function(
   ${glyphBlock}
   ${block}
   return { distMeters, getPlannerStops, getStopToStation, findNearbyStops, timetableTripTimes, planTransitTrip, currentVehWord, modeIcon, getSoonestBus };
-`)(SCHED, DEP, ROUTES, RBY, LINEIDX, STOPS, NET, stopIndex, pacificNow, CLOCK, liveDepartures, stopIdsOf);
+`)(SCHED, DEP, ROUTES, RBY, LINEIDX, STOPS, NET, stopIndex, pacificNow, CLOCK, liveDepartures, stopIdsOf, walkable, patternDest, placeName);
 
 const { distMeters, timetableTripTimes, planTransitTrip, currentVehWord, modeIcon, getSoonestBus } = routingModule;
 
@@ -95,7 +111,7 @@ function checkItinerary(it, name) {
     const prev = legs[i - 1];
     assert(leg.transferWalkDist <= transferCap(prev.alightStop, leg.boardStop) + 1, `${name}: transfer walk ${leg.transferWalkDist} m is over the limit`);
     const walkSec = leg.transferWalkDist ? Math.max(60, Math.round(leg.transferWalkDist / 80 * 60)) : 0;
-    assert(leg.schedTrip.depSec - prev.schedTrip.arrSec - walkSec >= 119, `${name}: connection buffer under 2 minutes on leg ${i + 1}`);
+    assert(leg.stayOn || leg.schedTrip.depSec - prev.schedTrip.arrSec - walkSec >= 119, `${name}: connection buffer under 2 minutes on leg ${i + 1}`);
     totalAssertions += 2;
   }
   assert(it.arrivalSec > it.departSec, `${name}: arrival must follow departure`);

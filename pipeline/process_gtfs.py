@@ -16,6 +16,7 @@ import sys
 import urllib.request
 import zipfile
 from collections import Counter, defaultdict
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -126,6 +127,75 @@ def fetch(url, dest):
         f.write(data)
 
 
+MAP_TZ = "America/Los_Angeles"
+# a gap this long between two consecutive stops is a feed error, not a timetable: no vehicle on
+# this map takes more than eight hours between two stops
+MAX_SEGMENT_SEC = 8 * 3600
+
+
+def tz_shift_sec(feed_tz, when=None):
+    """Seconds to add to a feed's service-day times (kept in the agency's own time zone, as GTFS
+    requires) to read them as Seattle wall-clock times. Amtrak publishes America/New_York, so its
+    Cascades trains leave three hours "late" until this is applied. Both zones change clocks on the
+    same dates, so one offset serves every day of the year."""
+    if not feed_tz or feed_tz == MAP_TZ:
+        return 0
+    when = when or dt.datetime.combine(dt.date.today(), dt.time(12))
+    off = lambda z: ZoneInfo(z).utcoffset(when.replace(tzinfo=None)).total_seconds()  # noqa: E731
+    return int(off(MAP_TZ) - off(feed_tz))
+
+
+def parse_times(col):
+    """'7:52:00' -> 28320.0 (NaN when blank). Vectorised over a string column."""
+    parts = col.str.extract(r"^\s*(\d+):(\d+):(\d+)\s*$").astype(float)
+    return parts[0] * 3600 + parts[1] * 60 + parts[2]
+
+
+SLIP_CANDIDATES = (86400, 82800, 90000)  # a day, or a day less/more an hour (a clock-change slip)
+
+
+def repair_time_jumps(st):
+    """Fix a one-day slip inside one trip. Amtrak's feed (November 2026) has Seattle-Portland trips
+    that run Kelso 14:15 then Vancouver 37:54, and Portland-Seattle trips Portland 9:45 then
+    Vancouver 33:01: from there on every time is 23 hours too late (the agency publishes 14:54 and
+    10:01). A time that long after the last one is not a timetable, it is a day added by mistake.
+    Taking a day (or a day less an hour) off that stop and the ones after it restores the 39-minute
+    leg. Trips that really cross midnight don't have a gap this long between two stops and are left
+    alone. A gap that no slip explains is left as it is and counted here.
+    Expects columns trip_id, stop_sequence, arr, dep (seconds); returns the table sorted by trip."""
+    fixed, unexplained = 0, 0
+    st = st.sort_values(["trip_id", "stop_sequence"], kind="stable").reset_index(drop=True)
+    t = st.dep.where(st.dep.notna(), st.arr)
+    last = t.groupby(st.trip_id, sort=False).ffill().shift(1)
+    same = (st.trip_id.shift(1) == st.trip_id)
+    bad = set(st.trip_id[same & ((t - last) > MAX_SEGMENT_SEC)])
+    if not bad:
+        return st
+    arr, dep = st.arr.to_numpy(copy=True), st.dep.to_numpy(copy=True)
+    for _, g in st[st.trip_id.isin(bad)].groupby("trip_id", sort=False):
+        prev = None
+        for k in g.index:
+            a, d = arr[k], dep[k]
+            tt = d if not np.isnan(d) else a
+            c = 0
+            if prev is not None and not np.isnan(tt):
+                # each stop takes the slip (none, a day, a day less or plus an hour) that leaves the
+                # shortest sensible leg: the feed's own slips are not all the same size (Kelso 14:15,
+                # Vancouver 37:54 = +23 h, Portland 39:20 = +24 h)
+                fits = [(tt - s_ - prev, s_) for s_ in (0,) + SLIP_CANDIDATES if 0 <= tt - s_ - prev <= MAX_SEGMENT_SEC]
+                if fits:
+                    c = min(fits)[1]
+                    fixed += c != 0
+                else:
+                    unexplained += 1
+            arr[k], dep[k] = a - c, d - c
+            if not np.isnan(tt):
+                prev = tt - c
+    st["arr"], st["dep"] = arr, dep
+    print(f"  time repair: {fixed} day-slips removed, {unexplained} implausible gaps left")
+    return st
+
+
 def safe_id(key, raw):
     """Feed-prefixed id using only letters, digits and hyphens (safe in links)."""
     return f"{key}-" + re.sub(r"[^A-Za-z0-9]+", "-", str(raw)).strip("-")
@@ -173,16 +243,23 @@ def load_feeds():
                 routes[col] = ""
         if f.get("only"):
             routes = routes[routes.route_long_name.str.contains(f["only"], case=False)]
+        # the time zone the feed's times are in: that of the agencies that run the routes kept
+        ag = rd("agency.txt")
+        feed_tz = MAP_TZ
+        if ag is not None and "agency_timezone" in ag and len(ag):
+            mine = ag[ag.agency_id.isin(set(routes.agency_id))] if "agency_id" in ag and routes.agency_id.ne("").any() else ag
+            feed_tz = (mine if len(mine) else ag).agency_timezone.mode().iloc[0] or MAP_TZ
         routes["agency_id"] = routes.agency_id.map(lambda a: f["agency"].get(a, f["default"]) if a else f["default"])
         routes["raw_route_id"] = routes.route_id
         routes["route_id"] = routes.route_id.map(p(1))
         trips = rd("trips.txt")
-        for col in ["direction_id", "shape_id", "trip_headsign"]:
+        for col in ["direction_id", "shape_id", "trip_headsign", "block_id"]:
             if col not in trips:
                 trips[col] = ""
-        trips = trips[["route_id", "trip_id", "service_id", "direction_id", "shape_id", "trip_headsign"]].copy()
+        trips = trips[["route_id", "trip_id", "service_id", "direction_id", "shape_id", "trip_headsign", "block_id"]].copy()
         for col in ["route_id", "trip_id", "service_id", "shape_id"]:
             trips[col] = trips[col].map(p(1))
+        trips["block_id"] = trips.block_id.map(lambda v: f"{key}|{v}" if v else "")
         trips = trips[trips.route_id.isin(set(routes.route_id))]
         cal = rd("calendar.txt")
         cal_dates = rd("calendar_dates.txt")
@@ -198,18 +275,43 @@ def load_feeds():
                 stops[col] = ""
         stops["stop_id"] = stops.stop_id.map(lambda v: safe_id(key, v))
         stops["parent_station"] = stops.parent_station.map(lambda v: safe_id(key, v) if v else "")
-        st_cols = ["trip_id", "stop_id", "departure_time", "stop_sequence", "pickup_type", "drop_off_type"]
+        st_cols = ["trip_id", "stop_id", "arrival_time", "departure_time", "stop_sequence", "pickup_type", "drop_off_type"]
         have = set(pd.read_csv(z.open("stop_times.txt"), nrows=0, encoding="utf-8-sig").columns)
         st = pd.read_csv(z.open("stop_times.txt"), usecols=[c for c in st_cols if c in have],
-                         dtype={"trip_id": str, "stop_id": str, "departure_time": str, "stop_sequence": int,
-                                "pickup_type": str, "drop_off_type": str},
+                         dtype={"trip_id": str, "stop_id": str, "arrival_time": str, "departure_time": str,
+                                "stop_sequence": int, "pickup_type": str, "drop_off_type": str},
                          keep_default_na=False, encoding="utf-8-sig")
         for col in ("pickup_type", "drop_off_type"):
             if col not in st:
                 st[col] = ""
         st["trip_id"] = st.trip_id.map(p(1))
-        st = st[st.trip_id.isin(set(trips.trip_id))]
+        st = st[st.trip_id.isin(set(trips.trip_id))].copy()
         st["stop_id"] = st.stop_id.map(lambda v: safe_id(key, v))
+        # times become seconds in Seattle wall-clock time: the feed's own time zone applied once
+        # (Amtrak's are New York time), then a trip's +24 h slips taken out
+        if "arrival_time" not in st:
+            st["arrival_time"] = ""
+        shift = tz_shift_sec(feed_tz)
+        st["dep"] = parse_times(st.departure_time.where(st.departure_time != "", st.arrival_time))
+        st["arr"] = parse_times(st.arrival_time.where(st.arrival_time != "", st.departure_time))
+        st = st.drop(columns=["departure_time", "arrival_time"])
+        if shift:
+            st["dep"] += shift
+            st["arr"] += shift
+            print(f"  {key}: times shifted {shift / 3600:+.0f} h to Seattle time")
+        st = repair_time_jumps(st)
+        tx = rd("transfers.txt")
+        if tx is not None and "min_transfer_time" in tx:
+            tx = tx[tx.min_transfer_time.str.strip() != ""].copy()
+            for c in ("from_stop_id", "to_stop_id"):
+                if c not in tx:
+                    tx[c] = ""
+            for c in ("from_route_id", "to_route_id"):
+                tx[c] = tx[c].map(p(1)) if c in tx else ""
+            tx["from_stop_id"] = tx.from_stop_id.map(lambda v: safe_id(key, v) if v else "")
+            tx["to_stop_id"] = tx.to_stop_id.map(lambda v: safe_id(key, v) if v else "")
+            tx["sec"] = tx.min_transfer_time.astype(float).astype(int)
+            parts["transfers"].append(tx[["from_stop_id", "to_stop_id", "from_route_id", "to_route_id", "sec"]])
         if "shapes.txt" in names:
             shp = pd.read_csv(z.open("shapes.txt"), usecols=["shape_id", "shape_pt_sequence", "shape_pt_lat", "shape_pt_lon"],
                               dtype={"shape_id": str, "shape_pt_sequence": int, "shape_pt_lat": float, "shape_pt_lon": float},
@@ -262,11 +364,14 @@ def main():
     routes, trips, cal, cal_dates, stops, st = T["routes"], T["trips"], T["cal"], T["cal_dates"], T["stops"], T["st"]
     st = st.sort_values(["trip_id", "stop_sequence"])
     first = st.groupby("trip_id", sort=False).first()
-    trips = trips.merge(first[["departure_time"]].rename(columns={"departure_time": "dep"}),
-                        left_on="trip_id", right_index=True, how="inner")
-    trips["dep_s"] = trips.dep.map(lambda t: to_sec(t) if t else -1)
+    trips = trips.merge(first[["dep"]].rename(columns={"dep": "dep_s"}), left_on="trip_id", right_index=True, how="inner")
+    trips["dep_s"] = trips.dep_s.fillna(-1).astype(int)
 
     day_services = {k: active_services(cal, cal_dates, v) for k, v in DAYS.items()}
+    # Every date the planner can look at (a route that runs only on some dates, like Metro's
+    # 98x school trips or WTA's 14S, still has to be on the map and in the planner)
+    horizon = horizon_services(cal, cal_dates)
+    horizon_svc = set().union(*(sv for _, _, sv in horizon)) if horizon else set()
 
     dart_ids = set()
     dart_path = os.path.join(EXT, "dart_areas.geojson")
@@ -311,9 +416,14 @@ def main():
             continue
         # Which days does it run?
         per_day = {d: tr[tr.service_id.isin(s)] for d, s in day_services.items()}
-        if all(len(v) == 0 for v in per_day.values()):
+        any_date = tr[tr.service_id.isin(horizon_svc)]
+        if all(len(v) == 0 for v in per_day.values()) and not len(any_date):
             continue
-        wk = per_day["weekday"] if len(per_day["weekday"]) else max(per_day.values(), key=len)
+        # the busiest sample day stands for the route; a route none of the three sample days
+        # runs on is drawn from its trips on the other dates
+        sample_days_with_trips = [v for v in per_day.values() if len(v)]
+        wk = (per_day["weekday"] if len(per_day["weekday"])
+              else max(sample_days_with_trips, key=len) if sample_days_with_trips else any_date)
 
         # Representative shapes: busiest shape per direction, plus variants carrying
         # at least 15% of the route's trips (covers branches and one-way couplets). Amtrak
@@ -467,7 +577,7 @@ def main():
         for p in r["patterns"]:
             p.pop("trip", None)
 
-    all_services = set().union(*day_services.values())
+    all_services = set().union(*day_services.values()) | horizon_svc
     gtfs_to_slug = {g: r["id"] for r in out_routes for g in r["gtfs"]}
     day_trips = trips[trips.service_id.isin(all_services) & trips.route_id.isin(gtfs_to_slug)]
     served = st[st.trip_id.isin(day_trips.trip_id)][["trip_id", "stop_id"]].drop_duplicates()
@@ -493,7 +603,9 @@ def main():
     cat_of = {r["id"]: r["cat"] for r in out_routes}
     rank_of = {r["id"]: (CAT_RANK[r["cat"]], natural_key(r["short"])) for r in out_routes}
     rail_cats = {"link", "sounder", "amtrak", "streetcar", "monorail"}
-    pad = 0.01
+    # a stop outside the map area has no line to sit on (the network is clipped at REGION), so none is
+    # kept: with a margin, WTA's 26, 27 and 71X had stops 450-835 m past the end of their drawn line
+    pad = 0.0
     out_stops, stations = [], {}
     for sid, rset in route_stops.items():
         if sid not in stops_idx.index:
@@ -576,10 +688,14 @@ def main():
                 if sid in stops_idx.index:
                     names[sid] = stops_idx.loc[sid].stop_name
 
+    # every stop id the page can look up, so a pattern ending somewhere it can't (Portland, for
+    # the Cascades) carries its destination's name itself
+    known_stops = ({s_["id"] for s_ in out_stops} | {a for s_ in out_stops for a in s_.get("alias", [])}
+                   | {sid for st_ in out_stations for sid in st_["stops"]})
     out_routes.sort(key=lambda r: rank_of[r["id"]])
     slug_index = {r["id"]: i for i, r in enumerate(out_routes)}
     export_schedule(trips, st, stops_idx, shapes, day_services, gtfs_to_slug, slug_index,
-                    os.path.join(DATA, "schedule.json"), cal=cal, cal_dates=cal_dates)
+                    os.path.join(DATA, "schedule.json"), horizon=horizon, transfers=T.get("transfers"), known_stops=known_stops)
     os.makedirs(DATA, exist_ok=True)
     meta = {
         "built": dt.date.today().isoformat(),
@@ -607,6 +723,19 @@ def main():
 
 
 SPECIAL_HORIZON_DAYS = 120  # the trip planner looks up to 90 days ahead
+
+
+def horizon_services(cal, cal_dates):
+    """[(yyyymmdd, day type, services running)] for every date the planner can look at."""
+    if cal is None:
+        return []
+    today = dt.date.today()
+    out = []
+    for i in range(SPECIAL_HORIZON_DAYS):
+        d = today + dt.timedelta(days=i)
+        ymd = d.strftime("%Y%m%d")
+        out.append((ymd, day_type(d), active_services(cal, cal_dates, ymd)))
+    return out
 
 
 def day_type(d):
@@ -658,9 +787,51 @@ def special_days(recs, pat_route, day_services, horizon_services):
 
 
 PROFILE_TOL_SEC = 45  # trips whose stop times stay within this of a pattern's profile share it
+MAX_TRIP_SEC = 16 * 3600  # longest trip we believe (Cascades to Vancouver BC is under ten hours)
+THROUGH_MAX_GAP_SEC = 15 * 60  # a bus waiting this long at the end of a trip still "stays on"
+THROUGH_MAX_WALK_M = 150  # ...if the next trip starts at (or right beside) the stop the last ended at
 
 
-def export_schedule(trips, st, stops_idx, shapes, day_services, gtfs_to_slug, slug_index, path, cal=None, cal_dates=None):
+def stay_aboard_links(meta, coord):
+    """[[pattern, start, next pattern, next start], ...]: trips of one vehicle block that go on as a
+    different route from where the first one ended (Metro's 5 -> 21 through Downtown, say). The
+    agency's own block_id says it is the same bus, so a rider can stay on; two routes that merely
+    meet at a stop (different blocks) are an ordinary transfer however the routes are paired."""
+    by_block = defaultdict(list)
+    for blk, svc, rix, pi, t0, t1, s0, s1 in meta:
+        by_block[(blk, svc)].append((t0, t1, rix, pi, s0, s1))
+    links = set()
+    for trips in by_block.values():
+        trips.sort()
+        for (a0, a1, ar, api, _, alast), (b0, b1, br, bpi, bfirst, _) in zip(trips, trips[1:]):
+            if ar == br or not (-60 <= b0 - a1 <= THROUGH_MAX_GAP_SEC):
+                continue
+            if alast != bfirst:
+                ca, cb = coord.get(alast), coord.get(bfirst)
+                if not ca or not cb or math.hypot(ca[0] - cb[0], ca[1] - cb[1]) > THROUGH_MAX_WALK_M:
+                    continue
+            links.add((api, a0, bpi, b0))
+    return [list(x) for x in sorted(links)]
+
+
+def transfer_rules(tx, gtfs_to_slug, slug_index):
+    """The agencies' minimum transfer times (transfers.txt, type 2): [from stop, to stop, from route,
+    to route, seconds]; a stop or route left blank in the feed is "" / -1 (any)."""
+    if tx is None or not len(tx):
+        return []
+    out = set()
+    for r in tx.itertuples(index=False):
+        if r.sec <= 0:
+            continue
+        ra = slug_index.get(gtfs_to_slug.get(r.from_route_id)) if r.from_route_id else -1
+        rb = slug_index.get(gtfs_to_slug.get(r.to_route_id)) if r.to_route_id else -1
+        if ra is None or rb is None:
+            continue
+        out.add((r.from_stop_id, r.to_stop_id, ra, rb, int(r.sec)))
+    return [list(x) for x in sorted(out)]
+
+
+def export_schedule(trips, st, stops_idx, shapes, day_services, gtfs_to_slug, slug_index, path, horizon=(), transfers=None, known_stops=None):
     """Timetable for estimated vehicle positions.
 
     patterns: one per (shape, stop list): a simplified path, its stops, each stop's distance along it
@@ -670,25 +841,23 @@ def export_schedule(trips, st, stops_idx, shapes, day_services, gtfs_to_slug, sl
     """
     LAT0, LON0 = 47.61, -122.33  # same flat projection as the page uses
     KX, KY = 111320 * math.cos(math.radians(LAT0)), 110574
-    horizon = []
-    if cal is not None:
-        today = dt.date.today()
-        for i in range(SPECIAL_HORIZON_DAYS):
-            d = today + dt.timedelta(days=i)
-            ymd = d.strftime("%Y%m%d")
-            horizon.append((ymd, day_type(d), active_services(cal, cal_dates, ymd)))
     all_sv = set().union(*day_services.values(), *(sv for _, _, sv in horizon))
     act = trips[trips.service_id.isin(all_sv) & trips.route_id.isin(gtfs_to_slug.keys()) & trips.shape_id.isin(shapes.keys())]
     sub = st[st.trip_id.isin(set(act.trip_id))].copy()
-    sub["t"] = sub.departure_time.map(lambda t: to_sec(t) if t else np.nan)
+    sub = sub.sort_values(["trip_id", "stop_sequence"], kind="stable")
+    sub["t"], sub["ta"] = sub.dep, sub.arr
     g = sub.groupby("trip_id", sort=False)
-    stop_lists, time_lists = g.stop_id.agg(tuple).to_dict(), g.t.agg(list).to_dict()
+    stop_lists, time_lists, arr_lists = g.stop_id.agg(tuple).to_dict(), g.t.agg(list).to_dict(), g.ta.agg(list).to_dict()
     # pickup_type / drop_off_type 1 = none, so the planner never boards or leaves there
     nb_lists = g.pickup_type.agg(lambda v: tuple(i for i, x in enumerate(v) if str(x).strip() == "1")).to_dict()
     na_lists = g.drop_off_type.agg(lambda v: tuple(i for i, x in enumerate(v) if str(x).strip() == "1")).to_dict()
     coord = {sid: ((float(r.stop_lon) - LON0) * KX, (float(r.stop_lat) - LAT0) * KY) for sid, r in stops_idx.iterrows()}
 
     pat_index, pat_out, pat_d, pat_fracs, recs = {}, [], [], defaultdict(list), []
+    pat_dwell = defaultdict(list)
+    pat_head, pat_last = defaultdict(Counter), {}
+    trip_meta = []  # (block, service, route, pattern, start, end, first stop, last stop) for stay-aboard links
+    n_long = 0
     prof_reps = defaultdict(list)
     geo_base = {}
     for tr in act.itertuples(index=False):
@@ -696,6 +865,7 @@ def export_schedule(trips, st, stops_idx, shapes, day_services, gtfs_to_slug, sl
         if not stops_t or len(stops_t) < 2 or any(sid not in coord for sid in stops_t):
             continue
         nb_t, na_t = nb_lists.get(tr.trip_id, ()), na_lists.get(tr.trip_id, ())
+        rix = slug_index[gtfs_to_slug[tr.route_id]]
         # trips that share stops but run on materially different timings (an express run, a
         # pad at a terminal) get their own pattern: one median profile would put a timed stop
         # many minutes off its real departure
@@ -707,7 +877,7 @@ def export_schedule(trips, st, stops_idx, shapes, day_services, gtfs_to_slug, sl
             offs = tarr - tarr[0]
         prof = 0
         if offs is not None and offs[-1] > 0:
-            reps = prof_reps[(tr.shape_id, stops_t, nb_t, na_t)]
+            reps = prof_reps[(rix, tr.shape_id, stops_t, nb_t, na_t)]
             for ci, rep in enumerate(reps):
                 if np.abs(rep * offs[-1] - offs).max() <= PROFILE_TOL_SEC:
                     prof = ci
@@ -715,7 +885,9 @@ def export_schedule(trips, st, stops_idx, shapes, day_services, gtfs_to_slug, sl
             else:
                 prof = len(reps)
                 reps.append(offs / offs[-1])
-        key = (tr.shape_id, stops_t, nb_t, na_t, prof)
+        # a route's trips keep that route's identity even when another route shares their path
+        # and stops (Jefferson's shuttle 11 and route 7 do): only the geometry is shared
+        key = (rix, tr.shape_id, stops_t, nb_t, na_t, prof)
         gkey = (tr.shape_id, stops_t)
         if key not in pat_index and gkey in geo_base:
             # same path and stops, different timing: only its own timing profile is stored; the
@@ -725,7 +897,7 @@ def export_schedule(trips, st, stops_idx, shapes, day_services, gtfs_to_slug, sl
                 pat_index[key] = None
             else:
                 pat_index[key] = len(pat_out)
-                entry = {"r": pat_out[bi]["r"], "b": bi}
+                entry = {"r": rix, "b": bi}
                 if nb_t:
                     entry["nb"] = list(nb_t)
                 if na_t:
@@ -763,7 +935,7 @@ def export_schedule(trips, st, stops_idx, shapes, day_services, gtfs_to_slug, sl
             pat_index[key] = len(pat_out)
             geo_base[gkey] = len(pat_out)
             # s: the stops themselves, so the page can list a stop's next departures
-            entry = {"r": slug_index[gtfs_to_slug[tr.route_id]], "c": lonlat, "d": [round(v, 1) for v in d], "s": list(stops_t)}
+            entry = {"r": rix, "c": lonlat, "d": [round(v, 1) for v in d], "s": list(stops_t)}
             if nb_t:
                 entry["nb"] = list(nb_t)
             if na_t:
@@ -782,12 +954,42 @@ def export_schedule(trips, st, stops_idx, shapes, day_services, gtfs_to_slug, sl
         start, dur = tt[0], tt[-1] - tt[0]
         if dur <= 0 or dd[-1] <= 0:
             continue
+        if dur > MAX_TRIP_SEC:  # a day-long "trip" is a feed error; never plan on it
+            n_long += 1
+            continue
         pat_fracs[pi].append((tt - start) / dur)
+        # time waiting at each stop (arrival to departure), for getting off before the bus leaves
+        ta = np.array(arr_lists.get(tr.trip_id, times), dtype=float)
+        raw = np.array(times, dtype=float)
+        dw = np.where(np.isnan(ta) | np.isnan(raw), 0.0, np.maximum(raw - ta, 0.0))
+        pat_dwell[pi].append(dw)
+        pat_head[pi][str(getattr(tr, "trip_headsign", "") or "").strip()] += 1
+        pat_last[pi] = stops_t[-1]
         recs.append((pi, int(start), int(dur), tr.service_id))
+        blk = getattr(tr, "block_id", "")
+        if blk:
+            trip_meta.append((blk, tr.service_id, rix, pi, int(start), int(start + dur), stops_t[0], stops_t[-1]))
     for pi, fr in pat_fracs.items():
         f = np.maximum.accumulate(np.clip(np.median(np.vstack(fr), axis=0), 0, 1))
         f[0], f[-1] = 0, 1
         pat_out[pi]["f"] = [round(float(v), 4) for v in f]
+    for pi, ws in pat_dwell.items():
+        w = np.median(np.vstack(ws), axis=0)
+        w = np.where(w >= 30, np.round(w / 15) * 15, 0).astype(int)
+        if w.max() >= 60:
+            pat_out[pi]["w"] = w.tolist()
+    # what the vehicle's sign says: the trip headsign (mode), kept only where it says more than the
+    # last stop's own name, or where the page has no such stop (a pattern running past the map)
+    norm = lambda x: re.sub(r"[^a-z0-9]", "", str(x).lower())  # noqa: E731
+    for pi, last in pat_last.items():
+        head = next((h for h, _ in pat_head[pi].most_common() if h), "")
+        last_name = stops_idx.loc[last].stop_name if last in stops_idx.index else ""
+        known = known_stops is None or last in known_stops
+        base = re.sub(r"\s*[-–]\s*Bay\s*\w+$|\s+Bay\s+\w+$", "", last_name, flags=re.I)
+        if head and norm(head) != norm(base):
+            pat_out[pi]["h"] = head
+        elif not known and last_name:
+            pat_out[pi]["h"] = last_name
     for p in pat_out:
         n_stops = len(p["d"] if "d" in p else pat_out[p["b"]]["d"])
         p.setdefault("f", [round(i / (n_stops - 1), 4) for i in range(n_stops)])
@@ -795,8 +997,16 @@ def export_schedule(trips, st, stops_idx, shapes, day_services, gtfs_to_slug, sl
     for k, sv in day_services.items():
         days[k] = sorted([[pi, s0, du] for pi, s0, du, sid in recs if sid in sv], key=lambda x: x[1])
     special, variants = special_days(recs, [p["r"] for p in pat_out], day_services, horizon)
-    json.dump({"dates": DAYS, "patterns": pat_out, "days": days, "special": special, "variants": variants},
-              open(path, "w"), separators=(",", ":"))
+    through = stay_aboard_links(trip_meta, coord)
+    xfer = transfer_rules(transfers, gtfs_to_slug, slug_index)
+    out = {"dates": DAYS, "patterns": pat_out, "days": days, "special": special, "variants": variants}
+    if through:
+        out["through"] = through
+    if xfer:
+        out["xfer"] = xfer
+    json.dump(out, open(path, "w"), separators=(",", ":"))
+    print(f"schedule: {len(through)} stay-aboard trip pairs, {len(xfer)} minimum-transfer rules, "
+          f"{n_long} trips over {MAX_TRIP_SEC // 3600} h dropped")
     print(f"schedule: {len(special)} dates differ from their sample day ({len(variants)} variants, "
           f"{sum(len(v['add']) for v in variants)} extra trips)")
     print(f"schedule: {len(pat_out)} patterns, trips " + ", ".join(f"{k} {len(v)}" for k, v in days.items())

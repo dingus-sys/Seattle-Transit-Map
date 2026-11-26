@@ -71,6 +71,10 @@ node tools/test_hover_cards.js                # 13 checks: +N tag & stop safe br
 node tools/test_hover_dim.js                  # 10 checks: hover fades the rest to 0.65, selection's 0.38 wins
 node tools/test_hover_release.js              # 7 checks: the old highlight lets go within a few frames
 node tools/stress_test_routing.js             # 18 planner tests: every leg timetabled, 2-min buffers, walk caps
+node tools/test_audit_planner.js              # 9 checks: dwell, minimum transfers, stay-aboard, headsign, Arrive-by midnight/now
+node tools/test_audit_browser.js              # 20 checks: no walk over water, ferry cards, Night Owl, alerts, WSF bulletins, Cascades clock
+python3 tools/check_schedule_release.py [--feeds]  # timetable known-mistake gate (restrictions, Amtrak times, route identity)
+python3 tools/check_stop_coverage.py --max-far N   # every pattern stop inside the map lies near its route's drawn line
 node tools/test_planner_edges.js              # picker above cards & Seattle time from any zone, Arrive by latest,
                                               #   holiday timetables, "X Station" search, Escape, bad links
 node tools/close.js '[["name",[-122.3365,47.6085],16]]'   # screenshot views to shots/c-name.png
@@ -193,6 +197,24 @@ agency's predicted departures (OneBusAway `arrivals-and-departures-for-stop`, on
 WSDOT access code and is called with JSONP. Places (parks, schools, museums, zoo...) come from
 the map tiles; the bundled tiles keep only named places of the kinds in `POI_KEEP`
 (`build_basemap.py`). Highway shields work from the bundled tiles too.
+
+## Timetable and planner notes (audit of Nov 25, 2026)
+
+- `schedule.json` reads every feed's times in Seattle time (`tz_shift_sec`: Amtrak publishes New York time),
+  removes one-day slips inside a trip (`repair_time_jumps`: Amtrak's Kelso 14:15 then Vancouver 37:54),
+  and keeps each trip under its own route (patterns are keyed by route; only geometry is shared via `b`).
+  Pattern fields: `nb`/`na` no pickup/drop-off stops, `w` dwell seconds (get off at arrival = departure - w),
+  `h` the trip's headsign (only where it differs from the last stop's name, or the stop is off the map).
+  File level: `through` = [pattern, start, next pattern, next start] stay-aboard pairs from `block_id`,
+  `xfer` = agency minimum transfer times (transfers.txt). The page indexes both in `buildDepIndex`.
+- A route is on the map if any trip runs on any date within 120 days, not just the three sample days.
+- `data/water.json` (`build_water.py`, from the z11 base-map tiles) is a ~100 m picture of the water; the page
+  refuses walks (direct, to/from stops, between stops) whose line runs over water for more than 450 m.
+- Arrive-by never returns a departure before now (`tooSoon`), and searches the evening before midnight
+  (`raptorTrips(..., from)` keeps the previous day's trips back to the search start).
+- Stops are kept only inside REGION (no pad): the network is clipped there, so a stop beyond it sat hundreds of
+  metres past its line's end.
+- Pages workflow: the artifact name carries `github.run_attempt` (a re-run left two "github-pages" artifacts).
 
 ## Gotchas
 

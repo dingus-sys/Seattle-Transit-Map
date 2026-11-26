@@ -80,9 +80,9 @@ class LegendFeaturesTest(unittest.TestCase):
         self.assertIn(".legend-nav-btn", app_css)
 
     def test_service_worker_cache_version(self):
-        """Service worker cache version must be bumped to v10.4."""
+        """Service worker cache version must be bumped to v10.5."""
         sw_js = (WEB / "sw.js").read_text()
-        self.assertIn('const CACHE_NAME = "seattle-transit-v10-4";', sw_js)
+        self.assertIn('const CACHE_NAME = "seattle-transit-v10-5";', sw_js)
 
     def test_app_js_syntax(self):
         """Ensure web/app.js has no syntax errors or unclosed blocks."""

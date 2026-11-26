@@ -1,12 +1,13 @@
-/* Seattle Transit Map Service Worker - Reliable Offline & Dynamic Cache (v10.4) */
+/* Seattle Transit Map Service Worker - Reliable Offline & Dynamic Cache (v10.5) */
 const CACHE_PREFIX = "seattle-transit-";
-const CACHE_NAME = "seattle-transit-v10-4";
+const CACHE_NAME = "seattle-transit-v10-5";
 const STATIC_ASSETS = [
   "data/network.json",
   "data/routes.json",
   "data/stops.json",
   "data/areas.json",
   "data/schedule.json",
+  "data/water.json",
   "manifest.json",
   "logo-mark.svg",
   "https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.js",

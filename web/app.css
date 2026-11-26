@@ -1558,6 +1558,11 @@ td.sched-cell-now {
 .trip-fav-row {
   display: flex; align-items: center; justify-content: space-between; width: 100%;
 }
+.trip-fav-open {
+  background: none; border: 0; margin: 0; padding: 4px 0; font: inherit; color: inherit; text-align: left;
+  cursor: pointer; flex: 1; min-width: 0; border-radius: 8px;
+}
+.trip-fav-open:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 2px; }
 .fav-del-btn {
   background: none; border: 0; color: var(--muted); padding: 6px; border-radius: 6px;
   cursor: pointer; display: inline-flex; align-items: center; justify-content: center;

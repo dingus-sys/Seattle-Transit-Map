@@ -29,6 +29,8 @@ jobs:
       - run: python tools/check_repair.py
       - run: python pipeline/build_all.py --no-tiles --fresh
       - run: python tools/validate_data.py
+      - run: python tools/check_schedule_release.py --feeds
+      - run: python3 tools/check_stop_coverage.py --max-far 3   # stops on a route's own patterns sit on its drawn line
       - run: python tools/check_parallel_copies.py   # routes on one street share one bundle
       - name: Commit updated data
         run: |
