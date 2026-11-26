@@ -124,7 +124,9 @@ async function run() {
     // Wheel forwarding: mouse wheel over card scrolls/zooms the map
     const z0 = await page.evaluate(() => window.__map.getZoom());
     await page.mouse.wheel(0, -120);
-    await page.waitForTimeout(350);
+    // MapLibre eases a wheel zoom over the next frames; a software-rendered CI browser can take
+    // longer than a fixed 350 ms to draw the first one, so wait (up to 3 s) for the zoom to move
+    await page.waitForFunction((z) => window.__map.getZoom() !== z, z0, { timeout: 3000 }).catch(() => {});
     const z1 = await page.evaluate(() => window.__map.getZoom());
     check('Mouse wheel over card zooms the underlying map', z1 !== z0, `z0=${z0.toFixed(2)}, z1=${z1.toFixed(2)}`);
 
