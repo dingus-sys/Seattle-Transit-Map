@@ -43,12 +43,22 @@ class BuildTests(unittest.TestCase):
 
     def test_keys_are_json_encoded_and_cannot_close_script(self):
         dummy = 'example/with&special"characters</script>'
-        with patch.dict(os.environ, {"OBA_API_KEY": dummy, "WSDOT_KEY": dummy}, clear=True):
+        with patch.dict(os.environ, {"OBA_API_KEY": dummy, "WSDOT_KEY": dummy}, clear=True), \
+                patch.object(build_site, "live_proxy", return_value=""):
             result = build_site.live_js(True)
             self.assertNotIn("</script>", result)
             decoded = json.loads(result.split(" = ", 1)[1][:-1])
             self.assertEqual(decoded["key"], dummy)
             self.assertEqual(decoded["wsdot"]["code"], dummy)
+
+    def test_live_proxy_keeps_every_key_out_of_the_page(self):
+        secret = "real-key-that-must-not-ship"
+        env = {"OBA_API_KEY": secret, "WSDOT_KEY": secret, "WSF_ACCESS_CODE": secret}
+        with patch.dict(os.environ, env, clear=True), \
+                patch.object(build_site, "live_proxy", return_value="https://proxy.example"):
+            result = build_site.live_js(True)
+        self.assertNotIn(secret, result)
+        self.assertEqual(json.loads(result.split(" = ", 1)[1][:-1])["proxy"], "https://proxy.example")
 
 
 if __name__ == "__main__":

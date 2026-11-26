@@ -9687,6 +9687,10 @@
     };
     // the route strand under the pointer: every route is its own strand of the street line, so
     // the strand the pointer is most inside of is the route
+    // The pointer moved from a route line onto something else (a stop, place, vehicle, trail or
+    // DART area): the route's highlight and the dim of everything else let go, so the map never
+    // stays faded with no line under the pointer.
+    const offLine = () => { if (cur && cur.kind === "line" && !tipLive) setHover(null); };
     const pickLine = (pt) => {
       const rad = 5;
       const feats = lineFeaturesAt(pt, rad);
@@ -9781,7 +9785,7 @@
         const vh = pickVehicle(e.point);
         if (vh) {
           const r = RBY[vh.properties.r];
-          cur = { kind: "veh", id: vh.properties.id };
+          offLine(); cur = { kind: "veh", id: vh.properties.id };
           showLens(null);
           map.getCanvas().style.cursor = "pointer";
           highlightStop(null);
@@ -9840,7 +9844,7 @@
           });
           if (destHits.length) {
             const dp = destHits[0].properties;
-            cur = { kind: "dest", id: dp.id };
+            offLine(); cur = { kind: "dest", id: dp.id };
             showLens(null);
             map.getCanvas().style.cursor = "pointer";
             highlightStop(null);
@@ -9856,7 +9860,7 @@
           const basePoi = mapPoiFromFeature(basePoiHits.find((f) => f.properties?.name), e.lngLat);
           if (basePoi) {
             const badge = getPlaceBadge(basePoi);
-            cur = { kind: "poi", id: basePoi.id };
+            offLine(); cur = { kind: "poi", id: basePoi.id };
             showLens(null);
             map.getCanvas().style.cursor = "pointer";
             highlightStop(null);
@@ -9867,7 +9871,7 @@
         const st = pickStop(e.point);
         if (st) {
           const p = st.properties, lid = st.layer.id;
-          cur = { kind: "stop", id: p.id };
+          offLine(); cur = { kind: "stop", id: p.id };
           map.getCanvas().style.cursor = "pointer";
           if (lid === "flex") {
             highlightStop(null);
@@ -9939,7 +9943,7 @@
         });
         if (trailHover.length) {
           const tp = trailHover[0].properties;
-          cur = { kind: "trail", name: tp.name };
+          offLine(); cur = { kind: "trail", name: tp.name };
           map.getCanvas().style.cursor = "pointer";
           const icon = poiIconSVG(tp.facility === "pbl" ? "shield" : tp.facility === "greenway" ? "park" : "bike", 16);
           const badgeColor = tp.facility === "pbl" || tp.facility === "trail" ? "#047857" : tp.facility === "greenway" ? "#10b981" : tp.facility === "lane" ? "#db2777" : tp.facility === "sharrow" ? "#a16207" : "#9a3412";
@@ -9956,7 +9960,7 @@
               // Skip hovering other routes' DART areas when a route is selected
             } else {
               const r = rSlug ? RBY[rSlug] : null;
-              cur = { kind: "dart", id: rSlug || dp.route };
+              offLine(); cur = { kind: "dart", id: rSlug || dp.route };
               map.getCanvas().style.cursor = "pointer";
               highlightDartArea(rSlug || dp.route);
               if (r && !(selected && selected.type === "route")) {
