@@ -115,8 +115,9 @@ async function run() {
 
     // Hovering route chip lights up that route
     const hoveredRoute = await page.evaluate(() => {
-      const hover = window.__map.getSource('hover');
-      return hover && hover._data && hover._data.features.length > 0;
+      // the highlight cross-fades between two slots ("hover", "hover2"): either may hold it
+      return ['hover', 'hover2'].some((id) => { const s = window.__map.getSource(id); return s && s._data && s._data.features.length > 0; })
+        && window.__atlas.hoverState().key !== '';
     });
     check('Hovering route chip illuminates route path on map', hoveredRoute);
 
