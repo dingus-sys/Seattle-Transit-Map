@@ -263,8 +263,8 @@ the map tiles; the bundled tiles keep only named places of the kinds in `POI_KEE
    `build_graph`'s surface layer. The full-region raster is ~2 G pixels at 4 m; labelling it for
    pinholes took an 8 GB int32 image. `fill_pinholes` now works tile by tile (identical result,
    `tools/test_fill_pinholes.py`), the thinning uses a uint8 view instead of a copy, the raster is
-   freed once thinned, and the job limit is 120 min. Not yet proven on a runner: check the next
-   Monday run (`gh run list --workflow refresh-data.yml`). On a 17 GB Mac the surface layer took
+   freed once thinned, and the job limit is 120 min. Proven on a runner: the Nov 23 run succeeded
+   in 33 min (`gh run list --workflow refresh-data.yml`). On a 17 GB Mac the surface layer took
    32 min while swapping before these changes.
 
 ## Working with this user
