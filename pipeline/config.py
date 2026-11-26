@@ -111,7 +111,7 @@ OBA_REST_POSITIONS = ["95"]
 WSF_API = "https://www.wsdot.wa.gov/ferries/api"
 # The live-data proxy (worker/live-proxy.js on Cloudflare). Empty: the page uses keys built in
 # with --with-key, as before. The LIVE_PROXY environment variable overrides it.
-LIVE_PROXY = ""
+LIVE_PROXY = "https://transit-proxy.kaparulin95.workers.dev"
 WSDOT_ALERTS = "https://www.wsdot.wa.gov/traffic/api/HighwayAlerts/HighwayAlertsREST.svc/GetAlertsAsJson"
 
 TILEJSON_URL = "https://tiles.openfreemap.org/planet"
