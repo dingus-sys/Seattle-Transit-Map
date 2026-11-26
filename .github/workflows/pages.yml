@@ -59,6 +59,8 @@ jobs:
           OBA_API_KEY: ${{ secrets.OBA_API_KEY }}
           WSF_ACCESS_CODE: ${{ secrets.WSF_ACCESS_CODE || vars.WSF_ACCESS_CODE || secrets.WSF_KEY || secrets.WSP_KEY || secrets.WSDOT_KEY }}
           WSDOT_KEY: ${{ secrets.WSDOT_KEY || secrets.WSDOT_ACCESS_CODE || secrets.WSF_ACCESS_CODE || secrets.WSP_KEY }}
+          # the Cloudflare Worker URL (worker/README.md); when set, the page carries no keys
+          LIVE_PROXY: ${{ vars.LIVE_PROXY }}
         run: |
           python3 pipeline/build_site.py --with-key
           rm site/artifact.html   # the one-file claude.ai preview, not part of the website

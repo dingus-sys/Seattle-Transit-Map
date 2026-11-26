@@ -1,13 +1,9 @@
-/* Seattle Transit Map Service Worker - Reliable Offline & Dynamic Cache (v10.5) */
+/* Seattle Transit Map Service Worker - Reliable Offline & Dynamic Cache (v11) */
 const CACHE_PREFIX = "seattle-transit-";
-const CACHE_NAME = "seattle-transit-v10-5";
+const CACHE_NAME = "seattle-transit-v11";
+// The page shell only. The data files (about 4 MB compressed) are cached as the page itself
+// fetches them (network-first, below), so a first visit doesn't download them twice.
 const STATIC_ASSETS = [
-  "data/network.json",
-  "data/routes.json",
-  "data/stops.json",
-  "data/areas.json",
-  "data/schedule.json",
-  "data/water.json",
   "manifest.json",
   "logo-mark.svg",
   "https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.js",
@@ -34,12 +30,15 @@ async function precache() {
         const u = m[1];
         if (/^(https?:)?\/\//.test(u) && !/cdnjs\.cloudflare\.com/.test(u)) continue;
         if (/^(data:|blob:|mailto:|javascript:)/.test(u)) continue;
+        if (/(^|\/)data\//.test(u)) continue; // preloaded data: cached when the page fetches it
         if (/\.(js|css|json|svg|png|webp|ico)(\?|$)/.test(u)) urls.add(u);
       }
     }
   } catch (e) { /* offline during install: the static list below still gets tried */ }
   await Promise.allSettled([...urls].map((u) =>
-    fetch(u).then((r) => { if (r && (r.ok || r.type === "opaque")) return cache.put(u, r); })
+    // CDN scripts are loaded with crossorigin + integrity, so cache a CORS response (an opaque
+    // one can't answer a CORS request)
+    fetch(u, /^https?:/.test(u) ? { mode: "cors", credentials: "omit" } : undefined).then((r) => { if (r && r.ok) return cache.put(u, r); })
   ));
 }
 
@@ -110,11 +109,11 @@ self.addEventListener("fetch", (event) => {
     caches.match(req).then((cached) => {
       if (cached) return cached;
       return fetch(req).then((response) => {
-        if (!response || (response.status !== 200 && response.status !== 0)) {
+        if (!response || response.status !== 200) {
           return response;
         }
-        // Allow basic, cors, and opaque so third-party CDN libraries (like MapLibre) can be cached for offline mode
-        if (response.type !== "basic" && response.type !== "cors" && response.type !== "opaque") {
+        // Basic and CORS responses only: the CDN scripts are requested with CORS, so MapLibre still caches for offline use
+        if (response.type !== "basic" && response.type !== "cors") {
           return response;
         }
         // Cache vector tiles, fonts, and static assets dynamically

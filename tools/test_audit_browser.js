@@ -21,17 +21,14 @@ function pacificInstant(daysAhead, hh, mm) {
 }
 
 async function run() {
-  let pw;
-  try { pw = require('playwright'); } catch (e) {
-    pw = require(path.join(process.env.HOME || '', '.npm/_npx/e41f203b7505f1fb/node_modules/playwright'));
-  }
+  const pw = require('./pw').loadPlaywright();
   const browser = await pw.chromium.launch({ ...(process.env.HTTPS_PROXY ? { proxy: { server: process.env.HTTPS_PROXY, bypass: '127.0.0.1,localhost' } } : {}) });
   const results = [];
   const check = (name, ok, info = '') => { results.push(ok); console.log(`${ok ? 'PASS' : 'FAIL'}: ${name}${info ? ' (' + info + ')' : ''}`); };
   const open = async (opts = {}) => {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 820 }, ...opts });
     const page = await ctx.newPage();
-    if (MAPLIBRE_JS) await page.route('https://cdnjs.cloudflare.com/**/maplibre-gl.js', (r) => r.fulfill({ path: MAPLIBRE_JS, contentType: 'application/javascript' }));
+    if (MAPLIBRE_JS) await page.route(/maplibre-gl\.js$/, (r) => r.fulfill({ path: MAPLIBRE_JS, contentType: 'application/javascript', headers: { 'Access-Control-Allow-Origin': '*' } }));
     await page.route('https://tiles.openfreemap.org/**', (r) => r.abort());
     await page.route('https://api.pugetsound.onebusaway.org/**', (r) => r.abort());
     page.errors = [];

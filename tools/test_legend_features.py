@@ -80,9 +80,13 @@ class LegendFeaturesTest(unittest.TestCase):
         self.assertIn(".legend-nav-btn", app_css)
 
     def test_service_worker_cache_version(self):
-        """Service worker cache version must be bumped to v10.5."""
+        """The service worker precaches the page shell only: the data files are cached as the
+        page fetches them, so a first visit doesn't download about 4 MB twice."""
+        import re
         sw_js = (WEB / "sw.js").read_text()
-        self.assertIn('const CACHE_NAME = "seattle-transit-v10-5";', sw_js)
+        self.assertRegex(sw_js, r'const CACHE_NAME = "seattle-transit-[^"]+";')
+        assets = re.search(r"const STATIC_ASSETS = \[(.*?)\];", sw_js, re.S).group(1)
+        self.assertNotIn("data/", assets)
 
     def test_app_js_syntax(self):
         """Ensure web/app.js has no syntax errors or unclosed blocks."""

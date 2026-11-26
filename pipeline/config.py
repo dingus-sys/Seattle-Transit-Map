@@ -109,6 +109,9 @@ OBA_REST_POSITIONS = ["95"]
 # secret, or "wsf_access_code" in pipeline/local_secrets.json. Without one, ferries still show
 # live from OneBusAway, without the WSF bulletins.
 WSF_API = "https://www.wsdot.wa.gov/ferries/api"
+# The live-data proxy (worker/live-proxy.js on Cloudflare). Empty: the page uses keys built in
+# with --with-key, as before. The LIVE_PROXY environment variable overrides it.
+LIVE_PROXY = ""
 WSDOT_ALERTS = "https://www.wsdot.wa.gov/traffic/api/HighwayAlerts/HighwayAlertsREST.svc/GetAlertsAsJson"
 
 TILEJSON_URL = "https://tiles.openfreemap.org/planet"
@@ -140,6 +143,12 @@ def wsf_code():
 
 def wsdot_code():
     return access_code("WSDOT_KEY", "WSDOT_ACCESS_CODE", "WSF_ACCESS_CODE", "WSF_KEY", "WSP_KEY")
+
+
+def live_proxy():
+    """Base URL of the Cloudflare Worker in worker/live-proxy.js. When set, the page carries no
+    keys at all: it asks the Worker, which holds them as secrets. Not a secret itself."""
+    return access_code("LIVE_PROXY") or LIVE_PROXY
 
 
 def oba_key():

@@ -380,8 +380,8 @@ class TestTier1FeatureCoverage(E2EBaseTestCase):
     def test_t1_f5_05_live_hud_fleet_counts(self):
         """F5: Live HUD formats fleet counts distinguishing live from scheduled."""
         live_cnt, est_cnt = 420, 35
-        hud_text = f"{live_cnt} Live · {est_cnt} Sched"
-        self.assertEqual(hud_text, "420 Live · 35 Sched")
+        hud_text = f"{live_cnt} live · {est_cnt} estimated"
+        self.assertEqual(hud_text, "420 live · 35 estimated")
 
     # --- Feature F6: Finite Multiscale Geometry ---
     def test_t1_f6_01_geometry_check_runner_passes(self):
@@ -624,9 +624,11 @@ class TestTier1FeatureCoverage(E2EBaseTestCase):
         self.assertIn("site/artifact.html", gitignore)
 
     def test_t1_f13_05_sw_cache_version_consistent(self):
-        """F13: Service worker cache version matches v10-5."""
+        """F13: Service worker cache name carries the app prefix (so old caches are cleaned up)."""
+        import re
         sw_js = (WEB / "sw.js").read_text()
-        self.assertIn("seattle-transit-v10-5", sw_js)
+        m = re.search(r'const CACHE_NAME = "(seattle-transit-[^"]+)";', sw_js)
+        self.assertTrue(m, "CACHE_NAME must start with the seattle-transit- prefix")
 
     # --- Feature F14: Secret Hygiene & Safe Deployment ---
     def test_t1_f14_01_no_committed_api_keys_in_repo(self):

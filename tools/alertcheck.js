@@ -12,7 +12,7 @@ const { chromium } = require('playwright');
   const errs = [];
   page.on('pageerror', (e) => errs.push(e.message));
   page.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
-  if (MAPLIBRE_JS) await page.route('https://cdnjs.cloudflare.com/**/maplibre-gl.js', (r) => r.fulfill({ path: MAPLIBRE_JS, contentType: 'application/javascript' }));
+  if (MAPLIBRE_JS) await page.route(/maplibre-gl\.js$/, (r) => r.fulfill({ path: MAPLIBRE_JS, contentType: 'application/javascript', headers: { 'Access-Control-Allow-Origin': '*' } }));
   await page.route('https://tiles.openfreemap.org/**', (r) => r.abort());
   await page.goto(SITE + '/index.html', { waitUntil: 'load' });
   await page.waitForFunction(() => document.getElementById('loading').hidden === true, null, { timeout: 120000 });

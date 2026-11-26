@@ -10,7 +10,7 @@ const { chromium } = require('playwright');
   await ctx.addInitScript(() => { try { localStorage.clear(); localStorage.setItem('kctm:layers2', JSON.stringify(['link','rail','streetcar','monorail','rapid','frequent','local','water','dart','flex','stops'])); } catch (e) {} });
   const page = await ctx.newPage();
   page.on('pageerror', (e) => console.log('pageerror', e.message));
-  if (MAPLIBRE_JS) await page.route('https://cdnjs.cloudflare.com/**/maplibre-gl.js', (r) => r.fulfill({ path: MAPLIBRE_JS, contentType: 'application/javascript' }));
+  if (MAPLIBRE_JS) await page.route(/maplibre-gl\.js$/, (r) => r.fulfill({ path: MAPLIBRE_JS, contentType: 'application/javascript', headers: { 'Access-Control-Allow-Origin': '*' } }));
   await page.route('https://tiles.openfreemap.org/**', (r) => r.abort());
   await page.goto(SITE + '/index.html', { waitUntil: 'load' });
   await page.waitForFunction(() => document.getElementById('loading').hidden === true, null, { timeout: 120000 });

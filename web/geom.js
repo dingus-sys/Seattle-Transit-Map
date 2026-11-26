@@ -903,7 +903,7 @@ const KCTMGeom = (() => {
       const feats = [], selFeats = [];
       // One solid band per service type on a street. Individual route lanes are retained
       // for the selected/previewed route, instead of drawing dozens of hairlines at once.
-      const hrOf = (c) => (c.inner === "glass" ? 0.34 : c.inner === "solid" ? 0.3 : c.inner === "dots" ? 0.32 : c.inner === "ties" ? 0.62 : 0);
+      const hrOf = (c) => (c.inner === "glass" ? 0 : c.inner === "solid" ? 0.3 : c.inner === "dots" ? 0.32 : c.inner === "ties" ? 0.62 : 0);
       const keyLane = (v) => (Lo) => [Lo.pos.get(v), Lo.wk.get(v) * Lo.s / 2];
       // One row of one-way arrows per bundle: where the one-way service types on a street all go
       // the same way, only the most important of them carries the chevrons (each band's own row
@@ -948,7 +948,7 @@ const KCTMGeom = (() => {
             drawPath(strand(selIdx), run, lay, S, (k, coords) => {
               if (coords.length < 2) return;
               selFeats.push({ type: "Feature", properties: { r: selIdx, cat: selKey, e: run[k].E.k, zu, c: col, d: c.dash ? 1 : 0, ar: c.group === "water" ? 0 : arrow(run[k].E.dirOf(selIdx), run[k].fwd),
-                wm: c.w + 1.8, cm: c.w + 3.4, gm: c.w + 8, hm: (c.w + 1.8) * 0.3 },
+                wm: c.w + 1.8, cm: c.w + 3.4, gm: c.w + 8, hm: c.inner === "glass" ? 0 : (c.w + 1.8) * 0.3 },
               geometry: { type: "LineString", coordinates: coords.map(toLL) } });
             }, c.group === "water", false, easeAt);
           }

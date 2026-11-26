@@ -15,7 +15,15 @@
   const MODE = window.ATLAS_MODE || "auto"; // "auto": try live tiles first; "bundled": local only
   // live vehicle feed settings; a missing key (or the unfilled build placeholder) means timetable estimates only
   const hasCode = (v) => typeof v === "string" && !!v.trim() && !/^__/.test(v);
-  const liveConfig = window.ATLAS_LIVE;
+  // With a proxy (worker/live-proxy.js) the page carries no keys: requests go to the proxy with
+  // "proxy" where a key would be, and the proxy adds the real key.
+  const liveConfig = ((c) => {
+    if (!c || typeof c.proxy !== "string" || !/^https:\/\//.test(c.proxy)) return c;
+    const p = c.proxy.replace(/\/+$/, "");
+    const via = (u) => typeof u === "string" ? u.replace("https://api.pugetsound.onebusaway.org", `${p}/oba`).replace("https://www.wsdot.wa.gov", `${p}/wsdot`) : u;
+    return { ...c, key: "proxy", base: via(c.base), status: via(c.status), alerts: via(c.alerts), deps: via(c.deps),
+      wsf: c.wsf && { ...c.wsf, base: via(c.wsf.base), code: "proxy" }, wsdot: c.wsdot && { ...c.wsdot, alerts: via(c.wsdot.alerts), code: "proxy" } };
+  })(window.ATLAS_LIVE);
   const LIVE = liveConfig && (hasCode(liveConfig.key) || hasCode(liveConfig.wsf?.code) || hasCode(liveConfig.wsdot?.code))
     ? { ...liveConfig, key: hasCode(liveConfig.key) ? liveConfig.key : "" } : null;
   const $ = (s, el = document) => el.querySelector(s);
@@ -29,7 +37,7 @@
 
   // ---------------------------------------------------------------- service types
   // w = line width in "units"; tier = zoom band it appears in; inner = the line's center
-  // treatment (white center for rail, dots for RapidRide, a glassy highlight for buses)
+  // treatment (white center for rail, dots for RapidRide; buses are plain solid lines)
   const CAT = {
     link:      { group: "rail",  w: 3.0,  tier: 0, prio: 0,  inner: "solid" },
     link1:     { group: "rail",  w: 3.2,  tier: 0, prio: 0,  inner: "solid", base: "link" },
@@ -471,7 +479,7 @@
   // network, RapidRide and trains read first in busy places like downtown. Focused routes use
   // their full service color below; a commuter route must never remain washed out on hover/tap.
   const LINE_OP = 1;
-  const SOFT = { local: 0.95 };
+  const SOFT = {}; // every service type at its full color (was local: 0.95, a slight wash toward the land)
   const mixHex = (a, b, t) => { // a toward b by (1 - t)
     const pa = [1, 3, 5].map((i) => parseInt(a.slice(i, i + 2), 16)), pb = [1, 3, 5].map((i) => parseInt(b.slice(i, i + 2), 16));
     return "#" + pa.map((v, i) => Math.round(v * t + pb[i] * (1 - t)).toString(16).padStart(2, "0")).join("");
@@ -509,8 +517,11 @@
         L.push({ id: `dash-${g}`, type: "line", source: "net", filter: ["all", f, dashed],
           layout: { "line-join": "round" },
           paint: { "line-color": ["get", "c"], "line-width": px("wm"), "line-dasharray": ROUTE_DASH, "line-opacity": LINE_OP } });
+        // Bus lines ("glass") have no center stripe: a white highlight down every line made the
+        // whole network look see-through at rest. Lines are drawn at full strength; only a
+        // hover or a selection fades the rest of the map.
         inner(`glass-${g}`, "net", ["all", f, ["==", ["get", "h"], 1]],
-          { "line-color": P.shine, "line-opacity": 0.38, "line-width": px("hm"), "line-blur": 0.6 }, { "line-cap": "round" });
+          { "line-color": P.shine, "line-opacity": 0, "line-width": px("hm") }, { "line-cap": "round" });
         inner(`center-${g}`, "net", ["all", f, ["==", ["get", "h"], 2]],
           { "line-color": P.shine, "line-opacity": 0.92, "line-width": px("hm") }, { "line-cap": "round" });
         inner(`dots-${g}`, "net", ["all", f, ["==", ["get", "h"], 3]],
@@ -540,7 +551,7 @@
       paint: { "line-color": ["get", "c"], "line-width": px("wm") } });
     inner("sel-dash", "sel", dashed,
       { "line-color": ["get", "c"], "line-width": px("wm"), "line-dasharray": ROUTE_DASH });
-    inner("sel-shine", "sel", solid, { "line-color": P.shine, "line-opacity": 0.45, "line-width": px("hm"), "line-blur": 0.6 }, { "line-cap": "round" });
+    inner("sel-shine", "sel", ["all", solid, [">", ["get", "hm"], 0]], { "line-color": P.shine, "line-opacity": 0.45, "line-width": px("hm"), "line-blur": 0.6 }, { "line-cap": "round" });
     // one-way arrows: on every one-way stretch when zoomed in, and along the selected route
     const arrowLayer = (id, src, minzoom, spacing, size) => L.push({ id, type: "symbol", source: src, minzoom, filter: ["!=", ["get", "ar"], 0],
       layout: { "symbol-placement": "line", "symbol-spacing": spacing, "icon-image": ["concat", "arr:", ["get", "c"]],
@@ -2192,7 +2203,12 @@
     else if (/san\s*juans?|\bana(cortes)?\b|\bsj\b|inter-?island/i.test(head) && !/sidney/i.test(head)) out.push(...sj);
     return out;
   }
-  const stripHTML = (h) => { const d = document.createElement("div"); d.innerHTML = String(h || "").replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n\n"); return (d.textContent || "").replace(/\n{3,}/g, "\n\n").trim(); };
+  // Feed text (WSF bulletins, WSDOT alerts) can carry HTML. DOMParser builds an inert document:
+  // unlike innerHTML on a live element, it never runs handlers or loads images from that markup.
+  const stripHTML = (h) => {
+    const doc = new DOMParser().parseFromString(String(h || "").replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n\n"), "text/html");
+    return (doc.body.textContent || "").replace(/\n{3,}/g, "\n\n").trim();
+  };
   function wsfAlerts(list, now) {
     const out = [];
     for (const b of list || []) {
@@ -3996,7 +4012,7 @@
   // lighter): every other line, tag, stop, station, vehicle, trail and service area eases to
   // HOVER_DIM, while the hovered route, its stops and its own number tags stay at full
   // strength. Only when nothing is selected: a selection already dims the map further.
-  const HOVER_DIM = 0.65;
+  const HOVER_DIM = 0.5;
   const hovDim = { v: 1, from: 1, to: 1, t0: 0, dur: 1, raf: 0, ids: null, idx: null, slot: 0, key: "", clearT: 0 };
   // Layers this fade owns outright, and layers it shares with setNetDim (touched only while
   // netDim is 1, so a selection's stronger dim always wins).
@@ -4161,6 +4177,18 @@
 
   // ---------------------------------------------------------------- panel views
   const body = () => $("#panelBody");
+  // After the search box hands off to a card, keep keyboard users in place: focus the card's
+  // heading (not focusable by Tab, so it doesn't add a stop) instead of dropping to the page.
+  function focusPanelHeading() {
+    setTimeout(() => {
+      const ae = document.activeElement;
+      if (ae && ae !== document.body && ae.id !== "q") return; // something else took focus
+      const h = body().querySelector("h1, h2, .view-head, .name");
+      if (!h) return;
+      if (!h.hasAttribute("tabindex")) h.setAttribute("tabindex", "-1");
+      h.focus({ preventScroll: true });
+    }, 80);
+  }
   function setView(html) {
     const b = body();
     b.innerHTML = `<div class="view">${html}</div>`;
@@ -4560,6 +4588,20 @@
       showHome(true);
     });
   }
+  // A small, always-there note at the foot of the home panel: unofficial, data date, and a
+  // fold-out with privacy, licence and data credits.
+  function aboutFooterHTML() {
+    const built = builtText(), age = dataAgeDays();
+    return `<footer class="about-foot">
+      <p><span class="unofficial-tag">Unofficial</span> Not affiliated with King County Metro, Sound Transit or any transit agency. Always check the agency for critical trips.${built ? ` Timetables updated <time datetime="${esc(META.built)}">${esc(built)}</time>${age > STALE_DAYS ? " and may be out of date" : ""}.` : ""}</p>
+      <details class="about-more">
+        <summary>Privacy, licence and data</summary>
+        <p><b>Privacy.</b> No accounts, cookies or tracking. Your location stays on your device and is read only when you ask for it (the location button, or a trip from where you are). Addresses you type into directions are sent to Photon (komoot) to find them; live vehicles, alerts and ferry status come from OneBusAway, WSDOT and Intercity Transit. Favorites and settings stay in this browser.</p>
+        <p><b>Data.</b> Routes and schedules from the agencies' open GTFS feeds (${esc(feedText())}). Areas and trails from King County GIS, SDOT and regional open data. Base map © OpenStreetMap contributors via OpenFreeMap and OpenMapTiles.</p>
+        <p><b>Licence.</b> Map code under the MIT licence; transit data remains under each agency's terms. <a href="https://github.com/dingus-sys/Seattle-Transit-Map" target="_blank" rel="noopener">Source on GitHub</a>.</p>
+      </details>
+    </footer>`;
+  }
   function showHome(quiet) {
     if (panelView === "directions") return renderTripPlanView();
     if (panelView === "layers") return showLayers(quiet);
@@ -4637,7 +4679,7 @@
     const nStop = alerts.list.filter((a) => a.level === 2).length, nChg = alerts.list.filter((a) => a.level === 1).length, nNotice = nTransit - nStop - nChg;
     const alertRow = !LIVE ? "" : `<li><button class="row nav-row" id="openAlerts" type="button">
         <span class="icon al-row-ic">${alertIcon(nAl ? worst : 0)}</span>
-        <span class="txt"><span class="name">Service alerts${nAl ? `<span class="count">${nAl}</span>` : ""}</span><span class="desc">${!alerts.got ? "Checking…" : !nAl ? alerts.failed ? "Some feeds unavailable" : "None right now"
+        <span class="txt"><span class="name">Service alerts${nTransit ? `<span class="count">${nTransit}</span>` : ""}</span><span class="desc">${!alerts.got ? "Checking…" : !nAl ? alerts.failed ? "Some feeds unavailable" : "None right now"
           : [nStop ? `${nStop} disruption${nStop === 1 ? "" : "s"}` : "", nChg ? `${nChg} service change${nChg === 1 ? "" : "s"}` : "", nNotice ? `${nNotice} notice${nNotice === 1 ? "" : "s"}` : "", nRoad ? `${nRoad} road report${nRoad === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ")}</span></span>
         <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="m1.5 1.5 5 5.5-5 5.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button></li>`;
@@ -4741,6 +4783,7 @@
         `<li><span class="sw">${swatch(l)}${keySymbol(l.key)}</span><span>${esc(KEY_NAME[l.key])}</span></li>`).join("")}</ul>` : ""}
       ${bikeLegendHTML}
       ${!keys.length ? `<p class="hint">Every layer is off. Turn some on in Layers.</p>` : `<p class="hint">Tap a colored band or bike route to choose it. Its path, stops, and details will stand out.</p>`}
+      ${aboutFooterHTML()}
     </div>`;
     const existing = body().querySelector(".home-view");
     if (quiet && existing) existing.outerHTML = html;
@@ -5176,7 +5219,6 @@
     const tube = (c, w, y, kind) => {
       const d = `M6 ${y} H24`;
       let s = `<path d="${d}" stroke="${c}" stroke-width="${w}" stroke-linecap="round" fill="none"${kind === "dash" ? ' stroke-dasharray="4 6"' : ""}/>`;
-      if (kind === "glass") s += `<path d="${d}" stroke="#fff" stroke-opacity=".45" stroke-width="${(w * 0.34).toFixed(2)}" stroke-linecap="round" fill="none"/>`;
       if (kind === "solid") s += `<path d="${d}" stroke="#fff" stroke-width="${(w * 0.3).toFixed(2)}" stroke-linecap="round" fill="none"/>`;
       if (kind === "dots") s += `<path d="${d}" stroke="#fff" stroke-width="${(w * 0.34).toFixed(2)}" stroke-linecap="round" stroke-dasharray="0.1 3.4" fill="none"/>`;
       if (kind === "ties") s += `<path d="${d}" stroke="#fff" stroke-width="${(w * 0.6).toFixed(2)}" stroke-dasharray="2 2.5" fill="none"/>`;
@@ -6432,6 +6474,7 @@
       else if (it.kind === "hill") selectHill(it.hill);
       else if (it.kind === "address") showPlaceCard(it.place);
       else selectStop(it.id);
+      focusPanelHeading();
     };
 
     let lastTransitItems = [];
@@ -10558,14 +10601,29 @@
     else if (!h && (selected || panelView !== "home")) clearSelection({ push: false });
   }
 
+  // When the timetables were built (routes.json meta.built, written by process_gtfs on every
+  // data refresh), so the date on the page moves on by itself when the weekly job publishes.
+  const STALE_DAYS = 14;
+  function dataBuilt() {
+    const b = META && META.built;
+    if (!b || !/^\d{4}-\d{2}-\d{2}$/.test(b)) return null;
+    const [y, m, d] = b.split("-").map(Number);
+    return new Date(Date.UTC(y, m - 1, d, 12));
+  }
+  const builtText = (opts = { month: "short", day: "numeric", year: "numeric" }) => {
+    const d = dataBuilt();
+    return d ? new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", ...opts }).format(d) : "";
+  };
+  const dataAgeDays = () => { const d = dataBuilt(); return d ? Math.floor((Date.now() - d.getTime()) / 86400000) : null; };
   function updateSubtitle() {
     const el = document.getElementById("mapSubtitle");
     if (!el) return;
-    const now = new Date();
-    const m = now.getMonth();
-    const season = m >= 8 && m <= 10 ? "Fall" : m >= 5 && m <= 7 ? "Summer" : m >= 2 && m <= 4 ? "Spring" : "Winter";
-    const year = now.getFullYear();
-    el.textContent = `Every route and stop · ${season} ${year} service`;
+    const age = dataAgeDays();
+    if (age == null) { el.textContent = "Every route and stop"; return; }
+    const stale = age > STALE_DAYS;
+    el.classList.toggle("stale", stale);
+    el.textContent = stale ? `Timetables from ${builtText({ month: "short", day: "numeric" })} · may be out of date` : `Every route and stop · Updated ${builtText({ month: "short", day: "numeric" })}`;
+    el.title = `Timetables built ${builtText()} from the agencies' published schedules`;
   }
 
   // keyboard focus in a sideways-scrolling row of chips: bring the chip into view, clear of the fades
@@ -10594,7 +10652,8 @@
   // ---------------------------------------------------------------- boot
   async function boot() {
     registerProtocols();
-    const getJSON = (u) => fetch(u).then((r) => { if (!r.ok) throw new Error(`${u}: ${r.status}`); return r.json(); });
+    const getJSON = (u) => fetch(u).then((r) => { if (!r.ok) throw new Error(`${u}: ${r.status}`); return r.json(); })
+      .catch((e) => { throw new StartupError("data", `${u}: ${e.message}`); });
     const [routes, net, stops, areas, manifest, live] = await Promise.all([
       getJSON("data/routes.json"), getJSON("data/network.json"), getJSON("data/stops.json"), getJSON("data/areas.json?v=20261106_sdot"),
       getJSON("tiles/manifest.json").catch(() => null), liveTiles(),
@@ -10912,7 +10971,7 @@
     const txt = $("#liveHudText");
     if (!txt) return;
     if (!enabled.has("live")) {
-      txt.textContent = "Vehicles Off";
+      txt.textContent = "Vehicles off";
       $("#liveHud")?.classList.add("off");
       return;
     }
@@ -10923,13 +10982,13 @@
     const count = live.count || 0;
 
     if (mode === "est" || (liveCount === 0 && estCount > 0)) {
-      txt.textContent = count ? `${count} Sched (Timetable)` : "Timetable Fleet";
+      txt.textContent = count ? `${count} on timetable` : "Vehicles from timetable";
     } else if (liveCount > 0 && estCount > 0) {
-      txt.textContent = `${liveCount} Live · ${estCount} Sched`;
+      txt.textContent = `${liveCount} live · ${estCount} estimated`;
     } else if (liveCount > 0) {
-      txt.textContent = `${liveCount} Vehicles Live`;
+      txt.textContent = `${liveCount} vehicles live`;
     } else {
-      txt.textContent = "Live Fleet";
+      txt.textContent = "Live vehicles";
     }
     updateLiveHudStats();
   }
@@ -11126,12 +11185,35 @@
     document.documentElement.setAttribute("data-dark", theme === "dark" ? "1" : "0");
   }
 
-  setupChrome();
-  boot().catch((err) => {
+  // Start-up failures each get their own message: a browser with WebGL turned off (Zen and
+  // some privacy setups do this) used to be told "the map data didn't load".
+  class StartupError extends Error { constructor(kind, msg) { super(msg); this.kind = kind; } }
+  function webglAvailable() {
+    try {
+      const c = document.createElement("canvas");
+      return !!(c.getContext("webgl2") || c.getContext("webgl"));
+    } catch (e) { return false; }
+  }
+  const STARTUP_MESSAGES = {
+    webgl: "This map needs WebGL, which is turned off in this browser. Turn on hardware acceleration (or set webgl.disabled to false in about:config in Firefox-based browsers like Zen), then reload.",
+    maplibre: "The map library didn't load. A content blocker or network filter may be blocking it. Allow cdnjs.cloudflare.com or cdn.jsdelivr.net, then reload.",
+    data: "The map data didn't load. Check your connection and reload the page to try again.",
+    other: "Something went wrong while starting the map. Reload the page to try again.",
+  };
+  function showStartupError(err) {
     console.error(err);
     const l = $("#loading");
     l.hidden = false;
     l.classList.remove("done");
-    l.querySelector(".pill").textContent = "The map data didn't load. Reload the page to try again.";
-  });
+    l.classList.add("failed");
+    const kind = err && err.kind ? err.kind : /webgl/i.test(String(err && err.message)) ? "webgl" : "other";
+    const pill = l.querySelector(".pill");
+    pill.setAttribute("role", "alert");
+    pill.textContent = STARTUP_MESSAGES[kind] || STARTUP_MESSAGES.other;
+    l.dataset.error = kind;
+  }
+  setupChrome();
+  if (typeof maplibregl === "undefined") showStartupError(new StartupError("maplibre", "maplibregl is not defined"));
+  else if (!webglAvailable()) showStartupError(new StartupError("webgl", "WebGL is unavailable"));
+  else boot().catch(showStartupError);
 })();
