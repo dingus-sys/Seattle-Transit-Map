@@ -39,7 +39,14 @@ jobs:
           git add site
           if git diff --cached --quiet; then echo "No changes"; exit 0; fi
           git commit -m "Refresh transit data $(date -u +%Y-%m-%d)"
-          git push
+          # main may have moved during the ~35-minute build: rebase onto it and retry, so a
+          # push from someone else doesn't throw the whole refresh away
+          for i in 1 2 3 4; do
+            git push && break
+            if [ "$i" = 4 ]; then echo "push failed after 4 tries"; exit 1; fi
+            sleep $((i * 10))
+            git pull --rebase origin main
+          done
           gh workflow run pages.yml --ref main
         env:
           GH_TOKEN: ${{ github.token }}

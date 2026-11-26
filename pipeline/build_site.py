@@ -17,13 +17,11 @@ import os
 import re
 import shutil
 import sys
-import urllib.request
 
 sys.path.insert(0, os.path.dirname(__file__))
 from config import (CACHE, FEEDS, LIVE_FEEDS, OBA_AGENCIES, OBA_ALERTS, OBA_BASE, OBA_DEPARTURES,  # noqa: E402
-                    OBA_REST_POSITIONS, OBA_STATUS, ROOT, SITE, WSF_API, WSDOT_ALERTS, oba_key, wsf_code, wsdot_code)
+                    OBA_REST_POSITIONS, OBA_STATUS, ROOT, SITE, WSF_API, WSDOT_ALERTS, live_proxy, oba_key, wsf_code, wsdot_code)
 
-MAPLIBRE_CSS_URL = "https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.css"
 KEY_PLACEHOLDER = "__OBA_API_KEY__"
 WSF_PLACEHOLDER = "__WSF_ACCESS_CODE__"
 WSDOT_PLACEHOLDER = "__WSDOT_ACCESS_CODE__"
@@ -44,11 +42,9 @@ def preload_urls(js):
 
 
 def maplibre_css():
-    path = os.path.join(CACHE, "vendor", "maplibre-gl.css")
-    if not os.path.exists(path):
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        urllib.request.urlretrieve(MAPLIBRE_CSS_URL, path)
-    return open(path).read()
+    """MapLibre's stylesheet (4.7.1), kept in web/vendor so a build needs no network. It must match
+    the maplibre-gl.js version the page loads (web/page.html)."""
+    return open(os.path.join(ROOT, "web", "vendor", "maplibre-gl.css")).read()
 
 
 def version(data):
@@ -85,10 +81,15 @@ def live_js(with_key):
     # The API key never goes into the repository: index.html carries a placeholder that the
     # GitHub Pages builds with --with-key and environment secrets; default builds use
     # placeholders. Local --with-key builds can also read pipeline/local_secrets.json.
-    key = oba_key() if with_key else KEY_PLACEHOLDER
-    wsf = (wsf_code() or "") if with_key else WSF_PLACEHOLDER
-    wsdot = (wsdot_code() or "") if with_key else WSDOT_PLACEHOLDER
-    return " window.ATLAS_LIVE = " + json.dumps({"key": key, "base": OBA_BASE, "status": OBA_STATUS, "agencies": OBA_AGENCIES,
+    # With a live proxy (worker/live-proxy.js) no key is written at all, even with --with-key.
+    proxy = live_proxy()
+    if proxy:
+        key, wsf, wsdot = KEY_PLACEHOLDER, WSF_PLACEHOLDER, WSDOT_PLACEHOLDER
+    else:
+        key = oba_key() if with_key else KEY_PLACEHOLDER
+        wsf = (wsf_code() or "") if with_key else WSF_PLACEHOLDER
+        wsdot = (wsdot_code() or "") if with_key else WSDOT_PLACEHOLDER
+    return " window.ATLAS_LIVE = " + json.dumps({"key": key, **({"proxy": proxy} if proxy else {}), "base": OBA_BASE, "status": OBA_STATUS, "agencies": OBA_AGENCIES,
                                                  "feeds": LIVE_FEEDS, "alerts": OBA_ALERTS, "rest": OBA_REST_POSITIONS,
                                                  "deps": OBA_DEPARTURES,
                                                  # stop ids read "<feed>-<the agency's own id>"; OneBusAway calls the
@@ -114,7 +115,8 @@ def build_artifact(page, css, js, geom, ribbons, logos):
 
 def build_website(page, css, js, geom, ribbons, logos, with_key):
     """index.html plus app.css, app.js, geom.js and logos/ beside it."""
-    for name, text in (("app.css", css), ("app.js", js), ("geom.js", geom), ("ribbons.js", ribbons)):
+    mlcss = maplibre_css()
+    for name, text in (("app.css", css), ("app.js", js), ("geom.js", geom), ("ribbons.js", ribbons), ("maplibre-gl.css", mlcss)):
         with open(os.path.join(SITE, name), "w") as output:
             output.write(text)
     logo_dir = os.path.join(SITE, "logos")
@@ -126,7 +128,7 @@ def build_website(page, css, js, geom, ribbons, logos, with_key):
         urls[name] = f"logos/{f}?v={version(data)}"
 
     preload = "".join(f'<link rel="preload" href="{u}" as="fetch" crossorigin>\n' for u in preload_urls(js))
-    body = sub(page, "<style>/*MAPLIBRE_CSS*/</style>", f'{preload}<link rel="stylesheet" href="{MAPLIBRE_CSS_URL}">')
+    body = sub(page, "<style>/*MAPLIBRE_CSS*/</style>", f'{preload}<link rel="stylesheet" href="maplibre-gl.css?v={version(mlcss)}">')
     body = sub(body, "<style>/*APP_CSS*/</style>", f'<link rel="stylesheet" href="app.css?v={version(css)}">')
     body = sub(body, "<script>/*LOGOS*/</script>", f"<script>{logos_js(urls)}</script>")
     # the geometry engine runs on the page and, from the same file, as a background worker

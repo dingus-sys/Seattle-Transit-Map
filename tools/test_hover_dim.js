@@ -8,16 +8,13 @@ const SITE = process.env.SITE || 'http://127.0.0.1:8765';
 const MAPLIBRE_JS = process.env.MAPLIBRE_JS || '';
 
 async function run() {
-  let pw;
-  try { pw = require('playwright'); } catch (e) {
-    pw = require(path.join(process.env.HOME || '', '.npm/_npx/e41f203b7505f1fb/node_modules/playwright'));
-  }
+  const pw = require('./pw').loadPlaywright();
   const browser = await pw.chromium.launch({ ...(process.env.HTTPS_PROXY ? { proxy: { server: process.env.HTTPS_PROXY, bypass: '127.0.0.1,localhost' } } : {}) });
   const results = [];
   const check = (name, ok, info = '') => { results.push(ok); console.log(`${ok ? 'PASS' : 'FAIL'}: ${name}${info ? ' (' + info + ')' : ''}`); };
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 820 } });
-    if (MAPLIBRE_JS) await page.route('https://cdnjs.cloudflare.com/**/maplibre-gl.js', (r) => r.fulfill({ path: MAPLIBRE_JS, contentType: 'application/javascript' }));
+    if (MAPLIBRE_JS) await page.route(/maplibre-gl\.js$/, (r) => r.fulfill({ path: MAPLIBRE_JS, contentType: 'application/javascript', headers: { 'Access-Control-Allow-Origin': '*' } }));
     await page.route('https://tiles.openfreemap.org/**', (r) => r.abort());
     await page.route('https://api.pugetsound.onebusaway.org/**', (r) => r.abort());
     const errors = [];
@@ -52,9 +49,9 @@ async function run() {
     await page.mouse.move(pt.x, pt.y, { steps: 5 });
     await page.waitForTimeout(600);
     const on = await state();
-    check('hovering a line fades the rest of the network to 0.65', on.dim.to === 0.65 && Math.abs(on.dim.v - 0.65) < 0.01, `v=${on.dim.v.toFixed(3)}`);
+    check('hovering a line fades the rest of the network to 0.5', on.dim.to === 0.5 && Math.abs(on.dim.v - 0.5) < 0.01, `v=${on.dim.v.toFixed(3)}`);
     check('the hovered route stays bright', (on.dim.ids || []).length >= 1, (on.dim.ids || []).join(','));
-    check('other route tags and stations fade', on.badges === 0.65 && on.stops === 0.65, `tags=${on.badges}, stations=${on.stops}`);
+    check('other route tags and stations fade', on.badges === 0.5 && on.stops === 0.5, `tags=${on.badges}, stations=${on.stops}`);
     check("the hovered route's own tags are redrawn at full strength", on.hovTags.some((n) => n > 0) && on.hovTagOpacity.includes(1), JSON.stringify(on.hovTags));
 
     await page.mouse.move(200, 45, { steps: 4 });
@@ -74,7 +71,7 @@ async function run() {
     await page.waitForTimeout(900);
     const themedOff = await state();
     check('theme switch mid-hover keeps the fade, and leaving restores full strength',
-      themed.dim.to === 0.65 && themedOff.dim.to === 1 && themedOff.badges === 1 && themedOff.stops === 1,
+      themed.dim.to === 0.5 && themedOff.dim.to === 1 && themedOff.badges === 1 && themedOff.stops === 1,
       `during=${themed.dim.to}, after: tags=${themedOff.badges}, stations=${themedOff.stops}`);
 
     // with a route selected, hovering another line must not dim the map further

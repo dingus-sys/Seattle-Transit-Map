@@ -6,9 +6,13 @@
 // Usage (site served on :8765): node tools/test_hover_release.js
 const SITE = process.env.SITE || 'http://127.0.0.1:8765';
 const MAPLIBRE_JS = process.env.MAPLIBRE_JS || '';
-// CI runners draw the map in software and run ~1.7x slower than a laptop: the limits there stay
-// below the old behaviour (~250 ms to start, ~430 ms to finish) but allow for the slower frames
-const START_MAX = process.env.CI ? 220 : 100, GONE_MAX = process.env.CI ? 400 : 280;
+// Limits are counted in this browser's own frames: headless Chrome draws the map in software, and
+// a busy CI runner can take 50+ ms a frame, so fixed milliseconds made this test fail on slow
+// machines while the page behaved the same. "Starts within a few frames" = 4 frames (+40 ms for
+// the pointer event to land); "gone" = the 150 ms fade plus 6 frames. On a 60 Hz laptop that is
+// about 105 ms and 290 ms, still well under the old behaviour (~250 ms / ~430 ms).
+const FADE_MS = 150; // hoverFade(slot, 0, 140-150) in web/app.js
+const limits = (frame) => ({ start: 40 + 4 * frame, gone: 40 + FADE_MS + 6 * frame });
 
 (async () => {
   const { chromium } = require('playwright');
@@ -17,7 +21,7 @@ const START_MAX = process.env.CI ? 220 : 100, GONE_MAX = process.env.CI ? 400 : 
   const check = (name, ok, info = '') => { results.push(ok); console.log(`${ok ? 'PASS' : 'FAIL'}: ${name}${info ? ' (' + info + ')' : ''}`); };
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 820 } });
-    if (MAPLIBRE_JS) await page.route('https://cdnjs.cloudflare.com/**/maplibre-gl.js', (r) => r.fulfill({ path: MAPLIBRE_JS, contentType: 'application/javascript' }));
+    if (MAPLIBRE_JS) await page.route(/maplibre-gl\.js$/, (r) => r.fulfill({ path: MAPLIBRE_JS, contentType: 'application/javascript', headers: { 'Access-Control-Allow-Origin': '*' } }));
     await page.route('https://tiles.openfreemap.org/**', (r) => r.abort());
     await page.route('https://api.pugetsound.onebusaway.org/**', (r) => r.abort());
     const errors = [];
@@ -80,7 +84,9 @@ const START_MAX = process.env.CI ? 220 : 100, GONE_MAX = process.env.CI ? 400 : 
         if (start === null && r.to[old] === 0) start = r.t - res.last;
         if (gone === null && r.v[old] < 0.1) gone = r.t - res.last;
       }
-      return { start, gone };
+      const dts = res.rows.slice(1).map((r, i) => r.t - res.rows[i].t).sort((a, b) => a - b);
+      const frame = dts.length ? dts[Math.floor(dts.length / 2)] : 16.7;
+      return { start, gone, frame };
     };
 
     const offs = [], swaps = [];
@@ -95,11 +101,13 @@ const START_MAX = process.env.CI ? 220 : 100, GONE_MAX = process.env.CI ? 400 : 
       await page.waitForTimeout(400);
       await page.mouse.move(empty.x, empty.y); await page.waitForTimeout(500);
     }
-    const fmt = (xs) => xs.map((x) => `${x.start == null ? '-' : Math.round(x.start)}/${x.gone == null ? '-' : Math.round(x.gone)}`).join(' ');
-    check('off a route: the highlight starts fading within a few frames (was ~250 ms)', offs.every((x) => x.start != null && x.start <= START_MAX), 'start/gone ms ' + fmt(offs));
-    check(`off a route: the highlight is gone within ${GONE_MAX} ms (was ~430 ms)`, offs.every((x) => x.gone != null && x.gone <= GONE_MAX), fmt(offs));
-    check('onto another route: the old highlight starts fading within a few frames', swaps.every((x) => x.start != null && x.start <= START_MAX), fmt(swaps));
-    check(`onto another route: the old highlight is gone within ${GONE_MAX} ms`, swaps.every((x) => x.gone != null && x.gone <= GONE_MAX), fmt(swaps));
+    const fmt = (xs) => xs.map((x) => `${x.start == null ? '-' : Math.round(x.start)}/${x.gone == null ? '-' : Math.round(x.gone)} (frame ${Math.round(x.frame)} ms)`).join(' ');
+    const startOk = (x) => x.start != null && x.start <= limits(x.frame).start;
+    const goneOk = (x) => x.gone != null && x.gone <= limits(x.frame).gone;
+    check('off a route: the highlight starts fading within a few frames (was ~250 ms)', offs.every(startOk), 'start/gone ms ' + fmt(offs));
+    check('off a route: the highlight is gone within the fade plus a few frames (was ~430 ms)', offs.every(goneOk), fmt(offs));
+    check('onto another route: the old highlight starts fading within a few frames', swaps.every(startOk), fmt(swaps));
+    check('onto another route: the old highlight is gone within the fade plus a few frames', swaps.every(goneOk), fmt(swaps));
     check('onto another route: that route takes the hover', swaps.every((x) => x.key.includes(pts[1].id)), swaps.map((x) => x.key).join(' '));
     check('no page errors', errors.length === 0, errors.join(' | '));
   } catch (e) {

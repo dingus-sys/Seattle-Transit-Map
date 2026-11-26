@@ -1,5 +1,5 @@
 // Hover and selection dimming work together:
-// - hovering a route bolds it and fades everything else gently (HOVER_DIM, about 65%) through
+// - hovering a route bolds it and fades everything else gently (HOVER_DIM, about 50%) through
 //   setHoverDim, never through setNetDim (the selection's stronger dim);
 // - clicking a route dims the network to 0.38 (setNetDim), and while that is on, hover adds no
 //   extra fade on top. Browser behavior is checked in tools/test_hover_dim.js.

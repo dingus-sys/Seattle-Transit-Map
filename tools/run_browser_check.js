@@ -15,8 +15,8 @@ async function runInPage(scriptPath, options = {}) {
     pw = require('playwright');
   } catch (e) {
     // Attempt standard cached paths if NODE_PATH wasn't set
+    try { pw = require('./pw').loadPlaywright(); } catch (_) { /* below */ }
     const candidates = [
-      path.join(process.env.HOME || '', '.npm/_npx/e41f203b7505f1fb/node_modules/playwright'),
       path.join(process.env.HOME || '', 'Library/Caches/ms-playwright'),
     ];
     for (const c of candidates) {
@@ -38,7 +38,7 @@ async function runInPage(scriptPath, options = {}) {
   try {
     const ctx = await browser.newContext({ viewport, deviceScaleFactor: 1 });
     const page = await ctx.newPage();
-    if (MAPLIBRE_JS) await page.route('https://cdnjs.cloudflare.com/**/maplibre-gl.js', (r) => r.fulfill({ path: MAPLIBRE_JS, contentType: 'application/javascript' }));
+    if (MAPLIBRE_JS) await page.route(/maplibre-gl\.js$/, (r) => r.fulfill({ path: MAPLIBRE_JS, contentType: 'application/javascript', headers: { 'Access-Control-Allow-Origin': '*' } }));
     await page.route('https://tiles.openfreemap.org/**', (r) => r.abort());
     await page.route('https://api.pugetsound.onebusaway.org/**', (r) => r.abort());
 

@@ -14,9 +14,12 @@ async function open(browser, viewport, hash = '', scheme = 'light') {
   const ctx = await browser.newContext({ viewport, deviceScaleFactor: 1, colorScheme: scheme });
   const page = await ctx.newPage();
   page.errors = [];
-  page.on('console', (m) => { if (m.type() === 'error' && !/ERR_FAILED/.test(m.text())) page.errors.push(m.text()); });
+  page.on('console', (m) => { if (m.type() === 'error' && !/ERR_FAILED|ERR_BLOCKED_BY_CLIENT|ERR_TUNNEL|ERR_INTERNET_DISCONNECTED/.test(m.text())) page.errors.push(m.text()); });
   page.on('pageerror', (e) => page.errors.push('pageerror: ' + e.message));
-  if (MAPLIBRE_JS) await page.route('https://cdnjs.cloudflare.com/**/maplibre-gl.js', (r) => r.fulfill({ path: MAPLIBRE_JS, contentType: 'application/javascript' }));
+  // Sealed from the network: only the local site and the MapLibre CDNs answer, so a slow or
+  // blocked outside host can't fail the "no console errors" checks. Routes added later win.
+  await page.route(/^https?:\/\/(?!127\.0\.0\.1|localhost|cdnjs\.cloudflare\.com|cdn\.jsdelivr\.net)/, (r) => r.abort());
+  if (MAPLIBRE_JS) await page.route(/maplibre-gl\.js$/, (r) => r.fulfill({ path: MAPLIBRE_JS, contentType: 'application/javascript', headers: { 'Access-Control-Allow-Origin': '*' } }));
   await page.route('https://tiles.openfreemap.org/**', (r) => r.abort());
   await page.route('https://api.pugetsound.onebusaway.org/**', (r) => r.abort());
   await page.goto(SITE + '/index.html' + hash, { waitUntil: 'load' });
