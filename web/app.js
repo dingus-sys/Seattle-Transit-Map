@@ -11199,7 +11199,7 @@
     } catch (e) { return false; }
   }
   const STARTUP_MESSAGES = {
-    webgl: "This map needs WebGL, which is turned off in this browser. Turn on hardware acceleration (or set webgl.disabled to false in about:config in Firefox-based browsers like Zen), then reload.",
+    webgl: "This map needs WebGL, which this browser has turned off. Turn on hardware acceleration in the browser's settings and restart it. In Firefox-based browsers like Zen, about:support (Graphics, WebGL) says why; setting webgl.force-enabled to true in about:config and restarting usually fixes it.",
     maplibre: "The map library didn't load. A content blocker or network filter may be blocking it. Allow cdnjs.cloudflare.com or cdn.jsdelivr.net, then reload.",
     data: "The map data didn't load. Check your connection and reload the page to try again.",
     other: "Something went wrong while starting the map. Reload the page to try again.",
