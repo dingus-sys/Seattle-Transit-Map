@@ -10067,7 +10067,10 @@
         handleMapClickForDirections(e.lngLat);
         return;
       }
-      if (enabled.has("pois")) {
+      // a tap right on a station's circle opens the station, even with a train, bus or place label beside it
+      const onStation = map.getLayer("stations") && map.getLayoutProperty("stations", "visibility") !== "none"
+        ? map.queryRenderedFeatures([[e.point.x - 4, e.point.y - 4], [e.point.x + 4, e.point.y + 4]], { layers: ["stations"] }) : [];
+      if (enabled.has("pois") && !onStation.length) {
         const destHits = map.queryRenderedFeatures([[e.point.x - 10, e.point.y - 10], [e.point.x + 10, e.point.y + 10]], {
           layers: DESTINATION_LAYER_IDS.filter((l) => map.getLayer(l))
         });
@@ -10087,9 +10090,6 @@
           return;
         }
       }
-      // a tap right on a station's circle opens the station, even with a train or bus on top of it
-      const onStation = map.getLayer("stations") && map.getLayoutProperty("stations", "visibility") !== "none"
-        ? map.queryRenderedFeatures([[e.point.x - 4, e.point.y - 4], [e.point.x + 4, e.point.y + 4]], { layers: ["stations"] }) : [];
       if (onStation.length) {
         if (selected && selected.type === "route" && typeof handleRouteStopClick === "function" && handleRouteStopClick(onStation[0].properties.id)) return;
         selectStop(onStation[0].properties.id, { fly: false });
