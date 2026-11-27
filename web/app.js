@@ -20,10 +20,12 @@
   const liveConfig = ((c) => {
     if (!c || typeof c.proxy !== "string" || !/^https:\/\//.test(c.proxy)) return c;
     const p = c.proxy.replace(/\/+$/, "");
-    const via = (u) => typeof u === "string" ? u.replace("https://api.pugetsound.onebusaway.org", `${p}/oba`).replace("https://www.wsdot.wa.gov", `${p}/wsdot`) : u;
+    const via = (u) => typeof u === "string" ? u.replace("https://api.pugetsound.onebusaway.org", `${p}/oba`).replace("https://www.wsdot.wa.gov", `${p}/wsdot`)
+      .replace("https://strweb.skagittransit.org", `${p}/skagit`) : u;
     return { ...c, key: "proxy", base: via(c.base), status: via(c.status), alerts: via(c.alerts), deps: via(c.deps),
+      feeds: (c.feeds || []).map((f) => f.proxy ? { ...f, url: via(f.url), alerts: via(f.alerts) } : f),
       wsf: c.wsf && { ...c.wsf, base: via(c.wsf.base), code: "proxy" }, wsdot: c.wsdot && { ...c.wsdot, alerts: via(c.wsdot.alerts), code: "proxy" } };
-  })(window.ATLAS_LIVE);
+  })(window.ATLAS_LIVE && { ...window.ATLAS_LIVE, feeds: (window.ATLAS_LIVE.feeds || []).filter((f) => !f.proxy || window.ATLAS_LIVE.proxy) });
   const LIVE = liveConfig && (hasCode(liveConfig.key) || hasCode(liveConfig.wsf?.code) || hasCode(liveConfig.wsdot?.code))
     ? { ...liveConfig, key: hasCode(liveConfig.key) ? liveConfig.key : "" } : null;
   const $ = (s, el = document) => el.querySelector(s);

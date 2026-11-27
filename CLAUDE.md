@@ -74,7 +74,8 @@ node tools/sweep.js                           # 51 checks: expect "51/51 passed"
 node tools/test_hover_cards.js                # 13 checks: +N tag & stop safe bridge micro-traversals
 node tools/test_hover_dim.js                  # 10 checks: hover fades the rest to 0.5, selection's 0.38 wins
 node tools/test_hover_release.js              # 7 checks: the old highlight lets go within a few frames (limits in frames)
-node tools/test_live_proxy.mjs                # 9 checks: the key proxy swaps in keys, refuses other sites and paths
+node tools/test_live_proxy.mjs                # 11 checks: the key proxy swaps in keys, refuses other sites and paths
+node tools/test_small_agency_live.js          # 3 checks: Island, WTA and Skagit (via the proxy) vehicles land on their routes
 node tools/stress_test_routing.js             # 18 planner tests: every leg timetabled, 2-min buffers, walk caps
 node tools/test_audit_planner.js              # 9 checks: dwell, minimum transfers, stay-aboard, headsign, Arrive-by midnight/now
 node tools/test_audit_browser.js              # 20 checks: no walk over water, ferry cards, Night Owl, alerts, WSF bulletins, Cascades clock
@@ -194,6 +195,8 @@ stays on the main thread.
 **Live data:** vehicle positions and service alerts from OneBusAway Puget Sound (GTFS-realtime,
 decoded by hand in `app.js`; agencies in `OBA_AGENCIES`), Intercity Transit's own feeds, and
 Washington State Ferries boats from OneBusAway's REST feed (the realtime feed lacks the route).
+Island Transit (Passio) and WTA come from their own open feeds; Skagit Transit's feed blocks
+browser requests, so it goes through the live proxy (`LIVE_FEEDS` entries with `proxy: true`).
 Each polling round starts at a different agency, and a rate-limit answer skips the rest of
 OneBusAway that round. Vehicles also carry how busy they are (occupancy, read from both the
 realtime feed and the REST status), and a stop card first shows the timetable, then swaps in the
