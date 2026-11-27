@@ -933,6 +933,10 @@ const KCTMGeom = (() => {
                 hm: water || c.inner === "glass" && Lo.rl.get(v).length > 1 ? 0 : w * hrOf(c),
                 sh: water ? 0 : w + 0.55 * Lo.s, ws: w * S, n: Lo.rl.get(v).length,
                 g: c.group, c: color(v), s: 20 - c.prio, d: c.dash ? 1 : 0, h: HMODE[c.inner] || 0,
+                // each route's strand in this band: "route:metres to the right of the band's centre
+                // line, looking along the line as drawn", so the page can tell which route is under
+                // the pointer instead of treating the band as one shared street
+                so: water ? "" : Lo.rl.get(v).map((i) => i + ":" + ((st.fwd ? 1 : -1) * (Lo.sp.get(i) - Lo.pos.get(v)) * S).toFixed(1)).join(","),
                 ar: water || (arrowFor(st.E) || v) !== v ? 0 : arrow(st.E.kdir.get(v), st.fwd) },
                 geometry: { type: "LineString", coordinates: coords.map(toLL) } });
             }, water, !water, easeAt);

@@ -74,6 +74,10 @@ node tools/sweep.js                           # 51 checks: expect "51/51 passed"
 node tools/test_hover_cards.js                # 13 checks: +N tag & stop safe bridge micro-traversals
 node tools/test_hover_dim.js                  # 11 checks: hover fades the rest to 0.5 (0.32 for dashed routes), selection's 0.38 wins
 node tools/test_hover_release.js              # 7 checks: the old highlight lets go within a few frames (limits in frames)
+node tools/test_hover_whole_route.js          # 27 checks over 9 areas: every strand picks its own route, hover lights
+                                              #   every edge the route is drawn on, real mouse moves light the whole route
+node tools/test_hover_trace.js                # 4 checks: pointer walked along 128/8/106/5 never lets go or goes street-only
+node tools/test_live_tracking.js              # 7 checks: a fake noisy WTA bus stays on its line, never backwards or perpendicular
 node tools/test_live_proxy.mjs                # 11 checks: the key proxy swaps in keys, refuses other sites and paths
 node tools/test_small_agency_live.js          # 3 checks: Island, WTA and Skagit (via the proxy) vehicles land on their routes
 node tools/stress_test_routing.js             # 18 planner tests: every leg timetabled, 2-min buffers, walk caps
@@ -161,6 +165,13 @@ one file for the artifact):
   map's brightening waits `HOVER_GRACE` 60 ms, so crossing to a neighbouring line doesn't flash the
   network), and a new target fades the old one before its path arrives from the worker. Recent
   hover paths are cached per layout (`routeCache`). `__atlas.hoverState()` exposes the two slots.
+- Strands inside a band: each band feature carries `so` ("idx:offset,..." in metres, right of the
+  drawn direction), so `pickLine` picks the route strand under the pointer (`offsetIn`) and lights
+  that whole route. `streetRoutes(f)` is every route on the edge of every type (rush-hour included),
+  so never use it to decide whether a band is shared: that made 72 and 128 light one block (Nov 27).
+  Hold rules: the held route wins only when it is under the pointer or within 1.5 px (or 1 px of the
+  best), never against a line that is under the pointer. Pointing at a stop or place label on the lit
+  route keeps the route lit (`onFocusLine`). `window.__atlasPick(pt)` is the test hook.
 - Overview one-way arrows: where the one-way service types on a street all go the same way, only
   the most important one carries chevrons (`arrowFor` in `geom.js`), one row per bundle.
 - Shared-band hover highlights the street only. Tapping a band opens `showCorridor`: all visible
@@ -205,6 +216,12 @@ agency's predicted departures (OneBusAway `arrivals-and-departures-for-stop`, on
 WSDOT access code and is called with JSONP. Places (parks, schools, museums, zoo...) come from
 the map tiles; the bundled tiles keep only named places of the kinds in `POI_KEEP`
 (`build_basemap.py`). Highway shields work from the bundled tiles too.
+- Live vehicles ride their route (`placeOnPath`): each fix is matched to the route's schedule
+  patterns (direction from the last fix and the GPS bearing; bearing 0 means unknown), the marker
+  glides along the path between fixes (never a straight line that cuts corners), faces along the
+  path, and shows no pointer until the direction is known. Small backward GPS drift holds still; a
+  big jump teleports. A bus missing from one answer is kept 60 s, and markers fade in and out over
+  500 ms. Live and estimated vehicles share one 180 s freshness window (no swap at 90 s).
 
 ## Timetable and planner notes (audit of Nov 25, 2026)
 

@@ -58,3 +58,6 @@ jobs:
           node tools/sweep.js
           node tools/test_hover_cards.js
           node tools/test_hover_release.js
+          node tools/test_hover_whole_route.js
+          node tools/test_hover_trace.js
+          node tools/test_live_tracking.js
