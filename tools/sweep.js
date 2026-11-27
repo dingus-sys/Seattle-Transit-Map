@@ -167,8 +167,10 @@ const idle = (page) => page.evaluate(() => new Promise((res) => { const m = wind
   });
   if (st) {
     await page.mouse.click(st.x, st.y);
-    await page.waitForTimeout(500);
+    // a slow runner can take more than half a second to draw the card
+    await page.waitForFunction(() => /Westlake/.test(document.querySelector('.hero h2')?.textContent || ''), null, { timeout: 4000 }).catch(() => {});
     const t = await page.locator('.hero h2').innerText().catch(() => '');
+    if (!/Westlake/.test(t)) console.log('station click debug:', await page.evaluate(() => ({ popup: document.querySelector('.maplibregl-popup')?.textContent?.slice(0, 80) || null, hash: location.hash })));
     check('clicking a station opens its card', /Westlake/.test(t), t);
     check('station lists nearby buses', /short walk/.test(await page.locator('.view').innerText()));
   } else check('station visible to click', false);
