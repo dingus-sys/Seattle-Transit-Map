@@ -63,7 +63,9 @@ const KCTMRibbons = (() => {
       if (!hover && !selected && p.sh > 0) stroke("shadow", p.sh + 0.8);
       if (!p.d || p.g !== "water") stroke("case", p.cm * widthScale * (hover ? 0.97 : 1));
       const w = p.wm * widthScale;
-      stroke(p.d ? "dash" : "body", w, p.d ? 1 : 0, !p.d);
+      // A hovered rush-hour route is drawn solid: a dashed line gets lost among the rest.
+      const dashed = p.d && !(hover && p.g !== "water");
+      stroke(dashed ? "dash" : "body", w, dashed ? 1 : 0, !dashed);
       if (!hover && !p.d && p.hm > 0) stroke(p.h === 3 ? "dots" : p.h === 4 ? "ties" : "shine", p.hm, p.h === 3 ? 2 : p.h === 4 ? 3 : 0, p.h !== 4);
     }
     const order = ["shadow", "glow", "case", "body", "dash", "shine", "dots", "ties"];

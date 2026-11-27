@@ -72,11 +72,12 @@ async function run() {
       const card = (r) => A.routeDeparturesCardHTML(r, stop, (r.patterns || [])[0], { list: [{ t: 600, isLive: false, toName: 'Bremerton', timeText: '10 min' }] });
       return {
         rows: rows.list.map((d) => d.toName), n: rows.list.length,
-        ktTag: /Kitsap/.test(card(kt)) && !/WSF/.test(card(kt)), wsfTag: /WSF Ferry/.test(card(wsf)),
+        // the operator shows once in the route header, not as a tag on every departure row
+        noRowTag: ![kt, wsf].some((r) => /class="rd-agency|WSF Ferry|KITSAP|METRO BUS/i.test(card(r))),
       };
     });
     check('the Bainbridge route card at Colman Dock lists only Bainbridge sailings', ferry.n === 0 || ferry.rows.every((n) => !/bremerton/i.test(n)), JSON.stringify(ferry.rows));
-    check("Kitsap's fast ferry is labelled Kitsap, WSF's Bremerton boat WSF", ferry.ktTag && ferry.wsfTag);
+    check('departure rows carry no repeated operator tag (Kitsap fast ferry, WSF Bremerton)', ferry.noRowTag);
 
     // ---- 17: Night Owl comes from trips running between midnight and 5 AM
     const owl = await page.evaluate(() => {
