@@ -53,7 +53,8 @@ const angle = (a, b) => Math.abs((((b - a) % 360) + 540) % 360 - 180);
   const check = (name, ok, info = '') => { results.push(ok); console.log(`${ok ? 'PASS' : 'FAIL'}: ${name}${info ? ' (' + info + ')' : ''}`); };
   try {
     const page = await (await browser.newContext({ serviceWorkers: 'block', viewport: { width: 1100, height: 800 } })).newPage();
-    await page.route(/^https:\/\//, (r) => r.abort());
+    // everything off the network but MapLibre itself (CI loads it from the CDN; MAPLIBRE_JS overrides)
+    await page.route(/^https:\/\//, (r) => (/maplibre-gl/.test(r.request().url()) ? r.continue() : r.abort()));
     if (MAPLIBRE_JS) await page.route(/maplibre-gl\.js$/, (r) => r.fulfill({ path: MAPLIBRE_JS, contentType: 'application/javascript', headers: { 'Access-Control-Allow-Origin': '*' } }));
     let fix = null;
     await page.route('https://bustracker.ridewta.com/gtfsrt/vehicles', (r) => r.fulfill({ body: feed(fix), contentType: 'application/x-protobuf', headers: { 'Access-Control-Allow-Origin': '*' } }));

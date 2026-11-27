@@ -25,7 +25,8 @@ const SAMPLE = +process.env.SAMPLE || 12; // real pointer moves per view
   const check = (name, ok, info = '') => { results.push(ok); console.log(`${ok ? 'PASS' : 'FAIL'}: ${name}${info ? ' (' + info + ')' : ''}`); };
   try {
     const page = await (await browser.newContext({ serviceWorkers: 'block', viewport: { width: 1280, height: 820 } })).newPage();
-    await page.route(/^https:\/\//, (r) => r.abort());
+    // everything off the network but MapLibre itself (CI loads it from the CDN; MAPLIBRE_JS overrides)
+    await page.route(/^https:\/\//, (r) => (/maplibre-gl/.test(r.request().url()) ? r.continue() : r.abort()));
     if (MAPLIBRE_JS) await page.route(/maplibre-gl\.js$/, (r) => r.fulfill({ path: MAPLIBRE_JS, contentType: 'application/javascript', headers: { 'Access-Control-Allow-Origin': '*' } }));
     await page.addInitScript(() => { try { localStorage.clear(); localStorage.setItem('kctm:layers2', JSON.stringify(['link', 'rail', 'streetcar', 'monorail', 'rapid', 'frequent', 'local', 'peak', 'water', 'dart', 'flex', 'stops'])); } catch (e) {} });
     await page.goto(SITE + '/index.html');
