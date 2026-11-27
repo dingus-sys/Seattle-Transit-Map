@@ -2934,8 +2934,11 @@
         return `Live GPS & timetable · ${liveCount} live, ${estCount} scheduled · updated ${sec < 5 ? "just now" : sec + " s ago"}`;
       } else if (liveCount > 0) {
         return `Live GPS · ${liveCount} vehicles on map · updated ${sec < 5 ? "just now" : sec + " s ago"}`;
-      } else {
+      } else if (estCount > 0) {
         return `Estimated from timetable · ${estCount} vehicles on map`;
+      } else {
+        // live feeds are working; there's just nothing running in this part of the map
+        return `Live GPS · no vehicles in view · updated ${sec < 5 ? "just now" : sec + " s ago"}`;
       }
     }
     if (mode === "est") {
