@@ -65,7 +65,7 @@ const idle = (page) => page.evaluate(() => new Promise((res) => { const m = wind
   check('selected route stops popped out', (await page.evaluate(() => window.__map.getSource('selstops')._data.features.length)) > 5,
     String(await page.evaluate(() => window.__map.getSource('selstops')._data.features.length)));
   {
-    const pt = await page.evaluate(() => { const m = window.__map, W = m.getCanvas().clientWidth, H = m.getCanvas().clientHeight; const f = m.getSource('selstops')._data.features.find((x) => { const p = m.project(x.geometry.coordinates); return p.x > 460 && p.x < W - 120 && p.y > 80 && p.y < H - 80; }) || m.getSource('selstops')._data.features[3]; const p = m.project(f.geometry.coordinates); return [p.x, p.y, f.properties.name]; });
+    const pt = await page.evaluate(() => { const m = window.__map, W = m.getCanvas().clientWidth, H = m.getCanvas().clientHeight; const veh = ((m.getSource('vehicles') || {})._data || {}).features || [], vp = veh.map((v) => m.project(v.geometry.coordinates)); /* a bus estimated at the stop right now would take the hover (its card is the right answer there) */ const f = m.getSource('selstops')._data.features.find((x) => { const p = m.project(x.geometry.coordinates); return p.x > 460 && p.x < W - 120 && p.y > 80 && p.y < H - 80 && vp.every((q) => Math.hypot(q.x - p.x, q.y - p.y) > 30); }) || m.getSource('selstops')._data.features[3]; const p = m.project(f.geometry.coordinates); return [p.x, p.y, f.properties.name]; });
     await page.mouse.move(pt[0], pt[1]); await page.waitForTimeout(400);
     const tip = await page.locator('#tip').innerText().catch(() => '');
     check('hovering a stop shows its name', tip.includes(pt[2].slice(0, 8)), `${tip} / ${pt[2]}`);
