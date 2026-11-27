@@ -2,7 +2,10 @@ name: Check map
 
 on:
   pull_request:
+  # only main on push: a branch with an open pull request is checked once, by the pull_request run
+  # (pushes to working branches ran every check twice and mailed two failures per push)
   push:
+    branches: [main]
     paths: ["web/**", "pipeline/**", "tools/**", "site/data/**", "requirements.txt", ".github/workflows/**"]
   workflow_dispatch:
 

@@ -20,11 +20,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -71,6 +68,17 @@ jobs:
         with:
           name: github-pages-${{ github.run_attempt }}
           path: site
+
+  # Deploying in its own job: in the same job, deploy-pages looked up the artifact seconds after
+  # the upload and sometimes found none yet ("Found 0 artifact(s)", Nov 27, three runs in a row).
+  # A later job only starts once the build job, and its artifact, are finished.
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - id: deployment
         uses: actions/deploy-pages@v4
         with:
