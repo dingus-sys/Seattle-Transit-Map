@@ -306,8 +306,10 @@
     if (r.label === "Easy Loop") return "Loop";
     return r.label;
   };
+  // Every route tag is a solid badge: outlined "part-time" tags read as faded next to solid ones
+  // (Nicholas, Nov 27). Whether a route runs every day is in its card and tooltip instead.
   const badgeHTML = (r, size = "") => {
-    const everyday = isEveryday(r);
+    const everyday = true;
     const color = tagColor(r);
     const textColor = everyday ? tagText(r) : color;
     const partTimeCls = !everyday ? " part-time" : "";
@@ -1607,7 +1609,7 @@
     const groups = [], all = [...new Set(list.split(".").map(Number))];
     for (const r of rs) {
       const c = tagColor(r, dark ? "dark" : "light");
-      const everyday = isEveryday(r);
+      const everyday = true; // solid like every other tag (see badgeHTML)
       let g = groups.find((x) => x.c === c && x.everyday === everyday);
       if (!g) groups.push((g = { c, fg: everyday ? tagText(r, dark ? "dark" : "light") : c, everyday, items: [], refs: [] }));
       g.items.push(shortLabel(r));
@@ -5100,15 +5102,9 @@
                 <span class="badge" style="background:${busBlue};color:#fff">128</span>
                 <span class="badge" style="background:${freqColor};color:#fff">372</span>
               </div>
-              <div><strong>Every day</strong><br><span class="muted">Solid filled badge indicates 7-day regular service</span></div>
+              <div><strong>Route numbers</strong><br><span class="muted">Each route&rsquo;s number in its service type&rsquo;s color; its card says which days it runs</span></div>
             </div>
-            <div class="legend-row">
-              <div class="legend-badge-sample">
-                <span class="badge part-time" style="--badge-c:${busBlue};border-color:${busBlue};color:${busBlue}">31</span>
-                <span class="badge part-time" style="--badge-c:${freqColor};border-color:${freqColor};color:${freqColor}">372</span>
-              </div>
-              <div><strong>Not every day (Part-time)</strong><br><span class="muted">Lowlighted badge indicates part-time service (e.g. Mon–Fri only)</span></div>
-            </div>
+
             <div class="legend-row">
               <div class="legend-badge-sample">
                 <span class="badge suspended" style="background:${busBlue};color:#fff">111</span>
@@ -10372,7 +10368,13 @@
   function setHover(feat) {
     if (feat) return;
     clearTimeout(hoverTimer);
-    if (!hoverKey) return;
+    if (!hoverKey) {
+      // The route already let go, but the fade of the rest of the map or its stops may still be on:
+      // passing over the tooltip on the way out cancels the pending release (tip mouseover clears
+      // hoverTimer), and nothing released it again, so a route stayed lit with its stops (Nov 27).
+      if (hovDim.ids || hovStopsKey) hoverTimer = setTimeout(focusOff, HOVER_GRACE);
+      return;
+    }
     hoverKey = ""; hoverRoutes = []; queuedRoute = null;
     hoverFade(hSlot, 0, 140);
     hoverTimer = setTimeout(focusOff, HOVER_GRACE);
