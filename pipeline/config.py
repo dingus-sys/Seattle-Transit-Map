@@ -98,6 +98,16 @@ OBA_DEPARTURES = "https://api.pugetsound.onebusaway.org/api/where/arrivals-and-d
 LIVE_FEEDS = [
     {"agency": "19", "url": "https://its.rideralerts.com/InfoPoint/GTFS-Realtime.ashx?Type=VehiclePosition",  # Intercity Transit
      "alerts": "https://its.rideralerts.com/InfoPoint/GTFS-Realtime.ashx?Type=Alert"},
+    # Island Transit (Passio) and Whatcom Transportation Authority: open feeds that allow
+    # browser requests (CORS), no key.
+    {"agency": "island", "url": "https://passio3.com/islandtransit/passioTransit/gtfs/realtime/vehiclePositions",
+     "alerts": "https://passio3.com/islandtransit/passioTransit/gtfs/realtime/serviceAlerts"},
+    {"agency": "wta", "url": "https://bustracker.ridewta.com/gtfsrt/vehicles",
+     "alerts": "https://bustracker.ridewta.com/gtfsrt/alerts"},
+    # Skagit Transit: open, no key, but its server doesn't allow browser requests, so the page
+    # asks the live proxy (worker/live-proxy.js) for it; without a proxy this feed is skipped.
+    {"agency": "skagit", "url": "https://strweb.skagittransit.org/GTFS/GTFS_VehiclePositions.pb",
+     "alerts": "https://strweb.skagittransit.org/GTFS/GTFS_ServiceAlerts.pb", "proxy": True},
 ]
 # Service alerts (detours, closed stops, canceled trips) per agency, as GTFS-realtime
 OBA_ALERTS = "https://api.pugetsound.onebusaway.org/api/gtfs_realtime/alerts-for-agency"

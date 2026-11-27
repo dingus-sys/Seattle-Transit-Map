@@ -2201,9 +2201,6 @@ td.sched-cell-now {
   font-size: 11px;
   color: var(--muted);
   font-weight: 550;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .rd-origin-name {
   font: 650 13px/1.25 var(--font-display);
@@ -2278,9 +2275,7 @@ td.sched-cell-now {
 .rd-route-headsign {
   font: 650 14px/1.2 var(--font-display);
   color: var(--ink);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 .rd-hero-eta {
   display: inline-flex;
@@ -2323,22 +2318,34 @@ td.sched-cell-now {
   padding: 7px 6px;
   border-radius: 8px;
   transition: background-color .15s ease;
+  width: 100%;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
 }
+.rd-dep-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .rd-dep-row:hover {
   background: var(--fill);
 }
 .rd-dep-dest-col {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
 }
+/* the whole destination, on two lines if it needs them */
 .rd-dep-dest-name {
-  font: 550 13px/1.2 var(--font);
+  font: 550 13px/1.25 var(--font);
   color: var(--ink-2);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+}
+.rd-dep-sub {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 .rd-dep-agency-tag {
   font-size: 10px;

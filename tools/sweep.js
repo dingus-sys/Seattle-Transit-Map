@@ -11,7 +11,7 @@ const results = [];
 const check = (name, ok, info = '') => { results.push([ok ? 'PASS' : 'FAIL', name, info]); };
 
 async function open(browser, viewport, hash = '', scheme = 'light') {
-  const ctx = await browser.newContext({ viewport, deviceScaleFactor: 1, colorScheme: scheme });
+  const ctx = await browser.newContext({ viewport, deviceScaleFactor: 1, colorScheme: scheme, serviceWorkers: 'block' });
   const page = await ctx.newPage();
   page.errors = [];
   page.on('console', (m) => { if (m.type() === 'error' && !/ERR_FAILED|ERR_BLOCKED_BY_CLIENT|ERR_TUNNEL|ERR_INTERNET_DISCONNECTED/.test(m.text())) page.errors.push(m.text()); });

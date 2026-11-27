@@ -14,6 +14,7 @@
 //
 // Routes:  /oba/<path>    -> https://api.pugetsound.onebusaway.org/<path>   (key=)
 //          /wsdot/<path>  -> https://www.wsdot.wa.gov/<path>                (apiaccesscode= / AccessCode=)
+//          /skagit/<path> -> https://strweb.skagittransit.org/<path>        (open feed, no key)
 
 const DEFAULT_ORIGINS = "https://dingus-sys.github.io,http://localhost:8765,http://127.0.0.1:8765";
 
@@ -30,6 +31,13 @@ const UPSTREAMS = {
     paths: [/^\/ferries\/api\/(vessels|terminals|schedule)\/rest\/[\w/]+$/,
             /^\/traffic\/api\/HighwayAlerts\/HighwayAlertsREST\.svc\/GetAlertsAsJson$/],
     cacheTtl: 30,
+  },
+  // Skagit Transit's open feed (no key); its server doesn't allow browser requests directly
+  skagit: {
+    host: "https://strweb.skagittransit.org",
+    paths: [/^\/GTFS\/GTFS_(VehiclePositions|ServiceAlerts)\.pb$/],
+    cacheTtl: 10,
+    open: true,
   },
 };
 
@@ -70,6 +78,8 @@ export default {
     if (name === "oba") {
       if (!env.OBA_API_KEY) return reply("OBA_API_KEY is not set", 503, origin);
       q.set("key", env.OBA_API_KEY);
+    } else if (up.open) {
+      // no key to add
     } else {
       const isFerry = path.startsWith("/ferries/");
       const code = isFerry ? (env.WSF_KEY || env.WSDOT_KEY) : (env.WSDOT_KEY || env.WSF_KEY);

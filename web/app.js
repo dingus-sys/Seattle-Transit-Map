@@ -20,10 +20,12 @@
   const liveConfig = ((c) => {
     if (!c || typeof c.proxy !== "string" || !/^https:\/\//.test(c.proxy)) return c;
     const p = c.proxy.replace(/\/+$/, "");
-    const via = (u) => typeof u === "string" ? u.replace("https://api.pugetsound.onebusaway.org", `${p}/oba`).replace("https://www.wsdot.wa.gov", `${p}/wsdot`) : u;
+    const via = (u) => typeof u === "string" ? u.replace("https://api.pugetsound.onebusaway.org", `${p}/oba`).replace("https://www.wsdot.wa.gov", `${p}/wsdot`)
+      .replace("https://strweb.skagittransit.org", `${p}/skagit`) : u;
     return { ...c, key: "proxy", base: via(c.base), status: via(c.status), alerts: via(c.alerts), deps: via(c.deps),
+      feeds: (c.feeds || []).map((f) => f.proxy ? { ...f, url: via(f.url), alerts: via(f.alerts) } : f),
       wsf: c.wsf && { ...c.wsf, base: via(c.wsf.base), code: "proxy" }, wsdot: c.wsdot && { ...c.wsdot, alerts: via(c.wsdot.alerts), code: "proxy" } };
-  })(window.ATLAS_LIVE);
+  })(window.ATLAS_LIVE && { ...window.ATLAS_LIVE, feeds: (window.ATLAS_LIVE.feeds || []).filter((f) => !f.proxy || window.ATLAS_LIVE.proxy) });
   const LIVE = liveConfig && (hasCode(liveConfig.key) || hasCode(liveConfig.wsf?.code) || hasCode(liveConfig.wsdot?.code))
     ? { ...liveConfig, key: hasCode(liveConfig.key) ? liveConfig.key : "" } : null;
   const $ = (s, el = document) => el.querySelector(s);
@@ -1487,6 +1489,8 @@
     drawStats.applied++;
     lastFeats = m.feats;
     lastSelFeats = m.selFeats;
+    appliedSelIdx = m.selIdx;
+    if (pendingFit && m.selIdx === pendingFitIdx) requestAnimationFrame(pendingFit);
     vehIx = vehIxSel = hitIx = null; snapMemo.clear();
     lastBuildMs = m.ms || 0;
     if (ribbons) {
@@ -2394,6 +2398,26 @@
   const geoBearing = (a, b) => { const [x0, y0] = toM(a[0], a[1]), [x1, y1] = toM(b[0], b[1]); return (Math.atan2(x1 - x0, y1 - y0) * 180 / Math.PI + 360) % 360; };
   const angleDiff = (a, b) => (((b - a + 540) % 360) - 180);
   const lerpAngle = (a, b, t) => (a < 0 ? b : b < 0 ? a : ((a + angleDiff(a, b) * t) + 360) % 360);
+  // A vehicle's card: its route, trip (next stops), on-time status and how full it is
+  function openVehiclePopup(v, r, coords) {
+    openPopup(coords, `<div class="pop"><h3>${esc(routeTitle(r))}</h3><p>${esc(r.name)}</p>${vesselLine(v.id, "p")}<div class="vtrip-slot" data-vid="${esc(String(v.id))}">${vehicleTripHTML(null, v.head)}</div><p class="vs-row">${vehicleLines(v.id, false)}</p>${v.label && !v.name ? `<p>Vehicle ${esc(v.label)}</p>` : ""}${routeRows([r])}</div>`, "280px");
+    fillVehicleTrip(v.id, v.head);
+  }
+  // From a departure row: fly to the bus that will make that departure and open its card
+  function showDepartureBus(routeId, vid, t) {
+    const r = RBY[routeId];
+    let v = null;
+    if (vid) for (const x of live.vehicles.values()) if (String(x.vid) === String(vid) && (!x.r || x.r.id === routeId)) { v = x; break; }
+    if (!v || !r) {
+      showToast(t > 1200 || !vid
+        ? "This bus isn't on its way yet. It shows on the map once its trip starts."
+        : "This bus isn't sharing its location right now.", 3200);
+      return;
+    }
+    const pos = vehPos(v, Date.now());
+    map.flyTo({ center: pos, zoom: Math.max(map.getZoom(), 15), duration: calm() ? 0 : 700 });
+    map.once("moveend", () => openVehiclePopup(v, r, vehPos(v, Date.now())));
+  }
   function vehPos(v, now) {
     // glide from the last shown spot to the newest report across the polling interval,
     // stopping smoothly at the destination so live vehicles never skate or overshoot
@@ -3517,7 +3541,7 @@
     const at = x.predictedDepartureTime > 0 ? x.predictedDepartureTime : x.scheduledDepartureTime;
     const r = RTMAP.get(x.routeId);
     if (!at || !r || LINEIDX[r.id] == null) return null;
-    return { at, r, toName: tidyHeadsign(x.tripHeadsign), live: !!(x.predicted && x.predictedDepartureTime > 0),
+    return { at, r, toName: tidyHeadsign(x.tripHeadsign), live: !!(x.predicted && x.predictedDepartureTime > 0), vid: x.vehicleId ? plainId(x.vehicleId) : "",
       occ: occCode(x.occupancyStatus != null ? x.occupancyStatus : x.predictedOccupancy) };
   }
   async function loadStopDepartures(obaId) {
@@ -3571,7 +3595,7 @@
       const k = d.r.id + "|" + d.toName;
       if (last.has(k) && d.at - last.get(k) < 150000) continue;
       last.set(k, d.at);
-      res.push({ t: (d.at - now) / 1000, r: d.r, toName: d.toName, live: d.live, occ: d.occ });
+      res.push({ t: (d.at - now) / 1000, r: d.r, toName: d.toName, live: d.live, occ: d.occ, vid: d.vid });
       if (res.length >= limit) break;
     }
     return res;
@@ -3669,7 +3693,8 @@
           t: d.t,
           isLive: !!d.live,
           toName: d.toName || (pat ? (pat.headsign || placeName(pat.stops[pat.stops.length - 1])) : ""),
-          occ: d.occ
+          occ: d.occ,
+          vid: d.vid
         });
       }
     }
@@ -3787,27 +3812,24 @@
     const heroText = heroEta ? heroEta.text : "No service right now";
     const heroIsLive = heroEta ? heroEta.isLive : false;
 
-    // the operator and kind of service, from the route itself (Kitsap's fast ferries are not WSF's)
-    const KIND_TAG = { rapidride: "RapidRide", link: "Link Light Rail", sounder: "Sounder Train", streetcar: "Streetcar",
-      monorail: "Monorail", amtrak: "Amtrak Cascades", watertaxi: "Water Taxi", swift: "Swift BRT" };
-    let agencyTag = KIND_TAG[r.cat] || r.agency || "";
-    if (r.cat === "ferry") agencyTag = r.agencyShort === "WSF" ? "WSF Ferry" : r.agencyShort === "KT" ? "Kitsap Fast Ferry" : `${r.agency || ""} Ferry`.trim();
-    else if (!KIND_TAG[r.cat] && r.agencyShort === "Metro") agencyTag = "Metro Bus";
-
     let rowsHTML = "";
     if (list.length > 0) {
-      rowsHTML = list.map((d) => `
-        <div class="rd-dep-row">
+      rowsHTML = list.map((d) => {
+        const clock = CLOCK.format(new Date(Date.now() + Math.max(0, d.t) * 1000));
+        const sub = d.isLive ? `${clock} · live from the bus` : `${clock} · from the timetable`;
+        return `
+        <button type="button" class="rd-dep-row press" data-route="${esc(r.id)}" data-vid="${esc(d.vid || "")}" data-t="${Math.round(d.t)}"
+          title="${d.vid ? "Show this bus on the map" : "Show where this trip is"}">
           <div class="rd-dep-dest-col">
             <span class="rd-dep-dest-name">${esc(d.toName || headsignText)}</span>
-            <span class="rd-dep-agency-tag">${esc(agencyTag)}</span>
+            <span class="rd-dep-sub">${esc(sub)}</span>
           </div>
           <div class="rd-dep-time-col${d.isLive ? " is-live" : ""}">
             ${d.isLive ? `<span class="rd-live-waves" aria-hidden="true" title="Real-time GPS prediction">${poiIconSVG("signal", 13)}</span>` : ""}
             <span class="rd-dep-time-text">${esc(d.timeText)}</span>
           </div>
-        </div>
-      `).join("");
+        </button>`;
+      }).join("");
     } else {
       const w = r.sched?.weekday;
       const hoursHint = w ? `Operates ${esc(w.first.replace(" ", " "))} – ${esc(w.last.replace(" ", " "))}` : "See full schedule table below.";
@@ -3835,7 +3857,7 @@
           <div class="rd-origin-left">
             <span class="rd-origin-icon">${hasWalk ? poiIconSVG("walk", 16) : poiIconSVG("bus", 16)}</span>
             <div class="rd-origin-text">
-              <span class="rd-origin-sub">${hasWalk ? "Walk to boarding stop" : "Boarding stop · Tap any stop below to change"}</span>
+              <span class="rd-origin-sub">${hasWalk ? "Walk to boarding stop" : "Departures from this stop · pick another stop below to switch"}</span>
               <span class="rd-origin-name">${esc(cleanName)}${bayBadge}</span>
             </div>
           </div>
@@ -3843,7 +3865,7 @@
             <div class="rd-origin-walk">
               <span class="rd-walk-min">${walkMin} min</span>
               <span class="rd-walk-dist">${walkDist}m</span>
-            </div>` : `<span class="rd-hint-pill" title="This is your current boarding stop"><span class="rd-hint-dot" aria-hidden="true"></span>Active Stop</span>`}
+            </div>` : `<span class="rd-hint-pill" title="The times below are for this stop"><span class="rd-hint-dot" aria-hidden="true"></span>Your stop</span>`}
         </div>
 
         <div class="rd-card-body">
@@ -4138,8 +4160,22 @@
     renderLive();
     if (r.cat === "dart") highlightDartArea(id);
     else highlightDartArea(null);
-    if (fit && r.bbox && r.bbox[0] < 180) map.fitBounds([[r.bbox[0], r.bbox[1]], [r.bbox[2], r.bbox[3]]], { padding: fitPadding(), maxZoom: 15, duration: 800 });
+    if (fit && r.bbox && r.bbox[0] < 180) {
+      // Draw the selection at the current zoom first, then fly: a build that lands while the
+      // camera moves waits for moveend, so flying at once left the route faint until the end.
+      const go = () => {
+        if (pendingFit !== go) return;
+        pendingFit = null; clearTimeout(pendingFitTimer);
+        if (!selected || selected.id !== id) return;
+        map.fitBounds([[r.bbox[0], r.bbox[1]], [r.bbox[2], r.bbox[3]]], { padding: fitPadding(), maxZoom: 15, duration: 800 });
+      };
+      pendingFit = go; pendingFitIdx = LINEIDX[id];
+      clearTimeout(pendingFitTimer);
+      pendingFitTimer = setTimeout(go, 450);
+      if (appliedSelIdx === pendingFitIdx) go();
+    }
   }
+  let pendingFit = null, pendingFitIdx = -1, pendingFitTimer = 0, appliedSelIdx = -1;
   function selectStop(id, { fly = true, push = true } = {}) {
     const s = stopIndex[id];
     if (!s) return;
@@ -5715,6 +5751,11 @@
         text: `King County Transit Map: ${routeTitle(r)}`,
         url: `${location.origin}${location.pathname}#route-${r.id}`
       });
+    });
+    // a departure row: show that bus (where it is and its trip), or say why it can't be shown yet
+    document.getElementById("routeDepsCardSlot")?.addEventListener("click", (e) => {
+      const b = e.target.closest(".rd-dep-row");
+      if (b) showDepartureBus(b.dataset.route, b.dataset.vid, +b.dataset.t || 0);
     });
     $("#routeViewDepsBtn")?.addEventListener("click", () => {
       const card = document.getElementById("routeDepsCard");
@@ -9782,7 +9823,8 @@
           const stillDart = map.queryRenderedFeatures(e.point, { layers: ["dart-fill"] });
           if (!stillDart.length) highlightDartArea(null);
         }
-        const vh = pickVehicle(e.point);
+        // a pointer squarely on a tag number means that route, even with a bus icon beside it
+        const vh = (tagAt(e.point) || {}).inside ? null : pickVehicle(e.point);
         if (vh) {
           const r = RBY[vh.properties.r];
           offLine(); cur = { kind: "veh", id: vh.properties.id };
@@ -10050,19 +10092,14 @@
       // A nearby badge must not steal a tap meant for the shared route band.
       const vehicle = nearest(vehAt(e.point, isNarrow() ? 12 : 8), e.point);
       const vehicleRadius = isNarrow() ? (selected?.type === "route" ? 22 : 14) : 10;
-      const vh = vehicle && vehicle.d <= vehicleRadius ? [vehicle.f] : [];
+      const vh = vehicle && vehicle.d <= vehicleRadius && !(tagAt(e.point) || {}).inside ? [vehicle.f] : [];
       if (vh.length) {
         const v = live.vehicles.get(vh[0].properties.id), r = RBY[vh[0].properties.r];
         if (vh[0].properties.est && r) {
           openPopup(vh[0].geometry.coordinates, `<div class="pop"><h3>${esc(routeTitle(r))}</h3><p>${esc(r.name)}</p><p>Estimated position from the timetable${LIVE ? "" : " (live positions show on the website)"}.</p>${routeRows([r])}</div>`, "280px");
           return;
         }
-        if (v && r) {
-          const age = v.ts ? Math.max(0, Math.round(Date.now() / 1000 - v.ts)) : null;
-          openPopup(vh[0].geometry.coordinates, `<div class="pop"><h3>${esc(routeTitle(r))}</h3><p>${esc(r.name)}</p>${vesselLine(v.id, "p")}<div class="vtrip-slot" data-vid="${esc(String(v.id))}">${vehicleTripHTML(null, v.head)}</div><p class="vs-row">${vehicleLines(v.id, false)}</p>${v.label && !v.name ? `<p>Vehicle ${esc(v.label)}</p>` : ""}${routeRows([r])}</div>`, "280px");
-          fillVehicleTrip(v.id, v.head);
-          return;
-        }
+        if (v && r) { openVehiclePopup(v, r, vh[0].geometry.coordinates); return; }
       }
       // a number on a route tag opens that route; "+3" lists the rest
       const tg = tagAt(e.point);
@@ -10347,10 +10384,22 @@
       if (!L) continue;
       const c = map.project(f.geometry.coordinates), left = c.x - L.w / 2, top = c.y - L.h / 2, dx = pt.x - left, dy = pt.y - top;
       if (dx < 0 || dx > L.w || dy < 0 || dy > L.h) continue;
-      const item = L.axis === "y"
-        ? (L.items.find((it) => dx >= it.x0 && dx < it.x1 && dy >= it.y0 && dy < it.y1) || L.items[L.items.length - 1])
-        : (L.items.find((it) => dx >= it.x0 && dx < it.x1) || L.items[L.items.length - 1]);
-      return { item, left, top, L, coords: f.geometry.coordinates };
+      // In a gap between cells, take the nearest cell, never the "+N" cell by default
+      // (that sent a pointer between 987 and its neighbour to the shared-street card).
+      const inside = L.axis === "y"
+        ? L.items.find((it) => dx >= it.x0 && dx < it.x1 && dy >= it.y0 && dy < it.y1)
+        : L.items.find((it) => dx >= it.x0 && dx < it.x1);
+      let item = inside;
+      if (!item) {
+        let best = Infinity;
+        for (const it of L.items) {
+          const ex = Math.max(it.x0 - dx, 0, dx - it.x1);
+          const ey = L.axis === "y" ? Math.max(it.y0 - dy, 0, dy - it.y1) : 0;
+          const d = ex * ex + ey * ey + (it.r == null ? 0.5 : 0);
+          if (d < best) { best = d; item = it; }
+        }
+      }
+      return { item, inside: !!inside, left, top, L, coords: f.geometry.coordinates };
     }
     return null;
   }
@@ -10745,6 +10794,19 @@
           const c = map.project(f.geometry.coordinates);
           for (const it of L.items) if (it.r == null) out.push({ x: rect.left + c.x - L.w / 2 + (it.x0 + it.x1) / 2,
             y: rect.top + c.y - L.h / 2 + (L.axis === "y" ? (it.y0 + it.y1) / 2 : L.h / 2), n: (it.more || []).length });
+        }
+        return out;
+      },
+      // every number on the route tags placed right now: screen centre, route (null for "+N"), tag id
+      tagCells: () => {
+        const rect = map.getCanvas().getBoundingClientRect(), out = [];
+        for (const f of qrf(undefined, { layers: ["badges"] })) {
+          const L = BADGE_LAYOUT.get("b:" + f.properties.k);
+          if (!L) continue;
+          const c = map.project(f.geometry.coordinates), left = rect.left + c.x - L.w / 2, top = rect.top + c.y - L.h / 2;
+          for (const it of L.items) out.push({ k: f.properties.k, axis: L.axis, r: it.r != null ? LINES[it.r]?.id : null, n: (it.more || []).length,
+            x: left + (it.x0 + it.x1) / 2, y: top + (L.axis === "y" ? (it.y0 + it.y1) / 2 : L.h / 2), x0: left + it.x0, x1: left + it.x1,
+            y0: top + (L.axis === "y" ? it.y0 : 0), y1: top + (L.axis === "y" ? it.y1 : L.h) });
         }
         return out;
       },
@@ -11199,7 +11261,7 @@
     } catch (e) { return false; }
   }
   const STARTUP_MESSAGES = {
-    webgl: "This map needs WebGL, which is turned off in this browser. Turn on hardware acceleration (or set webgl.disabled to false in about:config in Firefox-based browsers like Zen), then reload.",
+    webgl: "This map needs WebGL, which this browser has turned off. Turn on hardware acceleration in the browser's settings and restart it. In Firefox-based browsers like Zen, about:support (Graphics, WebGL) says why; setting webgl.force-enabled to true in about:config and restarting usually fixes it.",
     maplibre: "The map library didn't load. A content blocker or network filter may be blocking it. Allow cdnjs.cloudflare.com or cdn.jsdelivr.net, then reload.",
     data: "The map data didn't load. Check your connection and reload the page to try again.",
     other: "Something went wrong while starting the map. Reload the page to try again.",

@@ -15,6 +15,8 @@ const cases = [
   ["other site refused", await go("/oba/api/where/vehicles-for-agency/1.json", { Origin: "https://evil.example" }), (x) => x[0] === 403 && !x[2]],
   ["no origin refused", await go("/oba/api/where/vehicles-for-agency/1.json", {}), (x) => x[0] === 403],
   ["other path refused", await go("/oba/api/where/stops-for-location.json", O), (x) => x[0] === 404 && !x[2]],
+  ["skagit open feed, no key added", await go("/skagit/GTFS/GTFS_VehiclePositions.pb", O), (x) => x[0] === 200 && x[2] === "https://strweb.skagittransit.org/GTFS/GTFS_VehiclePositions.pb?"],
+  ["skagit other path refused", await go("/skagit/GTFS/google_transit.zip", O), (x) => x[0] === 404 && !x[2]],
   ["traversal refused", await go("/wsdot/../etc", O), (x) => x[0] === 404],
 ];
 let ok = 0; for (const [n, x, f] of cases) { const p = f(x); ok += p; console.log(p ? "PASS" : "FAIL", n, x[0], x[1]); }
