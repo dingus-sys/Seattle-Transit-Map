@@ -2420,7 +2420,104 @@
     map.flyTo({ center: pos, zoom: Math.max(map.getZoom(), 15), duration: calm() ? 0 : 700 });
     map.once("moveend", () => openVehiclePopup(v, r, vehPos(v, Date.now())));
   }
+  // ---- live vehicles ride their own route. A GPS fix is placed on the route's path (the trip
+  // shapes in schedule.json, which follow the real streets), and between two fixes the vehicle
+  // drives along that path instead of sliding in a straight line: a straight glide cut corners,
+  // left the line part-way (so the marker vanished and came back), and its heading was a raw GPS
+  // reading that could point across the street. The heading now is the path's own direction at
+  // the vehicle, and the direction of travel is the trip pattern's, confirmed by the vehicle's
+  // progress along it or its reported bearing; until it is known, no pointer is drawn (Nov 27).
+  let pathsByRoute = null;
+  function routePaths(r) {
+    if (!SCHED || !r) return null;
+    if (!pathsByRoute) {
+      pathsByRoute = new Map();
+      const seen = new Set();
+      for (const p of SCHED.patterns) {
+        if (!p.route || !p.pts || p.pts.length < 2 || seen.has(p.c)) continue;
+        seen.add(p.c);
+        if (!pathsByRoute.has(p.route.id)) pathsByRoute.set(p.route.id, []);
+        pathsByRoute.get(p.route.id).push(p);
+      }
+    }
+    return pathsByRoute.get(r.id) || null;
+  }
+  const PATH_REACH = 120; // a fix farther than this from every path of its route is off route (to or from the garage)
+  // every place along a path that comes within reach of point m (a loop or an out-and-back can
+  // pass the same street twice): [{ s: distance along the path, d: metres off it }]
+  function pathHits(p, m, reach = PATH_REACH) {
+    const P = p.pts, C = p.cum, out = [];
+    let run = null;
+    for (let k = 0; k < P.length - 1; k++) {
+      const ax = P[k][0], ay = P[k][1], dx = P[k + 1][0] - ax, dy = P[k + 1][1] - ay, L2 = dx * dx + dy * dy;
+      if (Math.abs(m[0] - ax) > reach + Math.abs(dx) + 1 || Math.abs(m[1] - ay) > reach + Math.abs(dy) + 1) { run = null; continue; }
+      const u = L2 > 0 ? Math.max(0, Math.min(1, ((m[0] - ax) * dx + (m[1] - ay) * dy) / L2)) : 0;
+      const d = Math.hypot(ax + dx * u - m[0], ay + dy * u - m[1]);
+      if (d > reach) { run = null; continue; }
+      const h = { s: C[k] + (C[k + 1] - C[k]) * u, d };
+      if (run && h.d < run.d) Object.assign(run, h);
+      else if (!run) { run = h; out.push(run); }
+    }
+    return out;
+  }
+  // the point at distance s along a path, and the path's direction there (degrees from north)
+  function pathAt(p, s) {
+    const C = p.cum, P = p.pts;
+    s = Math.max(0, Math.min(C[C.length - 1], s));
+    let lo = 0, hi = C.length - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (C[mid] <= s) lo = mid; else hi = mid; }
+    const t = Math.min(1, Math.max(0, (s - C[lo]) / ((C[hi] - C[lo]) || 1)));
+    // the direction over the next and previous ~12 m, so a vertex doesn't flick the pointer
+    const a = pathPoint(p, s - 12), b = pathPoint(p, s + 12);
+    const x = P[lo][0] + (P[hi][0] - P[lo][0]) * t, y = P[lo][1] + (P[hi][1] - P[lo][1]) * t;
+    return { pos: toLonLat([x, y]), b: (Math.atan2(b[0] - a[0], b[1] - a[1]) * 180 / Math.PI + 360) % 360 };
+  }
+  function pathPoint(p, s) {
+    const C = p.cum, P = p.pts;
+    s = Math.max(0, Math.min(C[C.length - 1], s));
+    let lo = 0, hi = C.length - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (C[mid] <= s) lo = mid; else hi = mid; }
+    const t = Math.min(1, Math.max(0, (s - C[lo]) / ((C[hi] - C[lo]) || 1)));
+    return [P[lo][0] + (P[hi][0] - P[lo][0]) * t, P[lo][1] + (P[hi][1] - P[lo][1]) * t];
+  }
+  // where along its path a path-riding vehicle is shown at time now
+  const pathS = (v, now) => v.s0 + (v.s1 - v.s0) * Math.min(1, Math.max(0, (now - v.t0) / (v.dur || POLL_MS)));
+  // A new fix for a vehicle on route r: which path it is on, and where along it. prev is the
+  // vehicle as shown so far (or null), bearing its reported heading (or null).
+  function placeOnPath(r, lonlat, bearing, prev, now) {
+    const paths = routePaths(r);
+    if (!paths || !paths.length) return null;
+    const m = toM(lonlat[0], lonlat[1]);
+    const lastM = prev && prev.fixM, curS = prev && prev.pat ? pathS(prev, now) : null;
+    let best = null;
+    for (const p of paths) {
+      for (const h of pathHits(p, m)) {
+        let score = h.d, sure = false;
+        // progress along this path since the last fix says which way the vehicle goes
+        if (lastM) {
+          const back = pathHits(p, lastM).reduce((q, x) => (!q || Math.abs(x.s - h.s) < Math.abs(q.s - h.s) ? x : q), null);
+          if (back) {
+            const prog = h.s - back.s;
+            if (prog < -20) score += 400; // driving this path backwards: it's the other direction's
+            else if (prog > 20) { score -= 30; sure = true; }
+          }
+        }
+        if (bearing != null) {
+          const tb = pathAt(p, h.s).b;
+          if (Math.abs(angleDiff(tb, bearing)) > 100) score += 300; else { score -= 10; sure = true; }
+        }
+        if (prev && prev.pat === p) {
+          score -= 25; // stay on the path it was on
+          if (curS != null) score += Math.min(200, Math.abs(h.s - curS) / 20); // ...at the place it was
+          if (prev.sure) sure = true;
+        }
+        if (!best || score < best.score) best = { p, s: h.s, d: h.d, score, sure };
+      }
+    }
+    return best;
+  }
   function vehPos(v, now) {
+    if (v.pat) return pathAt(v.pat, pathS(v, now)).pos;
     // glide from the last shown spot to the newest report across the polling interval,
     // stopping smoothly at the destination so live vehicles never skate or overshoot
     if (!v.from || !v.to) return v.to || [0, 0];
@@ -2506,6 +2603,42 @@
           const prev = live.vehicles.get(id);
           // Washington State Ferries' boats go by name (OneBusAway's vehicle number is WSF's vessel id)
           const name = a === "95" && WSF_VESSELS[v.id] ? WSF_VESSELS[v.id] : "";
+          if (prev) { prev.unseenAt = 0; prev.leaving = 0; }
+          // On land, the vehicle rides its route's path (placeOnPath). A bearing of exactly 0 is how
+          // many feeds say "unknown", so it doesn't count as north.
+          const brg = v.bearing != null && isFinite(v.bearing) && v.bearing > 0 ? v.bearing : null;
+          const samePrev = prev && prev.r && prev.r.id === r.id ? prev : null;
+          const placed = a !== "95" && CAT[dkey(r)]?.group !== "water" ? placeOnPath(r, to, brg, samePrev, now) : null;
+          const extra = { ts: v.ts, label: v.label || (prev && prev.label), vid: v.id, name, head: v.head || (prev && prev.head),
+            occ: occCode(v.occ) != null ? occCode(v.occ) : prev && prev.occ, occPct: v.occPct != null ? v.occPct : prev && prev.occPct };
+          if (placed) {
+            const fixM = toM(to[0], to[1]);
+            if (samePrev && samePrev.fixM && Math.hypot(fixM[0] - samePrev.fixM[0], fixM[1] - samePrev.fixM[1]) < 1) {
+              // the same fix again (no new GPS reading yet): carry on as before
+              Object.assign(prev, extra);
+              continue;
+            }
+            let s0 = placed.s, s1 = placed.s, dur = POLL_MS;
+            if (samePrev) {
+              if (prev.pat === placed.p) s0 = pathS(prev, now);
+              else {
+                // onto another path (or off a free glide): start from where it's shown, if that's on the new path
+                const shown = toM(...vehPos(prev, now));
+                const h = pathHits(placed.p, shown, 60).reduce((q, x) => (!q || Math.abs(x.s - placed.s) < Math.abs(q.s - placed.s) ? x : q), null);
+                if (h) s0 = h.s;
+              }
+              const dt = prev.fixAt ? (now - prev.fixAt) / 1000 : POLL_MS / 1000, ds = s1 - s0;
+              if (ds < 0 && ds > -150) s1 = s0; // GPS drifting back at a stop: hold still, never reverse
+              else if (ds < 0 || ds > Math.max(500, dt * 35)) s0 = s1; // not a drive anyone could make: place it there
+              dur = prev.fixAt ? Math.min(30000, Math.max(5000, now - prev.fixAt)) : POLL_MS;
+            }
+            const st = { pat: placed.p, s0, s1, t0: now, dur, sure: placed.sure || !!(samePrev && samePrev.pat === placed.p && samePrev.sure),
+              fixM, fixAt: now, r, from: null, to, b: -1, b0: -1, curB: null, snap: false, ...extra };
+            if (prev) Object.assign(prev, st);
+            else live.vehicles.set(id, { id, agency: a, born: now, ...st });
+            continue;
+          }
+          if (prev && prev.pat) { prev.pat = null; prev.from = vehPos(prev, now); prev.to = prev.from; prev.snap = true; }
           if (prev) {
             const isSame = prev.to && Math.hypot(to[0] - prev.to[0], to[1] - prev.to[1]) < 0.00001;
             const rawFrom = isSame ? to : vehPos(prev, now);
@@ -2568,15 +2701,21 @@
               occ: occ != null ? occ : prev.occ, occPct: v.occPct != null ? v.occPct : prev.occPct, snap: false });
           } else {
             const bInit = v.bearing != null && v.bearing >= 0 ? v.bearing : -1;
-            live.vehicles.set(id, { id, agency: a, from: to, to, t0: now, dur: POLL_MS, r, b0: bInit, b: bInit, ts: v.ts, label: v.label, vid: v.id, name, head: v.head,
+            live.vehicles.set(id, { id, agency: a, born: now, from: to, to, t0: now, dur: POLL_MS, r, b0: bInit, b: bInit, ts: v.ts, label: v.label, vid: v.id, name, head: v.head,
               occ: occCode(v.occ), occPct: v.occPct, snap: false });
           }
         } catch (e) { /* one odd report doesn't stop the rest */ }
       }
-      for (const [id, v] of live.vehicles) if (v.agency === a && !seen.has(id)) live.vehicles.delete(id);
+      // A vehicle missing from one answer is usually still out there (feeds skip vehicles now and
+      // then): it stays where it is for a minute, then fades out, instead of vanishing and popping
+      // back in a round later.
+      for (const v of live.vehicles.values()) if (v.agency === a && !seen.has(v.id)) {
+        if (!v.unseenAt) v.unseenAt = Date.now();
+        else if (Date.now() - v.unseenAt > 60000 && !v.leaving) v.leaving = now;
+      }
     }
-    // an agency we haven't heard from in three minutes: its vehicles are out of date, drop them
-    for (const [id, v] of live.vehicles) if (live.fresh && Date.now() - (live.fresh[v.agency] || 0) > 180000) live.vehicles.delete(id);
+    // an agency we haven't heard from in three minutes: its vehicles are out of date, fade them out
+    for (const v of live.vehicles.values()) if (live.fresh && Date.now() - (live.fresh[v.agency] || 0) > 180000 && !v.leaving) v.leaving = now;
     await ferryPoll;
     if (syncWsfVessels(now)) ok++;
     if ($("#ferryInfo")) { fillFerryInfo(); loadFerryTerminals(); }
@@ -2732,15 +2871,27 @@
     let list = [];
     if (!enabled.has("live")) list = [];
     else if (mode === "live") {
-      for (const v of live.vehicles.values()) if (Date.now() / 1000 - v.ts <= 300 && Date.now() - (live.fresh?.[v.agency] || 0) < 90000) {
-        const dur = v.dur || POLL_MS;
-        const t = Math.min(1, Math.max(0, (now - v.t0) / dur));
-        const pos = vehPos(v, now);
-        const b = (v.b0 != null && v.b != null && v.b >= 0 && v.b0 >= 0) ? lerpAngle(v.b0, v.b, t) : v.b;
+      for (const v of [...live.vehicles.values()]) {
+        // a report over five minutes old: fade it out rather than drop it
+        if (v.ts && Date.now() / 1000 - v.ts > 300 && !v.leaving) v.leaving = now;
+        // new vehicles fade in, departing ones fade out (half a second), instead of popping
+        const fade = v.leaving ? 1 - (now - v.leaving) / 500 : v.born ? Math.min(1, (now - v.born) / 500) : 1;
+        if (v.leaving && fade <= 0) { live.vehicles.delete(v.id); continue; }
+        let pos, b;
+        if (v.pat) {
+          const at = pathAt(v.pat, pathS(v, now));
+          pos = at.pos; b = v.sure ? at.b : -1;
+        } else {
+          const t = Math.min(1, Math.max(0, (now - v.t0) / (v.dur || POLL_MS)));
+          pos = vehPos(v, now);
+          b = (v.b0 != null && v.b != null && v.b >= 0 && v.b0 >= 0) ? lerpAngle(v.b0, v.b, t) : v.b;
+        }
         v.curB = b;
-        list.push({ id: v.id, r: v.r, pos, b, name: v.name });
+        list.push({ id: v.id, r: v.r, pos, b, name: v.name, fade: Math.max(0, Math.min(1, fade)) });
       }
-      list.push(...estVehicles().filter((v) => !(v.r.rt || []).some((rt) => Date.now() - (live.fresh?.[rt.split("_")[0]] || 0) < 90000)));
+      // a route's timetable estimates stand in only while its agency's live feed is out (the same
+      // three minutes after which its live vehicles go), so the two never swap back and forth
+      list.push(...estVehicles().filter((v) => !(v.r.rt || []).some((rt) => Date.now() - (live.fresh?.[rt.split("_")[0]] || 0) < 180000)));
     }
     else if (mode === "est") list = estVehicles();
     live.current = list;
@@ -2778,7 +2929,7 @@
         markerGrid.get(key).push(p);
       }
       feats.push({ type: "Feature", properties: { id: v.id, r: r.id, c, tc: c, lab: v.name || shortLabel(r), b: Math.round(b), m: vehKind(r),
-        s: 20 - CAT[dkey(r)].prio, est: v.est ? 1 : 0, o: hovDim.ids && !hovDim.ids.has(r.id) ? +hovDim.v.toFixed(3) : 1 }, geometry: { type: "Point", coordinates: pos } });
+        s: 20 - CAT[dkey(r)].prio, est: v.est ? 1 : 0, o: +((hovDim.ids && !hovDim.ids.has(r.id) ? hovDim.v : 1) * (v.fade != null ? v.fade : 1)).toFixed(3) }, geometry: { type: "Point", coordinates: pos } });
     }
     let liveCount = 0, estCount = 0;
     for (const f of feats) {
@@ -9737,6 +9888,40 @@
     // DART area): the route's highlight and the dim of everything else let go, so the map never
     // stays faded with no line under the pointer.
     const offLine = () => { if (cur && cur.kind === "line" && !tipLive) setHover(null); };
+    // Is the pointer still on a route that is lit right now? Then a stop or a place label under the
+    // pointer doesn't take the route away: tracing a route along its stops used to drop the route's
+    // highlight at every stop (the whole map brightened, its stops vanished) and bring it back a
+    // few pixels later, which read as the route flashing on and off (Nov 27).
+    const onFocusLine = (pt) => {
+      if (!hoverRoutes.length) return false;
+      const ids = new Set(hoverRoutes.map((r) => LINEIDX[r.id]));
+      const ll = map.unproject(pt), p = toM(ll.lng, ll.lat), mpp = MPP0 / 2 ** map.getZoom();
+      for (const f of lineFeaturesAt(pt, 5)) {
+        if (!streetRoutes(f).some((i) => ids.has(i))) continue;
+        const d = f._distance != null ? f._distance : distTo(f, p);
+        const half = (f.properties.ws || f.properties.wm * f.properties.zu * MPP0 || 0) / 2;
+        if (isFinite(d) && Math.max(0, d - half) / mpp <= 2.5) return true;
+      }
+      return false;
+    };
+    // Which route's strand of a band (one line per service type on a street, its routes side by
+    // side inside it) the point p (metres) is on: the band carries each strand's offset ("so").
+    // Hovering a band used to treat it as one shared street: it lit only that block, or every
+    // route on it, while the card named one route (route 72 on Ravenna, 128 in Burien; Nov 27).
+    const strandsOf = (f) => (f.properties.so ? f.properties.so.split(",").map((x) => x.split(":").map(Number)) : null);
+    const offsetIn = (f, p) => {
+      const c = f.geometry.coordinates;
+      let best = null;
+      for (let k = 0; k < c.length - 1; k++) {
+        const a = toM(c[k][0], c[k][1]), b = toM(c[k + 1][0], c[k + 1][1]), dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy;
+        if (!L2) continue;
+        const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2));
+        const d = Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy);
+        // to the right of the line as drawn is positive (the lanes' own convention, geom.js miters)
+        if (!best || d < best.d) best = { d, side: ((p[0] - a[0]) * dy - (p[1] - a[1]) * dx) / Math.sqrt(L2) };
+      }
+      return best ? best.side : 0;
+    };
     const pickLine = (pt) => {
       const rad = 5;
       const feats = lineFeaturesAt(pt, rad);
@@ -9744,6 +9929,11 @@
       const ll = map.unproject(pt), p = toM(ll.lng, ll.lat), mpp = MPP0 / 2 ** map.getZoom();
       const sel = selected && selected.type === "route" ? LINEIDX[selected.id] : -1;
       let best = null, held = null;
+      // coming off a stop of the lit route, that route still holds (it never let go)
+      const litIds = cur && cur.kind === "stop" && hoverRoutes.length ? new Set(hoverRoutes.map((r) => LINEIDX[r.id])) : null;
+      // one route being followed: a route's own line, or its number on a tag just passed over
+      const curOne = cur && ((cur.kind === "line" && cur.single) || (cur.kind === "tag" && typeof cur.id === "number")) ? cur.id
+        : litIds && litIds.size === 1 ? [...litIds][0] : -1;
       for (const f of feats) {
         const d = f._distance != null ? f._distance : distTo(f, p);
         if (!isFinite(d)) continue;
@@ -9752,16 +9942,39 @@
         const score = out + (half ? d / half : 1) * 0.01 - (f.properties.r === sel && sel >= 0 ? 2 : 0);
         const h = { f, out, score };
         if (!best || score < best.score) best = h;
-        if (cur && cur.kind === "line" && (f.properties.r >= 0 ? f.properties.r === cur.id : f.properties.cat === cur.cat) && (!held || out < held.out)) held = h;
+        const bandHas = (i) => { const so = strandsOf(f); return so ? so.some(([j]) => j === i) : streetRoutes(f).includes(i); };
+        const isHeld = curOne >= 0 ? (f.properties.r >= 0 ? f.properties.r === curOne : bandHas(curOne))
+          : cur && cur.kind === "line" ? (f.properties.r >= 0 ? f.properties.r === cur.id : f.properties.cat === cur.cat)
+          : litIds ? [...litIds].some(bandHas) : false;
+        if (isHeld && (!held || out < held.out)) held = h;
       }
-      // the route in focus holds while the pointer is still on (or right at the edge of) its strand
-      if (held && held.out <= 1.5) best = held;
-      if (!best || best.out > (cur && cur.kind === "line" ? 6 : 4)) return null;
+      // The route in focus holds while the pointer is still on its strand or within 1.5 px of it,
+      // and until another strand is clearly (a pixel) closer, so a pointer resting between two
+      // lanes doesn't swap routes back and forth.
+      // (never against a line the pointer is squarely on: that one is what's pointed at)
+      if (held && (held.out === 0 || (best.out > 0 && (held.out <= 1.5 || held.out <= best.out + 1)))) best = held;
+      if (!best || best.out > (cur && (cur.kind === "line" || litIds || curOne >= 0) ? 6 : 4)) return null;
       const f = best.f, pr = f.properties;
       // boats: every route of the crossing (they share one line)
       const all = streetRoutes(f);
+      // Tracing one route onto a street it shares (drawn there as one band): it stays that route,
+      // instead of switching to "every route on this street" at each shared block.
+      const one = best === held && pr.r < 0 ? curOne : -1;
+      const strands = pr.r < 0 && pr.g !== "water" ? strandsOf(f) : null;
+      if (strands && strands.length) {
+        // the strand under the pointer; the route being followed keeps it while the pointer is
+        // within its strand or just beside it, so resting on a lane edge doesn't flicker
+        const off = offsetIn(f, p), half = (pr.ws || 0) / 2 / strands.length;
+        const mine = strands.find(([i]) => i === one);
+        let pick = mine && Math.abs(mine[1] - off) <= half + 0.75 * mpp ? mine : null;
+        if (!pick) for (const sd of strands) if (!pick || Math.abs(sd[1] - off) < Math.abs(pick[1] - off)) pick = sd;
+        return { f, r: pick[0], routes: [LINES[pick[0]]].filter(Boolean), n: strands.length, one: true, all: strands.map(([i]) => LINES[i]).filter(Boolean) };
+      }
+      if (one >= 0 && all.includes(one)) return { f, r: one, routes: [LINES[one]].filter(Boolean), n: pr.n || 1, one: true };
       return { f, r: pr.r < 0 ? all[0] : pr.r, routes: all.map((i) => LINES[i]).filter(Boolean).sort(tagOrder), n: pr.n || 1 };
     };
+    // for tests: the route a pointer at pt (canvas pixels) would light, as hovering decides it
+    window.__atlasPick = (pt) => { const ln = pickLine(pt); return ln ? { r: ln.r >= 0 ? LINES[ln.r]?.id : null, routes: ln.routes.map((x) => x.id), one: !!ln.one, stop: !!pickStop(pt) } : null; };
     const ev = (e, dy = 0) => ({ clientX: e.originalEvent.clientX, clientY: e.originalEvent.clientY + dy, ax: e.originalEvent.clientX, ay: e.originalEvent.clientY });
     function routeServiceDesc(r) {
       if (!r) return "";
@@ -9885,7 +10098,8 @@
           }
           return;
         }
-        if (enabled.has("pois")) {
+        const keepRoute = onFocusLine(e.point);
+        if (enabled.has("pois") && !keepRoute) {
           const destHits = map.queryRenderedFeatures([[e.point.x - 8, e.point.y - 8], [e.point.x + 8, e.point.y + 8]], {
             layers: DESTINATION_LAYER_IDS.filter((l) => map.getLayer(l))
           });
@@ -9918,7 +10132,9 @@
         const st = pickStop(e.point);
         if (st) {
           const p = st.properties, lid = st.layer.id;
-          offLine(); cur = { kind: "stop", id: p.id };
+          // a stop of the route that is lit keeps the route lit (see onFocusLine)
+          if (lid !== "hov-stops" && !keepRoute) offLine();
+          cur = { kind: "stop", id: p.id };
           map.getCanvas().style.cursor = "pointer";
           if (lid === "flex") {
             highlightStop(null);
@@ -9935,7 +10151,7 @@
         const ln = pickLine(e.point);
         if (ln) {
           // a band shared by several routes belongs to none of them: it highlights the street and a tap offers the choice
-          const sharedBand = !!(ln.f && ln.f.properties.r < 0 && ln.routes && ln.routes.length > 1);
+          const sharedBand = !!(ln.f && ln.f.properties.r < 0 && ln.routes && ln.routes.length > 1 && !ln.one);
           const strandRoute = sharedBand ? null : (ln.r >= 0 ? LINES[ln.r] : (ln.routes && ln.routes[0]));
           if (selected && selected.type === "route") {
             // When a route is actively selected and displaying its info,
@@ -9958,7 +10174,7 @@
               return;
             }
           } else {
-            cur = { kind: "line", id: ln.r, cat: ln.f.properties.cat };
+            cur = { kind: "line", id: ln.r, cat: ln.f.properties.cat, single: !sharedBand };
             map.getCanvas().style.cursor = "pointer";
             if (strandRoute) {
               focusRoute(strandRoute);
@@ -9969,10 +10185,21 @@
                 const row = document.querySelector(`.corridor-picker .route-row[data-route="${strandRoute.id}"]`);
                 if (row && !row.classList.contains("is-hovered")) row.classList.add("is-hovered");
               }
+            } else if (ln.routes.length && ln.routes.length <= 6) {
+              // a street a few routes share lights every one of them, whole, not just the street:
+              // lighting only the street (and naming one route) made the same route light end to
+              // end on its own stretch and only a block or two where it shared one (Nov 27)
+              focusRoutes(ln.routes);
             } else if (ln.f) {
               focusCorridor(ln.f);
             }
             const rs = ln.routes, r = strandRoute || rs[0];
+            if (sharedBand) {
+              const shown = rs.slice(0, 8);
+              tipShow("band:" + rs.map((x) => x.id).join(","), `<div class="tip-more"><div class="tip-badges">${shown.map((x) => badgeHTML(x)).join("")}${rs.length > shown.length ? `<span class="badge lens-more">+${rs.length - shown.length}</span>` : ""}</div>`
+                + `<span class="tt-more">${rs.length} routes share this street · Tap to choose one</span></div>`, "", ev(e));
+              return;
+            }
             const nal = r ? routeAlerts(r.id) : [];
             const more = (ln.n > 1 ? `<span class="tt-more">${ln.n} routes share this street · Hovering ${esc(routeTitle(r))}</span>` : "")
               + (nal.length ? `<span class="tt-alert al-${LEVEL[nal[0].level][0]}">${alertIcon(nal[0].level)}${nal.length === 1 ? esc(LEVEL[nal[0].level][1]) : `${nal.length} alerts`}</span>` : "");
@@ -10135,7 +10362,9 @@
       const rs = routesAt(e.point, isNarrow() ? 10 : 6);
       const hoveredRoute = (cur && cur.kind === "line" && cur.id >= 0) ? LINES[cur.id] : null;
       const ln = pickLine(e.point);
-      const sharedBand = !!(ln && ln.f && ln.f.properties.r < 0 && ln.routes && ln.routes.length > 1);
+      // on a phone a finger can't pick one strand of a band: it offers every route on it
+      if (ln && ln.one && ln.all && ln.all.length > 1 && isNarrow() && !hoveredRoute) ln.routes = ln.all, ln.one = false;
+      const sharedBand = !!(ln && ln.f && ln.f.properties.r < 0 && ln.routes && ln.routes.length > 1 && !ln.one);
       const strandRoute = (hoveredRoute && rs.some((r) => r.id === hoveredRoute.id))
         ? hoveredRoute
         : (ln ? (sharedBand ? null : (ln.r >= 0 ? LINES[ln.r] : (ln.routes && ln.routes[0]))) : (rs.length === 1 ? rs[0] : null));
@@ -10795,7 +11024,7 @@
       drawStats: () => ({ ...drawStats, renderer: ribbons ? "mesh" : "native", pending: !!(inFlight || queued || needsRebuild), ...(ribbons?.stats() || {}) }), routesAt, lineId: (i) => LINES[i]?.id,
       vehicleLines, vehicleOccupancy, occCode,
       obaStop, readDeparture, liveDepartures, depRowsHTML, depCache: () => depCache, stopCard, ensureDepartures,
-      onLine, routeById: (id) => RBY[id], showCorridor,
+      onLine, routeById: (id) => RBY[id], showCorridor, streetRoutes: (f) => streetRoutes(f), pollLive: () => pollLive(), routePathsFor: (ids) => new Promise((res) => requestRoutePaths(ids.map((id) => LINEIDX[id]), false, (feats) => res(feats))), lineIdx: (id) => LINEIDX[id],
       // screen positions of the "+N" items on the route tags placed right now (for tests)
       moreTags: () => {
         const rect = map.getCanvas().getBoundingClientRect(), out = [];
