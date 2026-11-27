@@ -502,7 +502,7 @@ class TestTier1FeatureCoverage(E2EBaseTestCase):
         self.assertIn(".stop-susp-banner", self.app_css)
 
     def test_t1_f9_04_canvas_badge_inner_solid_vs_hollow(self):
-        """F9: Route styling differentiates solid (everyday) from hollow (part-time)."""
+        """F9: Route tags draw with a solid inner fill (every tag is solid since Nov 27)."""
         self.assertIn("inner: \"solid\"", self.app_js)
 
     def test_t1_f9_05_strike_through_visual_styling(self):
