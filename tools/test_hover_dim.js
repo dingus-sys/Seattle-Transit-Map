@@ -83,6 +83,14 @@ async function run() {
     await page.waitForTimeout(600);
     const sel = await state();
     check('with a route selected, hover adds no extra fade', sel.dim.to === 1, `to=${sel.dim.to}`);
+    // a hovered rush-hour (dashed) route is drawn solid; ferries keep their dashes
+    const roles = await page.evaluate(() => {
+      const f = (g) => [{ type: 'Feature', geometry: { type: 'LineString', coordinates: [[-122.33, 47.6], [-122.32, 47.61]] }, properties: { d: 1, g, zu: 1, wm: 2, cm: 3, sh: 0, hm: 0, c: '#2255cc' } }];
+      const R = (feats, o) => (KCTMRibbons.compile(feats, o) || []).map((b) => b.role);
+      return { busHover: R(f('bus'), { hover: true, glow: true }), busRest: R(f('bus'), {}), ferryHover: R(f('water'), { hover: true }) };
+    });
+    check('hovered dashed bus route draws solid, at rest it stays dashed, ferries stay dashed',
+      roles.busHover.includes('body') && !roles.busHover.includes('dash') && roles.busRest.includes('dash') && roles.ferryHover.includes('dash'), JSON.stringify(roles));
     check('no page errors', errors.length === 0, errors.slice(0, 2).join(' | '));
   } finally {
     await browser.close();

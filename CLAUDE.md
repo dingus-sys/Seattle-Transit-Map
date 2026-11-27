@@ -72,7 +72,7 @@ export NODE_PATH=$(npm root -g):$(echo ~/.npm/_npx/*/node_modules 2>/dev/null | 
 export MAPLIBRE_JS=/path/to/maplibre-gl.js    #   set this if the sandbox can't reach CDN for maplibre-gl.js
 node tools/sweep.js                           # 51 checks: expect "51/51 passed"
 node tools/test_hover_cards.js                # 13 checks: +N tag & stop safe bridge micro-traversals
-node tools/test_hover_dim.js                  # 10 checks: hover fades the rest to 0.5, selection's 0.38 wins
+node tools/test_hover_dim.js                  # 11 checks: hover fades the rest to 0.5 (0.32 for dashed routes), selection's 0.38 wins
 node tools/test_hover_release.js              # 7 checks: the old highlight lets go within a few frames (limits in frames)
 node tools/test_live_proxy.mjs                # 11 checks: the key proxy swaps in keys, refuses other sites and paths
 node tools/test_small_agency_live.js          # 3 checks: Island, WTA and Skagit (via the proxy) vehicles land on their routes

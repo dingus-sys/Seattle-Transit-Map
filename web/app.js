@@ -4059,7 +4059,13 @@
       map.setPaintProperty(id, prop, v);
     } catch (e) { /* layer mid-rebuild */ }
   }
-  const hoverDimTarget = () => (hovDim.ids && netDim === 1 ? HOVER_DIM : 1);
+  // dashed (rush-hour, DART) routes are thin and broken, so the rest fades further for them
+  const HOVER_DIM_DASHED = 0.32;
+  const hoverDimTarget = () => {
+    if (!hovDim.ids || netDim !== 1) return 1;
+    for (const id of hovDim.ids) { const r = RBY[id], c = r && CAT[dkey(r)]; if (c && c.dash && c.group !== "water") return HOVER_DIM_DASHED; }
+    return HOVER_DIM;
+  };
   // ids: route ids that stay bright (a Set), or null when nothing is hovered
   function setHoverDim(ids) {
     hovDim.ids = ids && ids.size ? ids : null;
