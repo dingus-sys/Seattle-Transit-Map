@@ -205,9 +205,11 @@ async function run() {
     const stopPoint = await page.evaluate(() => {
       const m = window.__map;
       const fs = m.queryRenderedFeatures({ layers: ['stops'] });
+      // a bus estimated from the timetable can sit on a stop at test time and rightly take the hover
+      const vp = (((m.getSource('vehicles') || {})._data || {}).features || []).map((v) => m.project(v.geometry.coordinates));
       for (const f of fs) {
         const p = m.project(f.geometry.coordinates);
-        if (p.x > 450 && p.x < 1100 && p.y > 150 && p.y < 650) {
+        if (p.x > 450 && p.x < 1100 && p.y > 150 && p.y < 650 && vp.every((q) => Math.hypot(q.x - p.x, q.y - p.y) > 30)) {
           return { x: p.x, y: p.y, name: f.properties.name, id: f.properties.id };
         }
       }
