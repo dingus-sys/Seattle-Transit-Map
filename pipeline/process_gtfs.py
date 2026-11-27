@@ -30,6 +30,9 @@ FEED_DIR = os.path.join(CACHE, "gtfs", "feeds")
 EXT = os.path.join(CACHE, "ext")
 DATA = os.path.join(SITE, "data")
 
+# small-town and rural agencies, whose all-day routes can run only every few hours
+RURAL_AGENCIES = {"skagit", "island", "clallam", "mason", "jefferson", "wta"}
+
 AGENCY = {
     "1": ("King County Metro", "Metro"),
     "40": ("Sound Transit", "Sound Transit"),
@@ -474,9 +477,19 @@ def main():
             row["trips"] = int(len(t))
             sched[d] = row
         wsched = sched["weekday"] or {}
+        if aid in RURAL_AGENCIES and not sched["weekday"]:
+            # Skagit's feed had no trips at all on the sample weekday, so every Skagit route
+            # was filed as rush-hour (hidden by default); judge such a route by its busiest day
+            wsched = max((sched[d] for d in ("saturday", "sunday") if sched[d]),
+                         key=lambda row: row.get("mid_n", 0), default={})
         mid_hw = wsched.get("mid")
         mid_n = wsched.get("mid_n", 0)
         runs_midday = mid_n >= 3  # at least every two hours through the middle of the day
+        if aid in RURAL_AGENCIES and not runs_midday:
+            # a rural route every 3-6 hours from morning to evening is its town's all-day
+            # service, not a commute route (Jefferson 1, Clallam 10, Island 411C)
+            runs_midday = (mid_n >= 1 and wsched.get("am_n", 0) >= 1 and wsched.get("pm_n", 0) >= 1
+                           and wsched.get("span_h", 0) >= 8)
 
         # Category
         name_l = short.lower()
