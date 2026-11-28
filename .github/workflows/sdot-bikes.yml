@@ -1,0 +1,34 @@
+name: Download SDOT's bike network
+
+# Runs tools/extract_sdot_bikes.py where the City of Seattle's ArcGIS service can be reached and
+# commits pipeline/sdot_bikes.json.gz back to the same working branch. Only on working branches:
+# main never runs it (the result is committed data, refreshed when the bike data is rebuilt).
+on:
+  push:
+    branches: ["claude/**"]
+    paths: ["tools/extract_sdot_bikes.py", ".github/workflows/sdot-bikes.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 tools/extract_sdot_bikes.py
+      - name: Commit the download to this branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pipeline/sdot_bikes.json.gz
+          git commit -m "SDOT's bike network (tools/extract_sdot_bikes.py)" || exit 0
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
