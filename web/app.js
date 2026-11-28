@@ -101,7 +101,7 @@
       { key: "water", cats: ["watertaxi", "ferry"], name: "Water Taxi & ferries", desc: "King County, WSF and Kitsap", on: true },
     ] },
     { title: "Trails", items: [
-      { key: "trails", cats: [], name: "Bike network & trails", desc: "Seattle bike network, protected bike lanes, greenways & regional trails", on: true, area: "trails" },
+      { key: "trails", cats: [], name: "Bike network & trails", desc: "SDOT's bike map (all its kinds) and regional trails", on: true, area: "trails" },
     ] },
     { title: "On demand", items: [
       { key: "dart", cats: ["dart"], name: "Dial-a-Ride (DART)", desc: "Can leave its route to pick you up", on: true, area: "dart" },
@@ -572,23 +572,54 @@
     for (const l of L) if (l.source === "net" && l.type === "line") l.paint["line-opacity-transition"] = { duration: 260 };
     return L;
   }
+  // The kinds of bike line: SDOT's eight, as its bike map names them, plus multi-use trails and
+  // the counties' gravel trails (k as pipeline/clean_bikes.py writes it). Each has its color (light,
+  // dark), dashes (in line widths; none is solid), width (in line units, scaled by bikeWidths), the
+  // zoom it shows from, and its family: how far it keeps bikes from cars (the key's shares).
+  // Colors keep clear of the buses' blues, RapidRide's red and the streetcar's orange.
+  const BIKE_FAMS = [
+    { f: "sep", name: "Separated from traffic", desc: "A path or lane with something solid between bikes and cars" },
+    { f: "paint", name: "Painted lanes", desc: "Space of its own, marked with paint only" },
+    { f: "shared", name: "Shared with traffic", desc: "Bikes share the street or lane with cars" },
+    { f: "other", name: "Other", desc: "" },
+  ];
+  const BIKE_KINDS = [
+    { k: "trail", fam: "sep", name: "Multi-use trail", c: ["#047857", "#2dd4bf"], w: 1.55,
+      desc: "A paved path of its own, away from traffic, shared by people walking, rolling and biking." },
+    { k: "pbl", fam: "sep", name: "Protected bike lane", c: ["#4d7c0f", "#a3e635"], w: 1.55,
+      desc: "A bike lane kept apart from moving traffic by something solid: posts, curbs, planters, concrete barriers or a row of parked cars." },
+    { k: "offst", fam: "sep", name: "Off-street bike path", c: ["#047857", "#2dd4bf"], dash: [1.3, 0.9], w: 1.45,
+      desc: "A bike path off the roadway that isn't one of the named trails: at sidewalk level beside the street, on a bridge, or a short connector (SDOT: Off-Street Bicycle Facility)." },
+    { k: "buffered", fam: "paint", name: "Buffered bike lane", c: ["#a21caf", "#e879f9"], w: 1.45, min: 9.8,
+      desc: "A painted bike lane with a striped buffer between it and traffic or parked cars. Paint only, nothing solid." },
+    { k: "lane", fam: "paint", name: "Painted bike lane", c: ["#db2777", "#f472b6"], w: 1.4, min: 9.8,
+      desc: "A lane for bikes marked with a painted line and bike symbols, right beside traffic." },
+    { k: "climb", fam: "paint", name: "Climbing lane", c: ["#db2777", "#f472b6"], dash: [2.6, 1.3], w: 1.35, min: 9.8,
+      desc: "A painted bike lane on the uphill side only, where bikes climb slowly; downhill, bikes ride in the traffic lane." },
+    { k: "greenway", fam: "shared", name: "Neighborhood greenway", c: ["#16a34a", "#86efac"], dash: [3, 1.2], w: 1.4, min: 9,
+      desc: "A calm residential street made for walking and biking: 20 mph, speed humps, stop signs that favor the route and help crossing busy streets. Bikes share it with a few cars." },
+    { k: "sharrow", fam: "shared", name: "Sharrows", c: ["#ca8a04", "#fde047"], dash: [1, 1.1], w: 1.25, min: 11,
+      desc: "Shared-lane markings (a bike under two chevrons) painted in the traffic lane: bikes and cars share the lane, with no space of their own." },
+    { k: "unknown", fam: "other", name: "Unidentified", c: ["#64748b", "#94a3b8"], dash: [1.6, 1.4], w: 1.25, min: 11,
+      desc: "On SDOT's map with no facility type recorded." },
+    { k: "unpaved", fam: "sep", name: "Gravel trail", c: ["#9a3412", "#fb923c"], dash: [2.2, 1.2], w: 1.45,
+      desc: "An unpaved regional trail (outside Seattle, from the county's trail data)." },
+  ];
+  const BIKE_BY = Object.fromEntries(BIKE_KINDS.map((d) => [d.k, d]));
+  const bikeCol = (k, th = theme) => (BIKE_BY[k] || BIKE_BY.trail).c[th === "dark" ? 1 : 0];
+  // the map layer each kind is drawn on, and what each key filter shows (a kind or a family)
+  const bikeLayerOf = (k) => "trail-" + k;
+  const BIKE_FILTERS = Object.fromEntries([
+    ...BIKE_KINDS.map((d) => [d.k, [d.k]]),
+    ...BIKE_FAMS.map((F) => ["fam:" + F.f, BIKE_KINDS.filter((d) => d.fam === F.f).map((d) => d.k)]),
+  ]);
   // one color per kind of bike line, for the lines that light up (hover and selection)
-  const BIKE_COLOR = (th) => ["match", ["get", "k"],
-    "greenway", th === "dark" ? "#86efac" : "#16a34a",
-    "lane", th === "dark" ? "#f472b6" : "#db2777",
-    "sharrow", th === "dark" ? "#fde047" : "#ca8a04",
-    "unpaved", th === "dark" ? "#fb923c" : "#9a3412",
-    th === "dark" ? "#2dd4bf" : "#047857"];
+  const BIKE_COLOR = (th) => ["match", ["get", "k"], ...BIKE_KINDS.flatMap((d) => [d.k, d.c[th === "dark" ? 1 : 0]]), bikeCol("trail", th)];
   function areaLayers(P, th = theme) {
     const acc = th === "dark" ? "#bf9cf5" : "#7b5cc4";
-    const trailCol = th === "dark" ? "#2dd4bf" : "#047857";
-    const trailGreenway = th === "dark" ? "#86efac" : "#16a34a";
-    // Bike lane: rose, not blue — the bus network already owns every shade of blue, so a blue
-    // bike lane line vanished into the frequent/swift/local bus lines sharing the same street.
-    const trailLane = th === "dark" ? "#f472b6" : "#db2777";
-    // Sharrows: gold, not olive — olive sat too close to the unpaved trail's brown at a glance,
-    // especially once both thin out at a low zoom.
-    const trailSharrow = th === "dark" ? "#fde047" : "#ca8a04";
+    // (bike lanes are rose, not blue: the bus network already owns every shade of blue, so a blue
+    // bike lane vanished into the bus lines sharing its street; sharrows gold, not olive, which sat
+    // too close to the gravel trails' brown)
     const trailHalo = th === "dark" ? "#090d16" : "#ffffff";
     const trailText = th === "dark" ? "#5eead4" : "#065f46";
     const trailCase = th === "dark" ? "#041d16" : "#ffffff";
@@ -613,32 +644,13 @@
       { id: "trail-case", type: "line", source: "trails", minzoom: 9,
         layout: { "line-cap": "round", "line-join": "round" },
         paint: { "line-color": trailCase, "line-opacity": th === "dark" ? 0.9 : 0.95, "line-width": px("cm") } },
-      // 2. Multi-use trails and Protected Bike Lanes (PBL) - solid emerald line
-      { id: "trail-pbl", type: "line", source: "trails",
-        filter: ["==", ["get", "k"], "pbl"],
-        layout: { "line-cap": "round", "line-join": "round" },
-        paint: { "line-color": trailCol, "line-width": px("wm"), "line-opacity": 1 } },
-      // 3. Neighborhood Greenways & Healthy Streets - green with a long dash
-      { id: "trail-greenway", type: "line", source: "trails", minzoom: 9,
-        filter: ["==", ["get", "k"], "greenway"],
-        layout: { "line-join": "round" },
-        paint: { "line-color": trailGreenway, "line-width": px("wm"), "line-dasharray": [3, 1.2], "line-opacity": 1 } },
-      // 4. Bicycle Lanes (buffered, climbing and striped) - rose
-      { id: "trail-lane", type: "line", source: "trails", minzoom: 9.8,
-        filter: ["==", ["get", "k"], "lane"],
-        layout: { "line-cap": "round", "line-join": "round" },
-        paint: { "line-color": trailLane, "line-width": px("wm"), "line-opacity": 1 } },
-      // 5. Sharrows & Shared Streets - gold dots
-      { id: "trail-sharrow", type: "line", source: "trails", minzoom: 11,
-        filter: ["==", ["get", "k"], "sharrow"],
-        layout: { "line-join": "round" },
-        paint: { "line-color": trailSharrow, "line-width": px("wm"), "line-dasharray": [1, 1.1], "line-opacity": 1 } },
-      // 6. Unpaved / gravel trails - rust dashes
-      { id: "trail-dash", type: "line", source: "trails",
-        filter: ["==", ["get", "k"], "unpaved"],
-        layout: { "line-join": "round" },
-        paint: { "line-color": th === "dark" ? "#fb923c" : "#9a3412", "line-width": px("wm"), "line-dasharray": [2.2, 1.2], "line-opacity": 1 } },
-      // 7. A hovered or chosen bike route, whole: a soft glow, a white casing and a solid line in its
+      // 2. One layer per kind (BIKE_KINDS), drawn from the least separated up, so where two kinds
+      //    meet the better one is on top
+      ...BIKE_KINDS.slice().reverse().map((d) => ({ id: bikeLayerOf(d.k), type: "line", source: "trails", ...(d.min ? { minzoom: d.min } : {}),
+        filter: ["==", ["get", "k"], d.k],
+        layout: d.dash ? { "line-join": "round" } : { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": d.c[th === "dark" ? 1 : 0], "line-width": px("wm"), "line-opacity": 1, ...(d.dash ? { "line-dasharray": d.dash } : {}) } })),
+      // 3. A hovered or chosen bike route, whole: a soft glow, a white casing and a solid line in its
       //    color, wider than the rest (dashes made a lit greenway as hard to follow as an unlit one)
       { id: "bike-hl-glow", type: "line", source: "trails", filter: ["in", ["get", "b"], ["literal", []]],
         layout: { "line-cap": "round", "line-join": "round" },
@@ -649,7 +661,7 @@
       { id: "bike-hl", type: "line", source: "trails", filter: ["in", ["get", "b"], ["literal", []]],
         layout: { "line-cap": "round", "line-join": "round" },
         paint: { "line-color": BIKE_COLOR(th), "line-width": px("wm", 1.75) } },
-      // 8. Labels along the bike routes
+      // 4. Labels along the bike routes
       { id: "trail-labels", type: "symbol", source: "trails", minzoom: 12,
         layout: {
           "symbol-placement": "line", "symbol-spacing": 420,
@@ -1534,7 +1546,7 @@
   // matter most a little wider, slimming with the buses when zoomed out.
   function bikeWidths(z) {
     const f = minorScale(z).local;
-    return { pbl: 1.55 * f, unpaved: 1.45 * f, lane: 1.4 * f, greenway: 1.4 * f, sharrow: 1.25 * f };
+    return Object.fromEntries(BIKE_KINDS.map((d) => [d.k, d.w * f]));
   }
   function tierFor(z) { const t = BUS_TIERS[settings.busDetail]; return z >= t[2] ? 2 : z >= t[1] ? 1 : 0; }
   let lastZ = -1, labelStep = null, needsRebuild = false, builtView = null, lastFeats = [], lastSelFeats = [], lastBikes = [];
@@ -4931,43 +4943,7 @@
 
     const nonTrailKeys = keys.filter((l) => l.key !== "trails");
     const hasTrails = enabled.has("trails");
-    const bikeLegendHTML = hasTrails ? `
-      <div class="bike-legend-card">
-        <div class="bike-legend-head">
-          <h3 class="bike-legend-title">Bicycle Network & Trails</h3>
-          <span class="muted" style="font-size:11px">SDOT 2025 Legend</span>
-        </div>
-        <div class="bike-filter-pills" role="group" aria-label="Filter bike facilities">
-          <button type="button" class="bike-filter-pill${!bikeFacilityFilter ? " active" : ""}" data-bike-cat="">All types</button>
-          <button type="button" class="bike-filter-pill${bikeFacilityFilter === "pbl" ? " active" : ""}" data-bike-cat="pbl">Protected & Trails</button>
-          <button type="button" class="bike-filter-pill${bikeFacilityFilter === "greenway" ? " active" : ""}" data-bike-cat="greenway">Greenways</button>
-          <button type="button" class="bike-filter-pill${bikeFacilityFilter === "lane" ? " active" : ""}" data-bike-cat="lane">Bike Lanes</button>
-          <button type="button" class="bike-filter-pill${bikeFacilityFilter === "sharrow" ? " active" : ""}" data-bike-cat="sharrow">Sharrows</button>
-          <button type="button" class="bike-filter-pill${bikeFacilityFilter === "unpaved" ? " active" : ""}" data-bike-cat="unpaved">Regional / Gravel</button>
-        </div>
-        <ul class="bike-legend-list" role="list">
-          <li class="bike-legend-row${bikeFacilityFilter === "pbl" ? " active" : ""}" data-bike-cat="pbl" title="Filter to Protected Bike Lanes & Trails">
-            <span class="sw">${bikeSwatch("pbl")}</span>
-            <span class="lbl"><span class="lbl-name">Separated Bikeway / Multi-Use Trail</span><span class="lbl-desc">Protected bike lanes & paved paths</span></span>
-          </li>
-          <li class="bike-legend-row${bikeFacilityFilter === "greenway" ? " active" : ""}" data-bike-cat="greenway" title="Filter to Neighborhood Greenways">
-            <span class="sw">${bikeSwatch("greenway")}</span>
-            <span class="lbl"><span class="lbl-name">Neighborhood Greenway</span><span class="lbl-desc">Calm residential streets (20 mph, humps)</span></span>
-          </li>
-          <li class="bike-legend-row${bikeFacilityFilter === "lane" ? " active" : ""}" data-bike-cat="lane" title="Filter to Bicycle Lanes">
-            <span class="sw">${bikeSwatch("lane")}</span>
-            <span class="lbl"><span class="lbl-name">Bicycle Lane</span><span class="lbl-desc">Buffered, climbing & street lanes</span></span>
-          </li>
-          <li class="bike-legend-row${bikeFacilityFilter === "sharrow" ? " active" : ""}" data-bike-cat="sharrow" title="Filter to Shared Streets">
-            <span class="sw">${bikeSwatch("sharrow")}</span>
-            <span class="lbl"><span class="lbl-name">Shared Street / Sharrows</span><span class="lbl-desc">Streets with shared-lane markings</span></span>
-          </li>
-          <li class="bike-legend-row${bikeFacilityFilter === "unpaved" ? " active" : ""}" data-bike-cat="unpaved" title="Filter to Regional & Gravel Trails">
-            <span class="sw">${bikeSwatch("unpaved")}</span>
-            <span class="lbl"><span class="lbl-name">Regional & Gravel Trail</span><span class="lbl-desc">Unpaved regional corridors</span></span>
-          </li>
-        </ul>
-      </div>` : "";
+    const bikeLegendHTML = hasTrails ? bikeLegendCardHTML() : "";
 
     const html = `<div class="home-view">
       <p class="live-line${live ? "" : " off"}"><span class="pulse" aria-hidden="true"></span><span${live ? ' id="liveDesc"' : ""}>${live ? esc(liveStatusText()) : "Vehicles are hidden"}</span></p>
@@ -5017,6 +4993,21 @@
     const oa = $("#openAlerts");
     if (oa) oa.addEventListener("click", () => { panelView = "alerts"; showAlerts(); openSheet("half"); });
     bindFavListEvents();
+    // the key's "i": hovering it (or its card) shows what each kind means; a click keeps it open
+    const ib = body().querySelector("#bikeInfoBtn"), info = body().querySelector("#bikeInfo");
+    if (ib && info) {
+      let pinned = false, t = 0;
+      const show = (on) => { clearTimeout(t); info.hidden = !on; ib.setAttribute("aria-expanded", on ? "true" : "false"); ib.classList.toggle("on", on); };
+      const later = () => { clearTimeout(t); if (!pinned) t = setTimeout(() => show(false), 220); };
+      ib.addEventListener("click", (e) => { e.stopPropagation(); pinned = !(pinned && !info.hidden); show(pinned); });
+      for (const el of [ib, info]) {
+        el.addEventListener("mouseenter", () => { clearTimeout(t); if (info.hidden) show(true); });
+        el.addEventListener("mouseleave", later);
+      }
+      info.querySelector(".bike-info-x").addEventListener("click", (e) => { e.stopPropagation(); pinned = false; show(false); ib.focus(); });
+      info.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.stopPropagation(); pinned = false; show(false); ib.focus(); } });
+      ib.addEventListener("keydown", (e) => { if (e.key === "Escape" && !info.hidden) { e.stopPropagation(); pinned = false; show(false); } });
+    }
     body().querySelectorAll(".bike-filter-pill, .bike-legend-row").forEach((btn) => {
       btn.addEventListener("click", () => {
         const cat = btn.dataset.bikeCat || null;
@@ -5295,7 +5286,7 @@
             <div class="legend-row"><span class="legend-inline-icon">${poiIconSVG("transit_center", 18)}</span> <div><strong>Transit Center & Transfer Hub</strong> · Bellevue TC, Mountlake Terrace, Federal Way</div></div>
             <div class="legend-row"><span class="legend-inline-icon">${poiIconSVG("station", 18)}</span> <div><strong>Rail Station</strong> · Link Light Rail 1 & 2 Lines, Sounder & Amtrak</div></div>
             <div class="legend-row"><span class="legend-inline-icon">${poiIconSVG("pr", 18)}</span> <div><strong>Park & Ride</strong> · Commuter parking garages & lots (Northgate, Eastgate)</div></div>
-            <div class="legend-row"><span class="legend-inline-icon">${poiIconSVG("bike", 18)}</span> <div><strong>Bicycle Facilities</strong> · Protected bike lanes, greenways & multi-use trails</div></div>
+            <div class="legend-row"><span class="legend-inline-icon">${poiIconSVG("bike", 18)}</span> <div><strong>Bicycle Facilities</strong> · SDOT's kinds of bike lane, greenways, sharrows & multi-use trails (the "i" in the bike key explains each)</div></div>
           </div>
         </div>
       </div>`;
@@ -5391,29 +5382,75 @@
       li.addEventListener("click", (e) => { if (!e.target.closest(".switch")) toggle(!input.checked); });
     }
   }
+  // The bike key: a row per kind (each filters the map to it), grouped by how far it keeps bikes
+  // from cars, with each kind's share of Seattle's network, and an "i" that explains every kind.
+  const BIKE_SHORT = { trail: "Paved path away from traffic", pbl: "Lane walled off by posts, curbs or parked cars",
+    offst: "Path beside the road or on a bridge", buffered: "Painted lane with a striped buffer", lane: "Painted lane beside traffic",
+    climb: "Painted lane on the uphill side only", greenway: "Calm residential street, 20 mph", sharrow: "Markings in a lane shared with cars",
+    unknown: "No type recorded by SDOT", unpaved: "Unpaved regional trail" };
+  // miles of each kind in SDOT's own network (bikes.json stats), and their shares
+  function bikeShares() {
+    const mi = (BIKES && BIKES.stats && BIKES.stats.sdot_miles) || null;
+    if (!mi) return null;
+    const total = Object.values(mi).reduce((a, b) => a + b, 0);
+    if (!total) return null;
+    const kind = Object.fromEntries(Object.entries(mi).map(([k, v]) => [k, v / total]));
+    const fam = {};
+    for (const d of BIKE_KINDS) if (kind[d.k]) fam[d.fam] = (fam[d.fam] || 0) + kind[d.k];
+    return { mi, total, kind, fam, fetched: BIKES.stats.fetched || "" };
+  }
+  const pct = (x) => (x >= 0.095 ? Math.round(x * 100) + "%" : x >= 0.0095 ? (x * 100).toFixed(1).replace(/\.0$/, "") + "%" : x > 0 ? "<1%" : "");
+  function bikeInfoHTML(sh) {
+    const fams = BIKE_FAMS.filter((F) => BIKE_KINDS.some((d) => d.fam === F.f));
+    const bar = sh ? `<div class="bike-info-bar" role="img" aria-label="${fams.filter((F) => sh.fam[F.f]).map((F) => `${F.name} ${pct(sh.fam[F.f])}`).join(", ")}">${
+      BIKE_KINDS.filter((d) => sh.kind[d.k]).map((d) => `<span style="flex:${sh.kind[d.k].toFixed(4)};background:${bikeCol(d.k)}" title="${esc(d.name)} ${pct(sh.kind[d.k])}"></span>`).join("")}</div>` : "";
+    const unprot = sh ? (sh.fam.paint || 0) + (sh.fam.shared || 0) : 0;
+    const sum = sh ? `<p class="bike-info-sum"><b>${pct(unprot)}</b> of Seattle's ${Math.round(sh.total)} miles of bike network has nothing solid between bikes and cars: ${pct(sh.fam.paint || 0)} is painted lanes and ${pct(sh.fam.shared || 0)} is streets shared with traffic. <b>${pct(sh.fam.sep || 0)}</b> is separated from traffic.</p>` : "";
+    const groups = fams.map((F) => {
+      const ks = BIKE_KINDS.filter((d) => d.fam === F.f);
+      return `<li class="bike-info-fam"><div class="bike-info-fam-head"><b>${esc(F.name)}</b>${sh && sh.fam[F.f] ? `<span class="bike-info-pct">${pct(sh.fam[F.f])}</span>` : ""}</div>
+        ${F.desc ? `<p class="bike-info-fam-desc">${esc(F.desc)}</p>` : ""}
+        <ul role="list">${ks.map((d) => `<li class="bike-info-kind"><span class="sw">${bikeSwatch(d.k)}</span><span class="txt"><span class="nm"><b>${esc(d.name)}</b>${sh && sh.kind[d.k] ? `<span class="bike-info-pct">${pct(sh.kind[d.k])} · ${sh.mi[d.k] >= 10 ? Math.round(sh.mi[d.k]) : sh.mi[d.k].toFixed(1)} mi</span>` : ""}</span><span class="ds">${esc(d.desc)}</span></span></li>`).join("")}</ul></li>`;
+    }).join("");
+    return `<div class="bike-info-head"><b>What each kind of bike line means</b><button type="button" class="bike-info-x" aria-label="Close">×</button></div>
+      ${sum}${bar}<ul class="bike-info-list" role="list">${groups}</ul>
+      <p class="bike-info-src">Shares by length of SDOT's own bike map (its Existing Bike Facilities and Multi-use Trails${sh && sh.fetched ? `, downloaded ${esc(sh.fetched)}` : ""}). Gravel trails are outside Seattle, from county data.</p>`;
+  }
+  function bikeLegendCardHTML() {
+    const sh = bikeShares(), f = bikeFacilityFilter;
+    const pill = (cat, label) => `<button type="button" class="bike-filter-pill${(f || "") === cat ? " active" : ""}" data-bike-cat="${cat}">${label}</button>`;
+    const rows = BIKE_FAMS.map((F) => {
+      const ks = BIKE_KINDS.filter((d) => d.fam === F.f && (d.k !== "unknown" || (sh && sh.kind.unknown)));
+      if (!ks.length) return "";
+      return `<li class="bike-legend-fam" aria-hidden="true">${esc(F.name)}${sh && sh.fam[F.f] && F.f !== "other" ? ` · ${pct(sh.fam[F.f])}` : ""}</li>` + ks.map((d) => `
+          <li class="bike-legend-row${f === d.k ? " active" : ""}" data-bike-cat="${d.k}" title="Show only ${esc(d.name.toLowerCase())}s">
+            <span class="sw">${bikeSwatch(d.k)}</span>
+            <span class="lbl"><span class="lbl-name">${esc(d.name)}</span><span class="lbl-desc">${esc(BIKE_SHORT[d.k] || "")}</span></span>
+            ${sh && sh.kind[d.k] ? `<span class="lbl-pct">${pct(sh.kind[d.k])}</span>` : ""}
+          </li>`).join("");
+    }).join("");
+    return `
+      <div class="bike-legend-card">
+        <div class="bike-legend-head">
+          <h3 class="bike-legend-title">Bike network & trails</h3>
+          <span class="bike-legend-src muted">SDOT bike map</span>
+          <button type="button" class="bike-info-btn" id="bikeInfoBtn" aria-label="What each kind means, and how much of the network it is" aria-expanded="false" aria-controls="bikeInfo">i</button>
+        </div>
+        <div class="bike-info" id="bikeInfo" role="dialog" aria-label="Bike facility kinds" hidden>${bikeInfoHTML(sh)}</div>
+        <div class="bike-filter-pills" role="group" aria-label="Filter bike facilities">
+          ${pill("", "All kinds")}${pill("fam:sep", "Separated")}${pill("fam:paint", "Painted lanes")}${pill("fam:shared", "Shared streets")}
+        </div>
+        <ul class="bike-legend-list" role="list">${rows}
+        </ul>
+      </div>`;
+  }
+  // a key swatch for a kind of bike line: its color and dashes on a white casing, like the map's
   function bikeSwatch(type) {
-    const trailCol = theme === "dark" ? "#2dd4bf" : "#047857";
-    const trailGreenway = theme === "dark" ? "#86efac" : "#16a34a";
-    const trailLane = theme === "dark" ? "#f472b6" : "#db2777";
-    const trailSharrow = theme === "dark" ? "#fde047" : "#ca8a04";
-    const trailDash = theme === "dark" ? "#fb923c" : "#9a3412";
-    const trailCase = theme === "dark" ? "#041d16" : "#ffffff";
-    if (type === "pbl") {
-      return `<svg viewBox="0 0 46 32" aria-hidden="true"><path d="M4 16 H42" stroke="${trailCase}" stroke-width="9" stroke-linecap="round"/><path d="M4 16 H42" stroke="${trailCol}" stroke-width="5" stroke-linecap="round"/><path d="M7 16 H39" stroke="#fff" stroke-opacity=".34" stroke-width="1.1" stroke-linecap="round"/></svg>`;
-    }
-    if (type === "greenway") {
-      return `<svg viewBox="0 0 46 32" aria-hidden="true"><path d="M4 16 H42" stroke="${trailGreenway}" stroke-width="4.2" stroke-linecap="round" stroke-dasharray="9 7"/></svg>`;
-    }
-    if (type === "lane") {
-      return `<svg viewBox="0 0 46 32" aria-hidden="true"><path d="M4 16 H42" stroke="${trailLane}" stroke-width="4.2" stroke-linecap="round"/></svg>`;
-    }
-    if (type === "sharrow") {
-      return `<svg viewBox="0 0 46 32" aria-hidden="true"><path d="M4 16 H42" stroke="${trailSharrow}" stroke-width="3.8" stroke-linecap="round" stroke-dasharray="1.2 6.8"/></svg>`;
-    }
-    if (type === "unpaved") {
-      return `<svg viewBox="0 0 46 32" aria-hidden="true"><path d="M4 16 H42" stroke="${trailDash}" stroke-width="4" stroke-linecap="round" stroke-dasharray="5 6"/></svg>`;
-    }
-    return `<svg viewBox="0 0 46 32"></svg>`;
+    const d = BIKE_BY[type];
+    if (!d) return `<svg viewBox="0 0 46 32"></svg>`;
+    const cas = theme === "dark" ? "#041d16" : "#ffffff", col = d.c[theme === "dark" ? 1 : 0], w = 4.4 * d.w / 1.4;
+    const dash = d.dash ? ` stroke-dasharray="${d.dash.map((x) => (x * w).toFixed(1)).join(" ")}"` : "";
+    return `<svg viewBox="0 0 46 32" aria-hidden="true"><path d="M5 16 H41" stroke="${cas}" stroke-width="${(w + 3).toFixed(1)}" stroke-linecap="round"/><path d="M5 16 H41" stroke="${col}" stroke-width="${w.toFixed(1)}"${d.dash ? "" : ' stroke-linecap="round"'}${dash}/></svg>`;
   }
 
   function swatch(l) {
@@ -6203,7 +6240,8 @@
       BIKES.routes.forEach((r, b) => {
         if (!r.n) return;
         const pp = BIKES.props[(BIKES.pieces.find((pc) => pc.b === b) || {}).p] || {};
-        searchIndex.push({ kind: "trail", id: "bike" + b, key: `${r.n} ${[...names[b]].join(" ")} ${pp.cat_name || ""} trail bike bicycle cycling pbl greenway lane sharrow ${pp.region || ""}`.toLowerCase(), f: bikeRouteFeature(b) });
+        const kinds = [...new Set(BIKES.pieces.filter((pc) => pc.b === b).map((pc) => (BIKE_BY[pc.k] || {}).name || ""))].join(" ");
+        searchIndex.push({ kind: "trail", id: "bike" + b, key: `${r.n} ${[...names[b]].join(" ")} ${pp.cat_name || ""} ${kinds} trail bike bicycle cycling ${pp.region || ""}`.toLowerCase(), f: bikeRouteFeature(b) });
       });
     }
     for (const pr of PARK_AND_RIDES) {
@@ -6266,7 +6304,7 @@
       if (it.kind === "dest" && (it.d.name.toLowerCase().startsWith(q) || it.d.short.toLowerCase().startsWith(q))) score -= 30;
       if (it.key.startsWith(q)) score -= 5;
       if (namesKind && it.kind === "station") score -= 15;
-      if (it.kind === "trail" && (q.includes("bike") || q.includes("trail") || q.includes("cycle") || q.includes("cycling") || q.includes("greenway") || q.includes("pbl") || q.includes("lane"))) score -= 25;
+      if (it.kind === "trail" && (q.includes("bike") || q.includes("trail") || q.includes("cycle") || q.includes("cycling") || q.includes("greenway") || q.includes("pbl") || q.includes("lane") || q.includes("sharrow") || q.includes("protected"))) score -= 25;
       if (it.kind === "pr" && (q.includes("park") || q.includes("ride") || q.includes("p&r") || q.includes("garage") || q.includes("locker"))) score -= 25;
       if (it.kind === "hill" && (q.includes("hill") || q.includes("steep") || q.includes("incline") || q.includes("grade") || q.includes("slope"))) score -= 25;
       scored.push([score, it]);
@@ -6306,9 +6344,9 @@
     return f;
   }
   function bikeCard(b, here, at) {
-    const r = (BIKES && BIKES.routes[b]) || {}, f = bikeRouteFeature(b), p = f.properties, k = r.k || "pbl";
-    const [kindName, col] = [bikeKindName(k, p), (BIKE_KIND[k] || BIKE_KIND.pbl)[1]];
-    const icon = poiIconSVG(k === "greenway" ? "park" : k === "pbl" && p.facility !== "trail" ? "shield" : "bike", 17);
+    const r = (BIKES && BIKES.routes[b]) || {}, f = bikeRouteFeature(b), p = f.properties, k = r.k || "trail";
+    const [kindName, col] = [bikeKindName(k, p), (BIKE_KIND[k] || BIKE_KIND.trail)[1]];
+    const icon = bikeIcon(k, 17);
     const statusBadge = p.status === "UNDERCONS" ? ` · <span class="incline-badge" style="background:#fbbf24;color:#78350f">Under Construction</span>` : "";
     const herePart = here && here.name && here.name !== r.n ? `<p class="trail-meta">Here: <strong>${esc(here.name)}</strong></p>` : "";
     return `<div class="pop">
@@ -6319,9 +6357,9 @@
       <h3 style="margin:0 0 4px">${icon} ${esc(r.n || p.name || "Bike route")}</h3>
       <p class="trail-meta"><strong>${k === "unpaved" ? "Gravel / Unpaved Surface" : "Paved Surface"}</strong>${bikeMiles(r) ? ` · ${bikeMiles(r)}` : ""}${p.region ? ` · ${esc(p.region)}` : ""}</p>
       ${herePart}
-      <p>${esc((here && here.desc) || p.desc || "Seattle & Puget Sound bicycle network facility connecting transit hubs, neighborhoods, and commercial centers.")}</p>
+      <p>${esc((BIKE_BY[k] && k !== "unpaved" && k !== "trail" ? BIKE_BY[k].desc : "") || (here && here.desc) || p.desc || (BIKE_BY[k] || BIKE_BY.trail).desc)}</p>
       ${at ? `<div style="margin-top:10px">${directionsHTML(at[1], at[0], r.n || p.name)}</div>` : ""}
-      <p class="foot" style="margin-top:8px;font-size:11px;color:var(--muted)">City of Seattle SDOT & King County GIS Data</p>
+      <p class="foot" style="margin-top:8px;font-size:11px;color:var(--muted)">${p.region === "Seattle" ? "From SDOT's bike map" : `From ${esc(p.region || "county")} trail data`}</p>
     </div>`;
   }
   function selectTrail(f) {
@@ -6650,8 +6688,8 @@
         if (it.kind === "route") return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}">${badgeHTML(it.r)}<span class="txt"><span class="name">${esc(routeTitle(it.r))}</span><span class="desc">${esc(it.r.name)}</span></span></button>`;
         if (it.kind === "trail") {
           const p = it.f.properties;
-          const icon = poiIconSVG(p.facility === "pbl" ? "shield" : p.facility === "greenway" ? "park" : "bike", 17);
-          const cat = p.cat_name || "Bicycle Facility";
+          const icon = bikeIcon(p.k, 17);
+          const cat = bikeKindName(p.k, p);
           return `<button type="button" class="result${isAct ? " active" : ""}" data-i="${i}"><span class="trail-glyph" aria-hidden="true">${icon}</span><span class="txt"><span class="name">${esc(p.name)}</span><span class="desc">${esc(cat)}${p.length_mi ? ` · ${p.length_mi} mi` : ""}${p.surface === "unpaved" ? " · Gravel" : ""}${p.region ? ` (${esc(p.region)})` : ""}</span></span></button>`;
         }
         if (it.kind === "guide") {
@@ -9654,14 +9692,9 @@
   }
 
   // ---------------------------------------------------------------- layer toggles
+  // the key's filter: one kind ("pbl") or a family ("fam:paint"), or null for all (BIKE_FILTERS)
   let bikeFacilityFilter = null;
-  const TRAIL_CAT_LAYERS = {
-    pbl: ["trail-pbl", "trail-labels"],
-    greenway: ["trail-greenway"],
-    lane: ["trail-lane"],
-    sharrow: ["trail-sharrow"],
-    unpaved: ["trail-dash"],
-  };
+  const TRAIL_CAT_LAYERS = Object.fromEntries(Object.entries(BIKE_FILTERS).map(([key, ks]) => [key, [...ks.map(bikeLayerOf), "trail-labels"]]));
   const BIKE_HL_LAYERS = ["bike-hl-glow", "bike-hl-case", "bike-hl"];
   function applyLayerToggles() {
     if (!map) return;
@@ -9677,8 +9710,9 @@
     const on = enabled.has("trails");
     const allowed = bikeFacilityFilter ? new Set([...(TRAIL_CAT_LAYERS[bikeFacilityFilter] || []), "trail-case", ...BIKE_HL_LAYERS]) : null;
     trailLayers.forEach((id) => map.getLayer(id) && map.setLayoutProperty(id, "visibility", on && (!allowed || allowed.has(id)) ? "visible" : "none"));
-    // the casing is one layer for every kind: filtered with them
-    if (map.getLayer("trail-case")) map.setFilter("trail-case", bikeFacilityFilter ? ["==", ["get", "k"], bikeFacilityFilter] : null);
+    // the casing and the labels are one layer for every kind: filtered with them
+    const only = bikeFacilityFilter && BIKE_FILTERS[bikeFacilityFilter] ? ["in", ["get", "k"], ["literal", BIKE_FILTERS[bikeFacilityFilter]]] : null;
+    for (const id of ["trail-case", "trail-labels"]) if (map.getLayer(id)) map.setFilter(id, only);
     if (!on) { setBikeHover(null); setTrailSelection(null); }
     vis("stops", ["stops", "stop-name"]);
     vis("pois", DESTINATION_LAYER_IDS);
@@ -9695,7 +9729,7 @@
   // dashes and was as hard to follow as an unlit one), and fades the rest of the map, buses
   // included, further than a bus hover does; tapping it chooses it (the rest fades like a route
   // selection). Hovering a row of the bike legend brings out every line of that kind instead.
-  const TRAIL_LINE_LAYERS = ["trail-case", "trail-pbl", "trail-greenway", "trail-lane", "trail-sharrow", "trail-dash"];
+  const TRAIL_LINE_LAYERS = ["trail-case", ...BIKE_KINDS.map((d) => bikeLayerOf(d.k))];
   const trailBasePaint = {};
   function trailBase(id, prop) {
     const key = id + ":" + prop;
@@ -9707,8 +9741,7 @@
     if (!p) return null;
     if (p.k) return p.k;
     if (p.surface === "unpaved") return "unpaved";
-    if (p.facility === "greenway" || p.facility === "lane" || p.facility === "sharrow") return p.facility;
-    return "pbl";
+    return BIKE_BY[p.facility] ? p.facility : "trail";
   }
   let trailHoverCat = null, trailHlCat = null, bikeHoverB = null;
   const BIKE_DIM = new Set(["__bike"]); // hover-dim ids: no route stays bright
@@ -9717,7 +9750,7 @@
     for (const id of BIKE_HL_LAYERS) if (map.getLayer(id)) map.setFilter(id, ["in", ["get", "b"], ["literal", ids]]);
   }
   function refreshTrailPaint() {
-    if (!map || !map.getLayer("trail-pbl")) return;
+    if (!map || !map.getLayer("trail-trail")) return;
     const active = trailHoverCat ? new Set([...(TRAIL_CAT_LAYERS[trailHoverCat] || []), "trail-case"]) : null;
     for (const id of TRAIL_LINE_LAYERS) {
       if (!map.getLayer(id)) continue;
@@ -9752,7 +9785,7 @@
   }
   const setTrailHoverName = () => setBikeHover(null); // (older callers: the pointer left the map)
   function setBikeLegendHover(cat) {
-    if (!map || !map.getLayer("trail-pbl") || trailHoverCat === cat) return;
+    if (!map || !map.getLayer("trail-trail") || trailHoverCat === cat) return;
     trailHoverCat = cat;
     // Dim transit (and its vehicle badges) so the hovered kind reads clearly against the rest of the
     // map, without hiding the streets it runs alongside.
@@ -9763,7 +9796,7 @@
   // so only one kind of line is ever focused at a time.
   function setTrailSelection(b) {
     if (b === undefined) b = null;
-    if (!map || !map.getLayer("trail-pbl") || trailHlCat === b) return;
+    if (!map || !map.getLayer("trail-trail") || trailHlCat === b) return;
     if (b != null && selected) clearSelection();
     trailHlCat = b;
     setNetDim(b != null ? 0.38 : 1);
@@ -9772,8 +9805,8 @@
 
   // The bike line under the pointer (nearest of those within 7 px), with its route and source props.
   function bikeAt(pt, r = 7) {
-    if (!enabled.has("trails") || !map.getLayer("trail-pbl")) return null;
-    const layers = ["trail-pbl", "trail-greenway", "trail-lane", "trail-sharrow", "trail-dash"].filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none");
+    if (!enabled.has("trails") || !map.getLayer("trail-trail")) return null;
+    const layers = TRAIL_LINE_LAYERS.slice(1).filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none");
     const hits = map.queryRenderedFeatures([[pt.x - r, pt.y - r], [pt.x + r, pt.y + r]], { layers });
     if (!hits.length) return null;
     const ll = map.unproject(pt), p = toM(ll.lng, ll.lat);
@@ -9783,13 +9816,16 @@
     // out: pixels outside the line's stroke (0 on it)
     return { b, k: best.properties.k, route, np: best.properties.np || 1, p: (BIKES && BIKES.props[best.properties.p]) || {}, out: Math.max(0, bd) / (MPP0 / 2 ** map.getZoom()) };
   }
-  const BIKE_KIND = { pbl: ["Protected lane / trail", "#047857"], greenway: ["Neighborhood greenway", "#16a34a"], lane: ["Bike lane", "#db2777"],
-    sharrow: ["Shared street", "#a16207"], unpaved: ["Gravel trail", "#9a3412"] };
-  const bikeKindName = (k, p) => (p && p.facility === "trail" && k === "pbl" ? (p.cat_name || "Multi-use trail") : (BIKE_KIND[k] || BIKE_KIND.pbl)[0]);
+  // a kind's name and the color its name is written in on a card (the light theme's, readable on both)
+  const BIKE_KIND = Object.fromEntries(BIKE_KINDS.map((d) => [d.k, [d.name, d.k === "sharrow" ? "#a16207" : d.c[0]]]));
+  const bikeKindName = (k, p) => (p && k === "trail" && p.cat_name && p.cat_name !== "Multi-Use Trail" ? p.cat_name : (BIKE_KIND[k] || BIKE_KIND.trail)[0]);
+  // the little picture on a bike card: a shield for a lane kept apart from traffic, a park for a
+  // greenway, a bike for the rest
+  const bikeIcon = (k, size) => poiIconSVG(k === "greenway" ? "park" : k === "pbl" ? "shield" : "bike", size);
   const bikeMiles = (route) => (route && route.km ? `${(route.km / 1.609).toFixed(route.km < 16 ? 1 : 0)} mi` : "");
   function bikeTip(bk) {
-    const k = bk.k, name = (bk.route && bk.route.n) || bk.p.name || "Bike route", col = (BIKE_KIND[k] || BIKE_KIND.pbl)[1];
-    const icon = poiIconSVG(k === "greenway" ? "park" : k === "pbl" && bk.p.facility !== "trail" ? "shield" : "bike", 16);
+    const k = bk.k, name = (bk.route && bk.route.n) || bk.p.name || "Bike route", col = (BIKE_KIND[k] || BIKE_KIND.trail)[1];
+    const icon = bikeIcon(k, 16);
     // (a line along several streets carries the details of its longest one: name it only when it is the one street)
     const street = bk.np === 1 && bk.p.name && bk.p.name !== name ? `<br><span class="tt-more">Here: ${esc(bk.p.name)}</span>` : "";
     return `<span class="tt-trail">${icon} <b>${esc(name)}</b>${bikeMiles(bk.route) ? ` · ${bikeMiles(bk.route)}` : ""}<br><span style="color:${col};font-weight:700">${esc(bikeKindName(k, bk.p))}</span>${k === "unpaved" ? " · Gravel" : ""} · Tap for details${street}</span>`;
@@ -10078,16 +10114,95 @@
       return `<div class="tt-service-info"><span class="tt-cat">${esc(catText)}</span><span class="tt-run-pill ${isEveryday(r) ? "everyday" : "part-time"}">${esc(runText)}</span></div>`;
     }
     let moveRaf = 0, lastMoveEvent = null;
+    // is anything the pointer can hover (a bus, a tag, a stop, a route, a bike route) at pt?
+    const hoverableAt = (pt) => { if (pickVehicle(pt) || tagAt(pt) || pickStop(pt)) return true; const p = pickLineOrBike(pt); return !!(p.ln || p.bk); };
+    // which card a line under pt gets: "r:<route>" for one route's strand, "band:<routes>" for a
+    // street several routes share (the same choice the hover below makes)
+    const lineCardAt = (pt) => {
+      const { ln } = pickLineOrBike(pt);
+      if (!ln) return null;
+      const shared = !!(ln.f && ln.f.properties.r < 0 && ln.routes && ln.routes.length > 1 && !ln.one);
+      if (shared) return "band:" + ln.routes.map((x) => x.id).join(",");
+      const r = ln.r >= 0 ? LINES[ln.r] : (ln.routes && ln.routes[0]);
+      return "r:" + (r ? r.id : "");
+    };
+    const box = (pt, d) => [[pt.x - d, pt.y - d], [pt.x + d, pt.y + d]];
+    // where on the map a waiting card's pointer left the thing it describes (screen point at)
+    const anchorLL = (at, fallback) => {
+      if (!at) return fallback;
+      const rc = map.getCanvas().getBoundingClientRect();
+      return map.unproject([at.x - rc.left, at.y - rc.top]);
+    };
+    const routeReach = (r, restore) => ({ on: (pt) => lineCardAt(pt) === "r:" + r.id, click: () => selectRoute(r.id, { fit: true }), restore });
+    // what tapping a bus, a bike route or a DART / Flex / Access area opens (the tap and its card's click)
+    function openVehicleFeature(f) {
+      const v = live.vehicles.get(f.properties.id), r = RBY[f.properties.r];
+      if (f.properties.est && r) {
+        openPopup(f.geometry.coordinates, `<div class="pop"><h3>${esc(routeTitle(r))}</h3><p>${esc(r.name)}</p><p>Estimated position from the timetable${LIVE ? "" : " (live positions show on the website)"}.</p>${routeRows([r])}</div>`, "280px");
+        return true;
+      }
+      if (v && r) { openVehiclePopup(v, r, f.geometry.coordinates); return true; }
+      return false;
+    }
+    function openBikeCard(bk, ll) {
+      setTrailSelection(bk.b);
+      openPopup(ll, bikeCard(bk.b, bk.np === 1 ? bk.p : { ...bk.p, name: null }, [ll.lng, ll.lat]), "300px");
+    }
+    function openAreaPopup(f, ll) {
+      if (f.layer.id === "dart-fill") highlightDartArea(f.properties.slug || f.properties.route);
+      const html = f.layer.id === "flex-fill" ? flexHTML(f.properties) : f.layer.id === "dart-fill"
+        ? `<div class="pop"><h3>Dial-a-Ride area · route ${esc(f.properties.route)}</h3><p>Inside this area the DART bus can leave its regular path to pick you up or drop you off. Ask King County Metro to arrange an off-route trip.</p>${f.properties.slug && RBY[f.properties.slug] ? routeRows([RBY[f.properties.slug]]) : ""}</div>`
+        : `<div class="pop"><h3>Access paratransit (approximate)</h3><p>Access serves riders with disabilities who can't use fixed-route buses, within ¾ mile of Metro's regular routes while they run. Riders apply for eligibility and book trips ahead. This shading uses the ¾-mile rule around all-day routes.</p></div>`;
+      openPopup(ll, html, "290px");
+    }
     map.on("mousemove", (e) => {
       lastMoveEvent = e;
       if (moveRaf || map.isMoving()) return;
       moveRaf = requestAnimationFrame(() => {
         moveRaf = 0;
         if (!lastMoveEvent || map.isMoving()) return;
-        const e = lastMoveEvent;
-        if (inTipBridge(e.originalEvent.clientX, e.originalEvent.clientY)) {
+        hoverAt(lastMoveEvent);
+      });
+    });
+    // what the pointer at e is on: light it and show its card. rest: the pointer stopped on the way
+    // to a card that waits for it (the card's bridge doesn't hold it any more).
+    let hoverPrev = null;
+    const TIP_REST = 200; // ms the pointer rests on something else before a waiting card lets it go
+    // is the pointer, coming from prev, moving toward the card (within 60 degrees of it)?
+    const headingToTip = (prev, px, py) => {
+      if (!prev) return false;
+      const vx = px - prev.x, vy = py - prev.y, v = Math.hypot(vx, vy);
+      if (v < 0.5) return false;
+      const r = $("#tip").getBoundingClientRect();
+      const wx = Math.min(Math.max(px, r.left), r.right) - px, wy = Math.min(Math.max(py, r.top), r.bottom) - py, w = Math.hypot(wx, wy);
+      return w < 1 || (vx * wx + vy * wy) > 0.5 * v * w;
+    };
+    function hoverAt(e, rest = false) {
+        const px = e.originalEvent.clientX, py = e.originalEvent.clientY;
+        const prev = hoverPrev;
+        if (!rest) hoverPrev = { x: px, y: py };
+        if (!rest && tipReach && !tipEntered && !$("#tip").hidden) {
+          const onIt = tipReach.on(e.point);
+          if (tipLive && onIt) tipThaw();
+          // off it toward the card, into a gap or (still heading for the card) onto a bike lane
+          // alongside: the card waits. Onto the next route of a band, a stop, a tag or a bus, or onto
+          // a bike lane the pointer isn't crossing toward the card: that takes the pointer at once.
+          else if (!tipLive && !onIt && inBridgeOf(tipReach.anchor, px, py) && !(pickVehicle(e.point) || tagAt(e.point) || pickStop(e.point))) {
+            const pl = pickLineOrBike(e.point);
+            if (!pl.ln && (!pl.bk || headingToTip(prev, px, py))) tipFreeze();
+          }
+        }
+        if (!rest && inTipBridge(px, py)) {
           clearTimeout(tipOut);
           $("#tip").classList.remove("tip-leaving");
+          // stopped over something else on the way to a route's card: after a moment that thing
+          // takes the pointer (moving on toward the card keeps the card)
+          clearTimeout(tipRest);
+          if (tipReach) tipRest = setTimeout(() => {
+            if (!tipReach || !tipLive || tipEntered || $("#tip").hidden || lastMoveEvent !== e || tipReach.on(e.point) || !hoverableAt(e.point)) return;
+            tipThaw(); tipReach = null;
+            hoverAt(e, true);
+          }, TIP_REST);
           return;
         }
         // a bike route lights only while the pointer is on it and on nothing else (set below)
@@ -10104,7 +10219,8 @@
           showLens(null);
           map.getCanvas().style.cursor = "pointer";
           highlightStop(null);
-          tipShow("veh:" + vh.properties.id, `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b>${vesselLine(vh.properties.id)}<span class="vs-row">${vehicleLines(vh.properties.id, vh.properties.est)}</span></span>`, "", ev(e));
+          tipShow("veh:" + vh.properties.id, `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b>${vesselLine(vh.properties.id)}<span class="vs-row">${vehicleLines(vh.properties.id, vh.properties.est)}</span></span>`, "", ev(e),
+            { on: (pt) => { const v = pickVehicle(pt); return !!v && v.properties.id === vh.properties.id; }, click: () => openVehicleFeature(vh) });
           return;
         }
         // a number on a route tag
@@ -10129,7 +10245,9 @@
             const trInfo = tr && tr.partners.length
               ? `<span class="tt-tr">${poiIconSVG("transfer", 14)} Stay on bus: continues as ${tr.partners.map((p) => routeTitle(p)).join("/")} through Downtown</span>`
               : "";
-            tipShow("tag:" + tg.item.r, `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}${schedInfo}${trInfo}</span>`, "", ev(e, 14));
+            const tagR = tg.item.r;
+            tipShow("tag:" + tg.item.r, `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}${schedInfo}${trInfo}</span>`, "", ev(e, 14),
+              { on: (pt) => { const t = tagAt(pt); return !!t && t.item.r === tagR; }, click: () => selectRoute(r.id, { fit: true }), restore: () => focusRoute(r) });
           } else {
             cur = { kind: "tag", id: "more" };
             const allRoutes = (tg.item.more || []).map((i) => LINES[i]).filter(Boolean);
@@ -10167,7 +10285,8 @@
             const dObj = KEY_DESTINATIONS.find((k) => k.id === dp.id);
             const icon = poiIconSVG(dObj ? dObj.kind : "place", 15);
             const kindText = dObj ? poiKindTitle(dObj.kind) : "Point of Interest";
-            tipShow("dest:" + dp.id, `<div class="tt-dest"><span class="tt-dest-name poi-tooltip-name">${icon} ${esc(dp.name || dp.short)}</span><span class="tt-dest-kind">${esc(kindText)}</span>${dp.transit ? `<span class="tt-dest-tr">${poiIconSVG("bus", 13)} ${esc(dp.transit)}</span>` : ""}<span class="tt-more">Tap for navigation and details</span></div>`, "", ev(e));
+            tipShow("dest:" + dp.id, `<div class="tt-dest"><span class="tt-dest-name poi-tooltip-name">${icon} ${esc(dp.name || dp.short)}</span><span class="tt-dest-kind">${esc(kindText)}</span>${dp.transit ? `<span class="tt-dest-tr">${poiIconSVG("bus", 13)} ${esc(dp.transit)}</span>` : ""}<span class="tt-more">Tap for navigation and details</span></div>`, "", ev(e),
+              { on: (pt) => map.queryRenderedFeatures(box(pt, 8), { layers: DESTINATION_LAYER_IDS.filter((l) => map.getLayer(l)) }).some((h) => h.properties.id === dp.id), click: () => { if (dObj) showDestinationPopup(dObj); } });
             return;
           }
           const basePoiHits = map.queryRenderedFeatures([[e.point.x - 8, e.point.y - 8], [e.point.x + 8, e.point.y + 8]], {
@@ -10180,7 +10299,8 @@
             showLens(null);
             map.getCanvas().style.cursor = "pointer";
             highlightStop(null);
-            tipShow("poi:" + basePoi.id, `<div class="tt-dest"><span class="tt-dest-name poi-tooltip-name">${poiIconSVG(badge.iconKind, 15)} ${esc(basePoi.name)}</span><span class="tt-dest-kind">${esc(badge.label)}</span><span class="tt-more">Tap for navigation and details</span></div>`, "", ev(e));
+            tipShow("poi:" + basePoi.id, `<div class="tt-dest"><span class="tt-dest-name poi-tooltip-name">${poiIconSVG(badge.iconKind, 15)} ${esc(basePoi.name)}</span><span class="tt-dest-kind">${esc(badge.label)}</span><span class="tt-more">Tap for navigation and details</span></div>`, "", ev(e),
+              { on: (pt) => { const h = map.queryRenderedFeatures(box(pt, 8), { layers: BASE_POI_LAYER_IDS.filter((l) => map.getLayer(l)) }); const b = mapPoiFromFeature(h.find((f) => f.properties?.name), map.unproject([pt.x, pt.y])); return !!b && b.id === basePoi.id; }, click: () => showMapPoiPopup(basePoi) });
             return;
           }
         }
@@ -10193,7 +10313,8 @@
           map.getCanvas().style.cursor = "pointer";
           if (lid === "flex") {
             highlightStop(null);
-            tipShow("flex:" + p.name, `<span class="tt">${esc("Metro Flex · " + p.name)}</span>`, "", ev(e));
+            tipShow("flex:" + p.name, `<span class="tt">${esc("Metro Flex · " + p.name)}</span>`, "", ev(e),
+              { on: (pt) => { const s2 = pickStop(pt); return !!s2 && s2.layer.id === "flex" && s2.properties.name === p.name; }, click: () => openPopup(st.geometry.coordinates, flexHTML(p), "290px") });
           } else {
             highlightStop(st);
             const end = lid === "sel-stops" || lid === "hov-stops" ? p.end : 0;
@@ -10225,7 +10346,7 @@
               const trInfo = tr && tr.partners.length
                 ? `<span class="tt-tr">${poiIconSVG("transfer", 14)} Stay on bus: continues as ${tr.partners.map((p) => routeTitle(p)).join("/")} through Downtown</span>`
                 : "";
-              tipShow("line:" + (r ? r.id : ""), `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}${schedInfo}${trInfo}${more}</span>`, "", ev(e));
+              tipShow("line:" + (r ? r.id : ""), `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}${schedInfo}${trInfo}${more}</span>`, "", ev(e), r ? routeReach(r) : null);
               return;
             }
           } else {
@@ -10251,8 +10372,10 @@
             const rs = ln.routes, r = strandRoute || rs[0];
             if (sharedBand) {
               const shown = rs.slice(0, 8);
-              tipShow("band:" + rs.map((x) => x.id).join(","), `<div class="tip-more"><div class="tip-badges">${shown.map((x) => badgeHTML(x)).join("")}${rs.length > shown.length ? `<span class="badge lens-more">+${rs.length - shown.length}</span>` : ""}</div>`
-                + `<span class="tt-more">${rs.length} routes share this street · Tap to choose one</span></div>`, "", ev(e));
+              const bandKey = "band:" + rs.map((x) => x.id).join(",");
+              tipShow(bandKey, `<div class="tip-more"><div class="tip-badges">${shown.map((x) => badgeHTML(x)).join("")}${rs.length > shown.length ? `<span class="badge lens-more">+${rs.length - shown.length}</span>` : ""}</div>`
+                + `<span class="tt-more">${rs.length} routes share this street · Tap to choose one</span></div>`, "", ev(e),
+                { on: (pt) => lineCardAt(pt) === bandKey, click: () => { showCorridor(rs); focusRoutes(rs); } });
               return;
             }
             const nal = r ? routeAlerts(r.id) : [];
@@ -10263,7 +10386,8 @@
             const trInfo = tr && tr.partners.length
               ? `<span class="tt-tr">${poiIconSVG("transfer", 14)} Stay on bus: continues as ${tr.partners.map((p) => routeTitle(p)).join("/")} through Downtown</span>`
               : "";
-            tipShow("line:" + (r ? r.id : "") + ":" + rs.map((x) => x.id).join(","), `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}${schedInfo}${trInfo}${more}</span>`, "", ev(e));
+            tipShow("line:" + (r ? r.id : "") + ":" + rs.map((x) => x.id).join(","), `${badgeHTML(r)}<span class="tt"><b>${esc(routeTitle(r))}</b><br>${esc(r.name)}${schedInfo}${trInfo}${more}</span>`, "", ev(e),
+              r ? routeReach(r, strandRoute ? () => focusRoute(strandRoute) : null) : null);
             return;
           }
         }
@@ -10272,7 +10396,8 @@
           offLine(); cur = { kind: "trail", b: bk.b };
           map.getCanvas().style.cursor = "pointer";
           setBikeHover(bk.b);
-          tipShow("bike:" + bk.b, bikeTip(bk), "", ev(e));
+          tipShow("bike:" + bk.b, bikeTip(bk), "", ev(e),
+            { on: (pt) => { const p = pickLineOrBike(pt); return !!p.bk && p.bk.b === bk.b; }, click: (at) => openBikeCard(bk, anchorLL(at, e.lngLat)), restore: () => setBikeHover(bk.b) });
           return;
         }
         if (enabled.has("dart") && specialFilter !== "snow") {
@@ -10296,7 +10421,8 @@
                 (r ? badgeHTML(r) : "") +
                 `<span class="tt"><b>Dial-a-Ride (DART) Area · Route ${esc(dp.route)}</b>${r ? `<br>${esc(r.name)}` : ""}<br><span style="color:var(--accent);font-weight:600">Flexible on-demand service area · Tap to explore</span></span>`,
                 "",
-                ev(e)
+                ev(e),
+                { on: (pt) => map.queryRenderedFeatures(pt, { layers: ["dart-fill"] }).some((f) => (f.properties.slug || f.properties.route) === (rSlug || dp.route)), click: (at) => openAreaPopup(df, anchorLL(at, e.lngLat)) }
               );
               return;
             }
@@ -10306,8 +10432,7 @@
         map.getCanvas().style.cursor = "";
         tipHide();
         if (!tipLive) setHover(null);
-      });
-    });
+    }
     map.getCanvas().addEventListener("mouseleave", (e) => {
       if (moveRaf) { cancelAnimationFrame(moveRaf); moveRaf = 0; }
       // onto the card that's open: keep everything as it is, the card takes over
@@ -10376,14 +10501,7 @@
       const vehicle = nearest(vehAt(e.point, isNarrow() ? 12 : 8), e.point);
       const vehicleRadius = isNarrow() ? (selected?.type === "route" ? 22 : 14) : 10;
       const vh = vehicle && vehicle.d <= vehicleRadius && !(tagAt(e.point) || {}).inside ? [vehicle.f] : [];
-      if (vh.length) {
-        const v = live.vehicles.get(vh[0].properties.id), r = RBY[vh[0].properties.r];
-        if (vh[0].properties.est && r) {
-          openPopup(vh[0].geometry.coordinates, `<div class="pop"><h3>${esc(routeTitle(r))}</h3><p>${esc(r.name)}</p><p>Estimated position from the timetable${LIVE ? "" : " (live positions show on the website)"}.</p>${routeRows([r])}</div>`, "280px");
-          return;
-        }
-        if (v && r) { openVehiclePopup(v, r, vh[0].geometry.coordinates); return; }
-      }
+      if (vh.length && openVehicleFeature(vh[0])) return;
       // a number on a route tag opens that route; "+3" lists the rest
       const tg = tagAt(e.point);
       if (tg) {
@@ -10414,11 +10532,7 @@
       // beside a bus band
       const pick = pickLineOrBike(e.point);
       const bkTap = pick.bk || (cur && cur.kind === "trail" && !pick.ln ? bikeAt(e.point) : null);
-      if (bkTap) {
-        setTrailSelection(bkTap.b);
-        openPopup(e.lngLat, bikeCard(bkTap.b, bkTap.np === 1 ? bkTap.p : { ...bkTap.p, name: null }, [e.lngLat.lng, e.lngLat.lat]), "300px");
-        return;
-      }
+      if (bkTap) { openBikeCard(bkTap, e.lngLat); return; }
       const rs = routesAt(e.point, isNarrow() ? 10 : 6);
       const hoveredRoute = (cur && cur.kind === "line" && cur.id >= 0) ? LINES[cur.id] : null;
       const ln = pick.ln;
@@ -10454,12 +10568,7 @@
       }
       const area = map.queryRenderedFeatures(e.point, { layers: ["flex-fill", "dart-fill", "access-fill"].filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none") });
       if (area.length) {
-        const f = area.find((a) => a.layer.id === "flex-fill") || area.find((a) => a.layer.id === "dart-fill") || area[0];
-        if (f.layer.id === "dart-fill") highlightDartArea(f.properties.slug || f.properties.route);
-        const html = f.layer.id === "flex-fill" ? flexHTML(f.properties) : f.layer.id === "dart-fill"
-          ? `<div class="pop"><h3>Dial-a-Ride area · route ${esc(f.properties.route)}</h3><p>Inside this area the DART bus can leave its regular path to pick you up or drop you off. Ask King County Metro to arrange an off-route trip.</p>${f.properties.slug && RBY[f.properties.slug] ? routeRows([RBY[f.properties.slug]]) : ""}</div>`
-          : `<div class="pop"><h3>Access paratransit (approximate)</h3><p>Access serves riders with disabilities who can't use fixed-route buses, within ¾ mile of Metro's regular routes while they run. Riders apply for eligibility and book trips ahead. This shading uses the ¾-mile rule around all-day routes.</p></div>`;
-        openPopup(e.lngLat, html, "290px");
+        openAreaPopup(area.find((a) => a.layer.id === "flex-fill") || area.find((a) => a.layer.id === "dart-fill") || area[0], e.lngLat);
         return;
       }
       if (panelView === "directions") {
@@ -10704,17 +10813,46 @@
   // and its route numbers light their route on the map when pointed at. tipLiveFeat is the stop
   // kept lit while the card is open; tipGroup the routes kept lit for a "+N" card.
   let tipLive = false, tipLiveFeat = null, tipGroup = null, tipClick = null, tipLock = false, tipInside = false, tipEntered = false, tipChip = null, tipAnchor = null, tipRestore = 0, tipWired = false;
+  // A card that follows the pointer along what it describes (a route, a tag, a bus, a bike route,
+  // a place) can be reached too: { key, on(pt): still on it, click(), anchor }. While the pointer
+  // is on the thing the card glides after it; once it leaves toward the card, the card stops and
+  // waits (it becomes "live" as above), and clicking it does what clicking the thing does. It used
+  // to fade 60 ms after the pointer left the line, so it could never be reached (Nov 28).
+  let tipReach = null, tipRest = 0;
   const tipPos = { x: 0, y: 0, tx: 0, ty: 0, on: false };
   const calm = () => window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   function clearTipLive() {
-    clearTimeout(tipRestore);
+    clearTimeout(tipRestore); clearTimeout(tipRest);
     tipLive = false; tipLiveFeat = null; tipGroup = null; tipClick = null;
     tipLock = false; tipInside = false; tipEntered = false; tipChip = null; tipAnchor = null;
+    tipReach = null;
+  }
+  // the pointer left what a following card describes, heading for the card: the card stops there
+  // and can be pointed at and clicked
+  function tipFreeze() {
+    const tip = $("#tip");
+    tipLive = true; tipLock = true; tipEntered = false; tipInside = false; tipChip = null;
+    tipAnchor = tipReach.anchor; tipClick = tipReach.click; tipGroup = null; tipLiveFeat = null;
+    clearTimeout(tipOut);
+    tip.classList.remove("tip-leaving");
+    tip.classList.add("tip-live", "tip-reach");
+  }
+  // back on the thing itself: the card follows the pointer again
+  function tipThaw() {
+    const tip = $("#tip");
+    clearTimeout(tipRest);
+    tipLive = false; tipLock = false; tipEntered = false; tipInside = false; tipChip = null; tipAnchor = null; tipClick = null;
+    tip.classList.remove("tip-live", "tip-reach");
   }
   function inTipBridge(px, py) {
     if (!tipLive || tipEntered || !tipAnchor) return false;
+    return inBridgeOf(tipAnchor, px, py);
+  }
+  // Is (px, py) on the way from the anchor (where the pointer left the thing) to the card: the
+  // card itself (where it is and where it is going), a margin round it, or the wedge between?
+  function inBridgeOf(anchor, px, py) {
     const tip = $("#tip");
-    if (tip.hidden) return false;
+    if (tip.hidden || !anchor) return false;
     const r = tip.getBoundingClientRect();
     const pad = 12;
     const x0 = Math.min(r.left, tipPos.tx) - pad;
@@ -10722,7 +10860,7 @@
     const x1 = Math.max(r.right, tipPos.tx + tip.offsetWidth) + pad;
     const y1 = Math.max(r.bottom, tipPos.ty + tip.offsetHeight) + pad;
     if (px >= x0 && px <= x1 && py >= y0 && py <= y1) return true;
-    const ax = tipAnchor.x, ay = tipAnchor.y;
+    const ax = anchor.x, ay = anchor.y;
     if (Math.hypot(px - ax, py - ay) <= 10) return true;
     const inTri = (xA, yA, xB, yB, xC, yC) => {
       const d1 = (px - xB) * (yA - yB) - (xA - xB) * (py - yB);
@@ -10767,8 +10905,8 @@
       const el = chipOf(t);
       const id = el && el.dataset.route;
       if (id && RBY[id]) { tipHide(true); focusOff(); selectRoute(id, { fit: true }); return; }
-      const go = tipClick;
-      if (go) { tipHide(true); go(); }
+      const go = tipClick, at = tipAnchor;
+      if (go) { tipHide(true); go(at); }
     };
     tip.addEventListener("mouseenter", () => {
       if (!tipLive) return;
@@ -10787,7 +10925,7 @@
       clearTimeout(tipRestore); clearTimeout(hoverTimer);
       if (el) { focusChip(el); return; }
       // off the numbers: back to the whole group (or nothing, for a stop)
-      tipRestore = setTimeout(() => { if (tipGroup) focusRoutes(tipGroup, false, { glow: true, widthScale: 1.65 }); else if (hoverKey) setHover(null); }, 90);
+      tipRestore = setTimeout(() => { if (tipGroup) focusRoutes(tipGroup, false, { glow: true, widthScale: 1.65 }); else if (tipReach) { if (tipReach.restore) tipReach.restore(); } else if (hoverKey) setHover(null); }, 90);
     });
     tip.addEventListener("mouseleave", (e) => {
       tipInside = false; tipChip = null;
@@ -10811,15 +10949,20 @@
       map.getCanvas().dispatchEvent(new WheelEvent("wheel", e));
     }, { passive: false });
   }
-  function tipShow(key, html, cls, ev) {
+  function tipShow(key, html, cls, ev, reach) {
     const tip = $("#tip");
     tipWire();
     clearTimeout(tipOut);
     tip.classList.remove("tip-leaving");
     const live = /\btip-live\b/.test(cls || "");
-    if (key === tipKey && !tip.hidden) { tipAim(ev, live ? 8 : 16); return; }
+    const at = { x: ev.ax ?? ev.clientX, y: ev.ay ?? ev.clientY };
+    if (key === tipKey && !tip.hidden) {
+      if (tipReach && tipReach.key === key && !tipLive) tipReach.anchor = at;
+      tipAim(ev, live ? 8 : 16); return;
+    }
     clearTimeout(tipRestore);
     if (tipLive && !live) { clearTipLive(); highlightStop(null); }
+    tipReach = !live && reach ? { ...reach, key, anchor: at } : null;
     tipLive = live; tipChip = null; tipEntered = false;
     tipAnchor = live ? { x: ev.ax ?? ev.clientX, y: ev.ay ?? ev.clientY } : null;
     tipLock = false;
@@ -10857,7 +11000,7 @@
     if (tip.hidden) return;
     const gone = () => {
       tip.hidden = true; tipKey = ""; tip.classList.remove("tip-leaving");
-      if (tipLive) { clearTipLive(); highlightStop(null); setHover(null); showLens(null); }
+      if (tipLive) { const bike = tipReach && /^bike:/.test(tipReach.key); clearTipLive(); highlightStop(null); setHover(null); showLens(null); if (bike) setBikeHover(null); }
     };
     if (now) { gone(); return; }
     if (tipInside) return; // the pointer is on the card
@@ -10867,7 +11010,7 @@
       if (tipInside) return;
       tip.classList.add("tip-leaving");
       tipOut = setTimeout(gone, 170);
-    }, tipLive ? 480 : HOVER_GRACE);
+    }, tipLive ? (tipReach ? 240 : 480) : HOVER_GRACE);
   }
 
   // ---------------------------------------------------------------- phone sheet (peek / half / full)

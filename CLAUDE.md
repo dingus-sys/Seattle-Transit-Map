@@ -77,10 +77,13 @@ node tools/test_hover_release.js              # 7 checks: the old highlight lets
 node tools/test_hover_whole_route.js          # 27 checks over 9 areas: every strand picks its own route, hover lights
                                               #   every edge the route is drawn on, real mouse moves light the whole route
 node tools/test_hover_trace.js                # 4 checks: pointer walked along 128/8/106/5 never lets go or goes street-only
+node tools/test_hover_reach.js                # 17 checks: route, tag and bike cards wait while the pointer moves onto them
+                                              #   (along the line they follow, off it they let go) and open their page on click
 node tools/test_bikes.js                      # 30 checks over 8 areas: bike lines flush and parallel beside the bands at
                                               #   3 zooms, hover/tap light the whole bike route and dim the rest, let go
-python3 tools/check_bikes.py                  # 7 checks: bikes.json matches network.json, on OSM ways, no doubles,
-                                              #   no breaks or angles, Burke-Gilman one route
+python3 tools/check_bikes.py                  # 8 checks: bikes.json matches network.json, on OSM ways, no doubles,
+                                              #   no breaks or angles, Burke-Gilman one route, Seattle is SDOT's own map
+                                              #   (each of its kinds drawn as itself along >= 97% of its length)
 node tools/test_live_tracking.js              # 7 checks: a fake noisy WTA bus stays on its line, never backwards or perpendicular
 node tools/test_live_proxy.mjs                # 11 checks: the key proxy swaps in keys, refuses other sites and paths
 node tools/test_small_agency_live.js          # 3 checks: Island, WTA and Skagit (via the proxy) vehicles land on their routes
@@ -130,13 +133,23 @@ closed bubble on a freeway within 40 m; `tools/check_parallel_copies.py` gates i
 then `clean_bikes` and `build_bikes` (the bike network, below), then `build_site`.
 - `network.json`: `{lines: [route ids], edges: [{c: [[lon,lat]...], l: [line indexes], d: [direction per line]}]}`.
   Three separate layers: surface, rail, water.
-- Bike network: `trails_saved.json` (SDOT's bike network plus the county regional trails; points
-  50-300 m apart, the Burke-Gilman in two surveys, one piece per street name) goes through
-  `clean_bikes.py`: each line is HMM-matched onto OpenStreetMap ways (`pipeline/bike_osm.json.gz`,
-  committed; made by `tools/extract_bike_osm.py` in the `bike-osm.yml` workflow, which runs only on
-  `claude/**` branches because the sandbox can't reach the tiles), doubles dropped, and pieces of one
-  kind that meet end to end joined into routes (`b`, `bn`); short forms in names are spelled out
-  (`TIDY`: Av, Wy, Er/Wr roadway tags). Then `build_bikes.py` ties every stretch that runs along a
+- Bike network: inside Seattle, SDOT's own bike map (`pipeline/sdot_bikes.json.gz`, committed; made by
+  `tools/extract_sdot_bikes.py` in the `sdot-bikes.yml` workflow from the City's ArcGIS service, which the
+  sandbox can't reach): its "Existing Bike Facilities" in SDOT's eight kinds (`k`: greenway, pbl,
+  buffered, lane, climb, sharrow, offst, unknown) and its "Multi-use Trails" (`trail`), full resolution;
+  outside Seattle the county regional trails in `trails_saved.json` (`trail`, or `unpaved`). Nov 28: the
+  old Seattle copy in `trails_saved.json` folded buffered/climbing lanes into painted ones, had no
+  off-street pieces and a third of the trails missing, and the counties' trails ran on Seattle streets
+  (Interurban along Fremont/Linden/Phinney Ave N, Magnolia Connector on Gilman Ave W) as "trails".
+  `clean_bikes.py` merges SDOT's blocks of one street and kind (`sdot_lines`: ends within 1 m are one
+  point, blocks listed twice once), HMM-matches each line onto OpenStreetMap ways
+  (`pipeline/bike_osm.json.gz`, committed; made by `tools/extract_bike_osm.py` in the `bike-osm.yml`
+  workflow, which runs only on `claude/**` branches: the sandbox's bundled tiles have no paths or
+  cycleways), drops doubles (SDOT first, then the better kind: `RANK`; a county line within 30 m of
+  SDOT's is SDOT's), and joins pieces into routes (`b`, `bn`): same kind or name end to end, the
+  only two of a kind at a junction, and one named trail across a gap under 800 m (the Burke-Gilman's
+  missing link). Names are tidied (`sdot_name`, `TIDY`). `stats.sdot_miles` (each kind's miles in
+  SDOT's data) goes to bikes.json for the key's shares. Then `build_bikes.py` ties every stretch that runs along a
   transit edge (within `ATTACH_M` 35 m, same way) to that edge: `site/data/bikes.json` steps are
   `[edge, f0, f1, side(, off)]` or `[-1, lon/lat...]` for its own line. Side is per run of steps:
   right of travel unless a parallel band crowds that side (`crowded`). `off` is the real distance
@@ -182,6 +195,14 @@ one file for the artifact):
   map's brightening waits `HOVER_GRACE` 60 ms, so crossing to a neighbouring line doesn't flash the
   network), and a new target fades the old one before its path arrives from the worker. Recent
   hover paths are cached per layout (`routeCache`). `__atlas.hoverState()` exposes the two slots.
+- Hover cards can be reached (Nov 28: "it goes away and no time to click it"): every card passes
+  `tipShow(..., reach)` = `{on(pt), click(at), restore}`. While the pointer is on the thing the card
+  follows it; off it, inside the bridge to the card (`inBridgeOf`: the card plus the triangles from
+  where the pointer left) and over nothing a hover would take (a gap, or a bike lane it is crossing
+  toward the card: `headingToTip`), the card waits (`tipFreeze`: live, `tip-reach`, its line stays
+  lit) and a click on it does what tapping the thing does. Onto another route, a stop, a tag or a
+  bus, the new target takes the pointer at once; resting `TIP_REST` 200 ms on something hoverable in
+  the bridge also lets the card go. Anywhere outside the bridge the old rules (let go at once) hold.
 - Strands inside a band: each band feature carries `so` ("idx:offset,..." in metres, right of the
   drawn direction), so `pickLine` picks the route strand under the pointer (`offsetIn`) and lights
   that whole route. `streetRoutes(f)` is every route on the edge of every type (rush-hour included),
@@ -197,6 +218,12 @@ one file for the artifact):
   (`pickLineOrBike`, `bikeAt`); stops and places come first. Hover lights the whole bike route solid
   (no dashes) and dims everything else like a route hover. Hooks: `__atlas.lastBikes()`,
   `bikeState()`, `bikeAt(pt)`.
+- Bike kinds are one table, `BIKE_KINDS` in `app.js` (name, color light/dark, dashes, width, min zoom,
+  family: separated / painted / shared, description): the map layers (`trail-<k>`), widths, swatches,
+  the key (a row per kind grouped by family, each kind's share of SDOT's miles; filters by kind or
+  `fam:<family>`), tooltips and cards all read it. The key's "i" (`#bikeInfoBtn`, hover shows, click
+  pins) explains every kind with its share and miles, and how much has nothing solid between bikes
+  and cars. Never add a kind in one place only.
 - Hovered rush-hour routes are drawn solid and bold with light dashes down the middle (the
   `mid` stroke in `ribbons.js`), so they stay bold but don't look like all-day buses.
 - Overview one-way arrows: where the one-way service types on a street all go the same way, only

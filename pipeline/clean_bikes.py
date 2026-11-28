@@ -1,7 +1,15 @@
 """Bike network geometry: snapped onto OpenStreetMap, one line per street, joined into routes.
 
-The saved bike network (trails_saved.json: SDOT's Seattle bike network plus the King, Pierce and
-Snohomish County regional trails) has three problems this fixes for every route at once:
+Sources. Inside Seattle: SDOT's own bike network, exactly as its bike map has it
+(sdot_bikes.json.gz, from tools/extract_sdot_bikes.py): every piece of its "Existing Bike
+Facilities" layer in its own eight kinds (Neighborhood Greenways, Protected, Buffered and Painted
+Bike Lanes, Climbing Lanes, Sharrows, Off-Street Bicycle Facilities and Unidentified) and its
+Multi-use Trails, at full resolution. (trails_saved.json had a simplified copy: points 50-300 m
+apart, buffered and climbing lanes folded into painted ones, no off-street or unidentified pieces
+and a third of the multi-use trails missing.) Outside Seattle: the King, Pierce and Snohomish
+County regional trails in trails_saved.json. SDOT cuts its network at every block: the blocks of one
+street, one kind and one state are first merged into one line (`sdot_lines`). Then three problems
+are fixed for every route at once:
 
   shape    points 50-300 m apart, so a curving trail is a row of straight pieces with sharp
            angles. Each line is resampled every few metres and matched onto OpenStreetMap's own
@@ -17,7 +25,8 @@ Snohomish County regional trails) has three problems this fixes for every route 
            straightest pair (or the same name).
 
 Output: pipeline/bikes_clean.json (a FeatureCollection of pieces; properties keep the source's and
-add `b`, the route id, and `bn`, the route's name). build_bikes.py places it beside the transit lines.
+add `b`, the route id, and `bn`, the route's name; `stats.sdot_miles` holds the miles of each kind in
+SDOT's own network, for the key's shares). build_bikes.py places it beside the transit lines.
 """
 import gzip
 import json
@@ -30,11 +39,13 @@ from collections import Counter, defaultdict
 import numpy as np
 import shapely
 from pyproj import Transformer
-from shapely.geometry import LineString, shape
+from shapely.geometry import LineString, MultiLineString, shape
+from shapely.ops import linemerge
 from shapely.strtree import STRtree
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TRAILS = os.path.join(HERE, "trails_saved.json")
+SDOT = os.path.join(HERE, "sdot_bikes.json.gz")
 OSM = os.path.join(HERE, "bike_osm.json.gz")
 OUT = os.path.join(HERE, "bikes_clean.json")
 fwd = Transformer.from_crs(4326, 32610, always_xy=True)
@@ -44,23 +55,55 @@ STEP = 5.0          # resample every 5 m
 SIGMA = 7.0         # how far the saved lines sit off OSM's
 DUP_M = 9.0         # a line within 9 m of a kept one, the same way, is a double
 DUP_NAMED = 22.0    # ...or within 22 m when it has the same name (two surveys of one trail)
+DUP_SDOT = 30.0     # ...and a county line within 30 m of one of SDOT's (a county survey of a Seattle trail
+                    # on the footway beside SDOT's protected lane, Linden Ave N) is SDOT's
 MIN_PIECE = 25.0    # leftovers shorter than this are dropped
 NODE_M = 8.0        # ends within 8 m meet
+TRAIL_GAP_M = 800.0 # two pieces of one named trail this close are one route (a gap where streets carry it)
 ROAD = {"motorway", "trunk", "primary", "secondary", "tertiary", "minor", "service", "busway"}
 PATHS = {"path", "track", "cycleway"}
+# SDOT's kinds (its CATEGORY codes; no code is "Unidentified"), with its own names
+SDOT_KIND = {"BKF-NGW": "greenway", "BKF-PBL": "pbl", "BKF-BBL": "buffered", "BKF-BL": "lane",
+             "BKF-CLMB": "climb", "BKF-SHW": "sharrow", "BKF-OFFST": "offst", None: "unknown"}
+CAT_NAME = {"trail": "Multi-Use Trail", "pbl": "Protected Bike Lane", "offst": "Off-Street Bicycle Facility",
+            "buffered": "Buffered Bike Lane", "lane": "Painted Bike Lane", "climb": "Climbing Lane",
+            "greenway": "Neighborhood Greenway", "sharrow": "Sharrow", "unknown": "Unidentified"}
+DESC = {
+    "trail": "A paved path of its own, away from traffic, shared by people walking, rolling and biking.",
+    "pbl": "A bike lane kept apart from moving traffic by something solid: posts, curbs, planters, "
+           "concrete barriers or a row of parked cars.",
+    "offst": "A bike path off the roadway that is not one of the named trails: a path at sidewalk level "
+             "beside the street, on a bridge, or a short connector.",
+    "buffered": "A painted bike lane with a striped buffer between it and traffic or parked cars. Paint only.",
+    "lane": "A lane for bikes marked with a painted line and bike symbols beside traffic. Paint only.",
+    "climb": "A painted bike lane on the uphill side only, where bikes climb slowly; downhill, bikes share "
+             "the lane with traffic.",
+    "greenway": "A calm residential street made for walking and biking: 20 mph, speed humps, stop signs "
+                "that favor the route and help crossing busy streets.",
+    "sharrow": "Shared-lane markings (a bike under two chevrons) painted in the traffic lane: bikes and cars "
+               "share the lane.",
+    "unknown": "A piece of SDOT's network with no facility type recorded.",
+}
 # drawing order of kinds, best first: where two kinds share a street the better one is kept
-RANK = {"trail": 0, "pbl": 1, "lane": 2, "greenway": 3, "sharrow": 4}
-# a source covering a whole trail beats one cut into street-length pieces
-SRC_RANK = {"King County": 0, "Pierce County": 0, "Snohomish County": 0, "Seattle": 1}
+RANK = {"trail": 0, "pbl": 1, "offst": 2, "buffered": 3, "lane": 4, "climb": 5, "greenway": 6, "sharrow": 7,
+        "unknown": 8}
+KINDS = set(RANK)
+# kinds on a path of their own (a cycleway or path is their best match, a street only fair)
+OFF_ROAD = {"trail", "pbl", "offst", "unpaved"}
+# Inside Seattle SDOT's own data comes first: the counties' regional trails include on-street links
+# (the Interurban Trail along Fremont, Linden and Phinney Ave N, the Magnolia Connector along Gilman
+# Ave W, the Elliott Bay Trail along Alaskan Way), which outranked the greenway, lanes or sharrows
+# SDOT's map shows on those streets and drew them as multi-use trails. A county line is kept only
+# where SDOT has nothing (and beyond the city).
+SRC_RANK = {"Seattle": 0, "King County": 1, "Pierce County": 1, "Snohomish County": 1}
 
 
 def kind(p):
-    """The drawn kind (one per map layer): unpaved trails, paved trails and protected lanes,
-    greenways, lanes, sharrows."""
+    """The drawn kind (one per map layer): SDOT's eight, multi-use trails, and unpaved trails."""
     if p.get("surface") == "unpaved":
         return "unpaved"
     f = p.get("facility")
-    return f if f in ("greenway", "lane", "sharrow") else "pbl"
+    return f if f in KINDS else "trail"
 
 
 def norm_name(n):
@@ -86,6 +129,85 @@ def tidy(n):
     n = re.sub(r"\b[A-Z][a-z]\b", lambda m: TIDY.get(m.group(0), m.group(0)), n)
     n = re.sub(r"^(\w)", lambda m: m.group(1).upper(), n)  # ("to" and "on" only inside a name)
     return re.sub(r"\s+", " ", n).strip()
+
+
+# SDOT's street database spells names in capitals with its own short forms
+SDOT_WORDS = {"TRL": "Trail", "CONNCTR": "Connector", "CONNCT": "Connector", "CONN": "Connector",
+              "MTS": "Mountains to Sound", "BR": "Bridge", "BV": "Blvd", "PY": "Pkwy", "RP": "Ramp",
+              "AV": "Ave", "WY": "Way", "UW": "UW", "SR520": "SR 520", "I5": "I-5", "I90": "I-90",
+              "MLK": "MLK", "PED": "Pedestrian", "SODO": "SODO"}
+TRAIL_END = ("Trail", "Bridge", "Overpass", "Connector", "Path")
+
+
+def sdot_name(s):
+    """'NE RAVENNA SR BV' -> 'NE Ravenna Blvd'; 'MTS DEARBORN CONNCTR TRL' -> 'Mountains to Sound
+    Dearborn Connector Trail'."""
+    if not s:
+        return ""
+    words = []
+    for w in s.split():
+        words.append(SDOT_WORDS[w] if w in SDOT_WORDS else w.title())
+    return tidy(" ".join(words)).replace("Burke Gilman", "Burke-Gilman")
+
+
+def sdot_lines():
+    """SDOT's network as lines: the blocks of one street, one kind and one state (built, or under
+    construction) merged end to end. Returns (features, {sdot_miles: miles of each kind in SDOT's
+    own data, fetched: the download's date})."""
+    if not os.path.exists(SDOT):
+        return [], {}
+    d = json.load(gzip.open(SDOT, "rt"))
+    groups, miles = defaultdict(list), Counter()
+    for key, lay in d["layers"].items():
+        for f in lay["features"]:
+            p, g = f["properties"], f["geometry"]
+            parts = [g["coordinates"]] if g["type"] == "LineString" else g["coordinates"]
+            if key == "existing":
+                k = SDOT_KIND.get(p.get("CATEGORY"), "unknown")
+                street = sdot_name((p.get("UNITDESC") or "").split(" BETWEEN ")[0])
+                state = "UNDERCONS" if p.get("CURRENT_STATUS") == "UNDERCONS" else "INSVC"
+            else:
+                k, street, state = "trail", sdot_name(p.get("ORD_STNAME_CONCAT") or ""), "INSVC"
+            for c in parts:
+                if len(c) >= 2:
+                    groups[(k, street, state)].append(c)
+                    miles[k] += LineString(to_m(c)).length / 1609.344
+    # SDOT's blocks meet end to end, but not always to the last decimal (-122.352782 / -122.352784),
+    # and a few blocks are in twice (one survey line under two block names): ends within a metre are
+    # one point, and a block drawn twice is drawn once
+    nodes = {}
+
+    def node(c):
+        gx, gy = round(c[0] * 1e5), round(c[1] * 1e5)
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for q in nodes.get((gx + dx, gy + dy), ()):
+                    if abs(q[0] - c[0]) * 75000 < 1 and abs(q[1] - c[1]) * 111000 < 1:
+                        return q
+        nodes.setdefault((gx, gy), []).append(tuple(c))
+        return tuple(c)
+    out = []
+    for (k, street, state), parts in groups.items():
+        seen, uniq = set(), []
+        for c in parts:
+            c = [node(c[0])] + [tuple(x) for x in c[1:-1]] + [node(c[-1])]
+            key = min(tuple(c), tuple(c[::-1]))
+            if key not in seen:
+                seen.add(key)
+                uniq.append(c)
+        merged = linemerge(MultiLineString(uniq))
+        for line in getattr(merged, "geoms", [merged]):
+            mi = LineString(to_m(line.coords)).length / 1609.344
+            # (a trail named for the street it runs beside says it is a trail)
+            name = (f"{street} ({CAT_NAME[k]})" if street and not (k == "trail" and street.endswith(TRAIL_END))
+                    else street or CAT_NAME[k])
+            p = {"name": name, "street": street, "facility": k, "cat_name": CAT_NAME[k], "surface": "paved",
+                 "region": "Seattle", "length_mi": round(mi, 2), "desc": DESC[k]}
+            if state != "INSVC":
+                p["status"] = state
+            out.append({"type": "Feature", "properties": p,
+                        "geometry": {"type": "LineString", "coordinates": [list(x) for x in line.coords]}})
+    return out, {"sdot_miles": {k: round(v, 2) for k, v in miles.items()}, "fetched": d.get("fetched", "")}
 
 
 def to_m(coords):
@@ -218,12 +340,12 @@ class Ways:
         """Extra cost for matching a bike line of kind k onto OSM piece j."""
         cls, sub = self.cls[j], self.sub[j]
         on_path = cls in PATHS
-        if k in ("pbl", "unpaved", "trail"):
-            # a paved trail or protected lane: a cycleway is best, a path or footway good, a street fair
-            if k != "pbl" and not on_path:
+        if k in OFF_ROAD:
+            # a trail, protected lane or off-street path: a cycleway is best, a path good, a street fair
+            if k in ("trail", "unpaved") and not on_path:
                 return None  # a trail follows its own path, never the street beside it
             return 0.0 if sub == "cycleway" or cls == "cycleway" else 0.6 if on_path else 2.0
-        # on-street kinds (greenway, lane, sharrow): a street, not the path beside it
+        # on-street kinds (greenway, lanes, sharrow): a street, not the path beside it
         return 0.0 if cls in ROAD else 3.0
 
 
@@ -234,7 +356,7 @@ def snap(pts, k, ways):
     if ways.tree is None or n < 2:
         return pts, np.zeros(n, bool)
     hd = headings(pts)
-    R = 30.0 if k in ("pbl", "unpaved", "trail") else 24.0
+    R = 30.0 if k in OFF_ROAD else 24.0
     pi, wi = ways.tree.query(shapely.points(pts), predicate="dwithin", distance=R)
     cands = defaultdict(list)
     if len(pi):
@@ -328,25 +450,27 @@ def finish(out, on, raw):
 # ---------------------------------------------------------------- doubles
 class Kept:
     def __init__(self):
-        self.lines, self.names, self.tree = [], [], None
+        self.lines, self.names, self.sdot, self.tree = [], [], [], None
 
-    def add(self, pts, name=""):
+    def add(self, pts, name="", sdot=False):
         self.lines.append(LineString(pts))
         self.names.append(name)
+        self.sdot.append(sdot)
         self.tree = None
 
-    def covered(self, pts, name=""):
+    def covered(self, pts, name="", county=False):
         if not self.lines:
             return np.zeros(len(pts), bool)
         if self.tree is None:
             self.tree = STRtree(self.lines)
             self.arr = np.asarray(self.lines, dtype=object)
         hd = headings(pts)
-        pi, li = self.tree.query(shapely.points(pts), predicate="dwithin", distance=DUP_NAMED)
+        pi, li = self.tree.query(shapely.points(pts), predicate="dwithin", distance=max(DUP_NAMED, DUP_SDOT))
         cov = np.zeros(len(pts), bool)
         if len(pi):
             near = shapely.distance(self.arr[li], shapely.points(pts[pi]))
-            lim = np.array([DUP_NAMED if name and self.names[j] == name else DUP_M for j in li])
+            lim = np.array([DUP_SDOT if county and self.sdot[j] else DUP_NAMED if name and self.names[j] == name
+                            else DUP_M for j in li])
             pi, li = pi[near <= lim], li[near <= lim]
         if len(pi):
             G = self.arr[li]
@@ -379,7 +503,10 @@ def join_routes(pieces):
     """Union pieces that meet end to end into routes. At a meeting point of two pieces they join
     when they are the same kind or the same street or trail (a trail that runs on the street for
     a few blocks is still that trail); where three or more meet, the same name first, then the
-    straightest pair of one kind (under 50 degrees) joins, and the rest end there."""
+    two of one kind when no other of that kind meets there (a greenway turning a corner where a
+    trail ends), then the straightest pair of one kind (under 50 degrees) joins, and the rest end
+    there. Last, the pieces of one named trail with a short gap between them (the Burke-Gilman's
+    missing link in Ballard, where SDOT's map has the streets' own lanes) are one route too."""
     ends = []  # (piece, which end, point, heading pointing away from the piece)
     for i, p in enumerate(pieces):
         c = p["pts"]
@@ -429,6 +556,7 @@ def join_routes(pieces):
                     join(A, B)
                 continue
             pairs = []
+            nk = Counter(pieces[e[0]]["k"] for e in node)
             for x in range(len(node)):
                 for y in range(x + 1, len(node)):
                     A, B = node[x], node[y]
@@ -437,14 +565,25 @@ def join_routes(pieces):
                     # continuing straight: the two away-headings point opposite ways
                     dev = abs(abs((A[3] - B[3] + math.pi) % (2 * math.pi) - math.pi) - math.pi)
                     same = bool(names[A[0]]) and names[A[0]] == names[B[0]]
-                    if same or (pieces[A[0]]["k"] == pieces[B[0]]["k"] and dev < math.radians(50)):
-                        pairs.append((0 if same else 1, dev, x, y))
+                    kA = pieces[A[0]]["k"]
+                    only = kA == pieces[B[0]]["k"] and nk[kA] == 2
+                    if same or only or (kA == pieces[B[0]]["k"] and dev < math.radians(50)):
+                        pairs.append((0 if same else 1 if only else 2, dev, x, y))
             used = set()
             for _, _, x, y in sorted(pairs):
                 if x in used or y in used:
                     continue
                 used |= {x, y}
                 join(node[x], node[y])
+    # one named trail across a short gap
+    tr = [e for e in ends if pieces[e[0]]["k"] in OFF_ROAD and names[e[0]]]
+    if tr:
+        pts = np.array([e[2] for e in tr])
+        a, b = STRtree(shapely.points(pts)).query(shapely.points(pts), predicate="dwithin", distance=TRAIL_GAP_M)
+        for x, y in zip(a.tolist(), b.tolist()):
+            A, B = tr[x], tr[y]
+            if names[A[0]] == names[B[0]] and find(A[0]) != find(B[0]):
+                parent[find(A[0])] = find(B[0])
     groups = defaultdict(list)
     for i in range(len(pieces)):
         groups[find(i)].append(i)
@@ -453,7 +592,12 @@ def join_routes(pieces):
 
 def main():
     ways = Ways(OSM)
+    sdot, stats = sdot_lines()
     feats = json.load(open(TRAILS))["features"]
+    if sdot:
+        # Seattle from SDOT's own data; the regional trails beyond it from the counties'
+        feats = [f for f in feats if f["properties"].get("region") != "Seattle"] + sdot
+        print(f"SDOT: {len(sdot)} lines ({', '.join(f'{k} {v:.1f} mi' for k, v in sorted(stats['sdot_miles'].items(), key=lambda x: -x[1]))})")
     parts = []
     for f in feats:
         p = dict(f["properties"])
@@ -469,18 +613,19 @@ def main():
     snapped_m = total_m = 0.0
     for q in parts:
         s = resample(q["raw"])
-        out, on = snap(s, "trail" if q["p"].get("facility") == "trail" else q["k"], ways)
+        out, on = snap(s, q["k"], ways)
         q["pts"] = finish(out, on, q["raw"])
         total_m += len(s) * STEP
         snapped_m += on.sum() * STEP
     print(f"snapped onto OpenStreetMap: {snapped_m / max(total_m, 1):.0%} of {total_m / 1000:.0f} km")
-    # doubles: best kind first, then whole-trail sources, then longer lines
-    parts.sort(key=lambda q: (RANK.get(q["p"].get("facility"), 5), SRC_RANK.get(q["p"].get("region"), 2), -LineString(q["pts"]).length))
+    # doubles: SDOT first, then the best kind, then longer lines
+    parts.sort(key=lambda q: (SRC_RANK.get(q["p"].get("region"), 2), RANK.get(q["k"], 5), -LineString(q["pts"]).length))
     kept, pieces, dropped = Kept(), [], 0.0
     for q in parts:
         s = resample(q["pts"], 2.5)
-        nm = norm_name(q["p"].get("name")) if q["k"] in ("pbl", "unpaved") else ""
-        cov = kept.covered(s, nm)
+        nm = norm_name(q["p"].get("name")) if q["k"] in OFF_ROAD else ""
+        sdot = q["p"].get("region") == "Seattle"
+        cov = kept.covered(s, nm, county=not sdot)
         # a covered stretch shorter than 20 m is a crossing, not a double
         for c, i, j in runs(cov):
             if c and (j - i) * 2.5 < 20:
@@ -502,7 +647,7 @@ def main():
             pieces.append({"p": q["p"], "k": q["k"], "pts": pts})
         for c, i, j in runs(cov):
             if not c and (j - i) * 2.5 >= MIN_PIECE:
-                kept.add(s[i:j], nm)
+                kept.add(s[i:j], nm, sdot)
     print(f"doubles removed: {dropped / 1000:.1f} km; {len(pieces)} pieces kept")
     groups = join_routes(pieces)
     out = []
@@ -518,7 +663,7 @@ def main():
             # k: this piece's kind (how it is drawn); bk: the route's own (most of its length)
             pr.update({"b": b, "bn": bn, "bkm": round(km, 2), "k": pieces[i]["k"], "bk": bk})
             out.append({"type": "Feature", "properties": pr, "geometry": {"type": "LineString", "coordinates": to_ll(pieces[i]["pts"])}})
-    json.dump({"type": "FeatureCollection", "features": out}, open(OUT, "w"), separators=(",", ":"))
+    json.dump({"type": "FeatureCollection", "stats": stats, "features": out}, open(OUT, "w"), separators=(",", ":"))
     print(f"{len(groups)} bike routes from {len(out)} pieces -> {OUT} ({os.path.getsize(OUT) / 1e6:.1f} MB)")
 
 

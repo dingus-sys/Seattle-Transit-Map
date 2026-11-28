@@ -16,7 +16,8 @@ on its own line drew loops and hooks beside the band. Run after the network is b
 
 bikes.json: {net: network.json's hash, routes: [{n: name, k: kind, km}], pieces: [{b: route, k: kind,
   p: index into props, n: streets it runs along, s: [[edge, from, to, side(, off)] | [-1, [lon, lat], ...]]}],
-  props: [source properties]}
+  props: [source properties], stats: {sdot_miles: {kind: miles in SDOT's own network}, fetched}
+  (the key's shares)}
   side: +1 right of the direction of travel, -1 left. off: its own distance from the street (m), when
   that is more than SLACK_M.
 """
@@ -134,7 +135,8 @@ def main():
         eidx.append(k)
     tree, E = STRtree(edges), np.asarray(edges, dtype=object)
     ends = [(tuple(net["edges"][k]["c"][0]), tuple(net["edges"][k]["c"][-1])) for k in eidx]
-    feats = json.load(open(CLEAN))["features"]
+    clean = json.load(open(CLEAN))
+    feats = clean["features"]
     props, routes, pieces = [], {}, []
     pkey = {}
     attached_m = total_m = 0.0
@@ -368,7 +370,7 @@ def main():
     net_id = hashlib.sha1(open(net_path, "rb").read()).hexdigest()[:16]
     # (a route's index is its number b)
     rlist = [routes.get(b, {"n": "", "k": "pbl", "km": 0}) for b in range(max(routes) + 1)] if routes else []
-    out = {"net": net_id, "routes": rlist, "pieces": pieces, "props": props}
+    out = {"net": net_id, "routes": rlist, "pieces": pieces, "props": props, "stats": clean.get("stats", {})}
     path = os.path.join(SITE, "data", "bikes.json")
     json.dump(out, open(path, "w"), separators=(",", ":"))
     print(f"bikes: {len(routes)} routes, {len(pieces)} lines; {attached_m / max(total_m, 1):.0%} of "
