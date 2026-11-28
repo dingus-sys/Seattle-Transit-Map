@@ -36,11 +36,16 @@ const limits = (frame) => ({ start: 40 + 4 * frame, gone: 40 + FADE_MS + 6 * fra
     const hs = () => page.evaluate(() => window.__atlas.hoverState());
 
     // two single-route lines that really take the hover, and a spot well away from every line
+    // (and from stops and place names, which take the pointer before a line does: a route held from
+    // a slow approach keeps it there, but one jumped onto from another route does not)
     const cands = await page.evaluate(() => {
-      const out = [];
+      const out = [], map = window.__map;
       for (let y = 260; y < 700; y += 7) for (let x = 560; x < 1150; x += 7) {
         const rs = window.__atlas.routesAt({ x, y }, 2);
-        if (rs && rs.length === 1 && !out.some((p) => p.id === rs[0].id || Math.hypot(p.x - x, p.y - y) < 90)) out.push({ x, y, id: rs[0].id });
+        if (!(rs && rs.length === 1) || out.some((p) => p.id === rs[0].id || Math.hypot(p.x - x, p.y - y) < 90)) continue;
+        if (window.__atlasStopAt({ x, y }) || map.queryRenderedFeatures([[x - 14, y - 14], [x + 14, y + 14]])
+          .some((f) => (f.layer.type === 'symbol' && !/^(net|sel|hov)/.test(f.layer.id)) || /^(destinations|poi)/.test(f.layer.id))) continue;
+        out.push({ x, y, id: rs[0].id });
       }
       return out;
     });
@@ -52,13 +57,23 @@ const limits = (frame) => ({ start: 40 + 4 * frame, gone: 40 + FADE_MS + 6 * fra
       await page.mouse.move(1270, 810); await page.waitForTimeout(400);
       if (pts.length >= 2) break;
     }
-    const empty = await page.evaluate(() => {
+    // (not on the way from the first route to its card: there the card waits for the pointer, and
+    // its route stays lit, so that the card can be reached and clicked; tools/test_hover_reach.js)
+    let card = null;
+    if (pts.length) {
+      await page.mouse.move(pts[0].x - 25, pts[0].y - 25); await page.mouse.move(pts[0].x, pts[0].y, { steps: 4 });
+      await page.waitForTimeout(700);
+      card = await page.evaluate(() => { const r = document.getElementById('tip').getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom }; });
+      await page.mouse.move(1270, 810); await page.waitForTimeout(400);
+    }
+    const empty = await page.evaluate(([p0, c]) => {
+      const away = (x, y) => !p0 || !c || x < Math.min(p0.x, c.l) - 40 || x > Math.max(p0.x, c.r) + 40 || y < Math.min(p0.y, c.t) - 40 || y > Math.max(p0.y, c.b) + 40;
       for (let y = 300; y < 700; y += 10) for (let x = 600; x < 1150; x += 10) {
         const rs = window.__atlas.routesAt({ x, y }, 40);
-        if (!rs || !rs.length) return { x, y };
+        if ((!rs || !rs.length) && away(x, y)) return { x, y };
       }
       return null;
-    });
+    }, [pts[0] || null, card]);
     check('found two hoverable routes and an empty spot', pts.length === 2 && !!empty, pts.map((p) => p.id).join(', '));
     if (pts.length < 2 || !empty) throw new Error('no targets');
 

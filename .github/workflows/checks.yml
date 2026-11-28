@@ -61,5 +61,6 @@ jobs:
           node tools/test_hover_release.js
           node tools/test_hover_whole_route.js
           node tools/test_hover_trace.js
+          node tools/test_hover_reach.js   # a hover card waits for the pointer and opens its page when clicked
           node tools/test_bikes.js   # bike lines flush beside the bands; hover and tap light the whole route
           node tools/test_live_tracking.js

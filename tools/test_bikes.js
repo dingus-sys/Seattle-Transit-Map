@@ -115,8 +115,8 @@ const OVERLAP_SHARE = 0.03; // ...and at most this much runs over it
               const p = map.project(C[i]);
               if (p.x < 60 || p.y < 60 || p.x > W - 60 || p.y > H - 60) continue;
               const bk = A.bikeAt(p);
-              // squarely on the bike line, and no stop or place name there to take the pointer instead
-              if (!bk || bk.b !== b || bk.out > 0 || window.__atlasStopAt(p)) continue;
+              // squarely on the bike line, and no stop, place name or transit line there to take the pointer instead
+              if (!bk || bk.b !== b || bk.out > 0 || window.__atlasStopAt(p) || window.__atlasPick(p)) continue;
               // (a place's tap area takes a tap within 10 px before any line does)
               if (map.queryRenderedFeatures([[p.x - 14, p.y - 14], [p.x + 14, p.y + 14]]).some((f) => (f.layer.type === 'symbol' && f.layer.source !== 'trails') || /^(destinations|poi)/.test(f.layer.id))) continue;
               return { b, x: p.x, y: p.y, pieces: new Set(fs.map((f) => f.properties.p)).size, name: f.properties.n };
@@ -139,7 +139,9 @@ const OVERLAP_SHARE = 0.03; // ...and at most this much runs over it
       hovered++;
       await page.mouse.move(clear.x, clear.y);
       await page.mouse.move(target.x, target.y, { steps: 6 });
-      await page.waitForTimeout(500);
+      // (a route card the pointer crossed on the way, heading for it, waits TIP_REST 200 ms before it
+      // lets go: tools/test_hover_reach.js)
+      await page.waitForTimeout(750);
       const hv = await page.evaluate((b) => {
         const A = window.__atlas, map = window.__map, lit = map.queryRenderedFeatures(undefined, { layers: ['bike-hl'] });
         const W = map.getCanvas().clientWidth, H = map.getCanvas().clientHeight;

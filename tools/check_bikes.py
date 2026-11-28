@@ -12,7 +12,10 @@ it to the transit network (site/data/bikes.json). Checked here:
  4. no breaks: where two pieces of one kind meet end to end they are one route (so hovering
     lights all of it, not one block) and meet at one point (no gap);
  5. no angles: no corner between two long straight stretches (a curve drawn as chords);
- 6. the Burke-Gilman Trail is one route of its full length.
+ 6. the Burke-Gilman Trail is one route of its full length;
+ 7. inside Seattle it is SDOT's own network (pipeline/sdot_bikes.json.gz, its bike map's
+    "Existing Bike Facilities" and "Multi-use Trails"): every one of its eight kinds is drawn, as
+    that kind, along nearly all of its length.
 """
 import gzip
 import hashlib
@@ -36,6 +39,10 @@ DOUBLE_M = 6.0        # two bike lines closer than this, the same way, are one l
 DOUBLE_LIMIT = 1500.0  # metres of doubled line allowed in all (short shared bits at junctions)
 ON_OSM = 0.92          # share of the network that must lie on OpenStreetMap's ways (the saved survey: 83%)
 ANGLE_LIMIT = 25       # corners between two long stretches allowed in all
+SDOT_SHARE = 0.97      # share of each kind of SDOT's network drawn as that kind, within SDOT_M
+SDOT_M = 15.0          # (its lines run down the street's middle; the map's follow OpenStreetMap's)
+SDOT_KIND = {"BKF-NGW": "greenway", "BKF-PBL": "pbl", "BKF-BBL": "buffered", "BKF-BL": "lane",
+             "BKF-CLMB": "climb", "BKF-SHW": "sharrow", "BKF-OFFST": "offst"}
 
 
 def to_m(c):
@@ -169,7 +176,38 @@ def main():
     check("the Burke-Gilman Trail is one route, its whole length", main_bg > 30000 and len(bg) == 1,
           f"{len(bg)} routes: " + ", ".join(f"{v / 1000:.1f} km" for v in sorted(bg.values(), reverse=True)[:4]))
 
-    print(f"{len(fails)} of 7 checks failed" if fails else "all 7 bike checks passed")
+    # 7. SDOT's network, kind by kind (a multi-use trail may be drawn from a county's survey of it;
+    #    where SDOT has two kinds on one block, the map draws the better one: pipeline/clean_bikes.py RANK)
+    sd = json.load(gzip.open(os.path.join(ROOT, "pipeline", "sdot_bikes.json.gz"), "rt"))["layers"]
+    order = ["trail", "pbl", "offst", "buffered", "lane", "climb", "greenway", "sharrow", "unknown"]
+    by_kind = defaultdict(list)
+    for i, f in enumerate(feats):
+        by_kind[kind[i]].append(lines[i])
+        if f["properties"].get("region") == "Seattle" and kind[i] in order:
+            for worse in order[order.index(kind[i]) + 1:]:
+                by_kind["over:" + worse].append(lines[i])
+    trees = {k: STRtree(v) for k, v in by_kind.items()}
+    have, want, miles = defaultdict(float), defaultdict(float), defaultdict(float)
+    for lay, fs in sd.items():
+        for f in fs["features"]:
+            k = "trail" if lay == "trails" else SDOT_KIND.get(f["properties"].get("CATEGORY"), "unknown")
+            g = f["geometry"]
+            for c in ([g["coordinates"]] if g["type"] == "LineString" else g["coordinates"]):
+                m = to_m(c)
+                miles[k] += LineString(m).length / 1609.344
+                pts, _ = resample(m, 10.0)
+                want[k] += len(pts)
+                hit = np.zeros(len(pts), bool)
+                for t in (k, "over:" + k):
+                    if t in trees:
+                        hit[trees[t].query(shapely.points(pts), predicate="dwithin", distance=SDOT_M)[0]] = True
+                have[k] += hit.sum()
+    share = {k: have[k] / want[k] for k in want}
+    low = [k for k in share if share[k] < SDOT_SHARE]
+    check("Seattle is SDOT's own bike map: all eight kinds and its trails, each drawn as itself", len(want) >= 9 and not low,
+          ", ".join(f"{k} {share[k]:.1%} of {miles[k]:.1f} mi" for k in sorted(share, key=lambda k: -miles[k])))
+
+    print(f"{len(fails)} of 8 checks failed" if fails else "all 8 bike checks passed")
     sys.exit(1 if fails else 0)
 
 
