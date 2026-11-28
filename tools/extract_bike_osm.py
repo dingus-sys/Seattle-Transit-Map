@@ -1,10 +1,11 @@
 """OpenStreetMap streets and paths near the bike network, for straightening its geometry.
 
-The saved bike network (pipeline/trails_saved.json) has points 50-200 m apart, so a trail that
-curves is drawn as a row of straight pieces with sharp angles. OpenStreetMap's own lines (from
-the same z14 OpenFreeMap tiles the street matching uses) follow every curve. This keeps the
-streets, cycleways and paths within 40 m of a bike route and writes them to
-pipeline/bike_osm.json.gz, which pipeline/clean_bikes.py snaps the bike network onto.
+The county regional trails (pipeline/trails_saved.json) have points 50-200 m apart, so a trail
+that curves is drawn as a row of straight pieces with sharp angles, and SDOT's own lines
+(pipeline/sdot_bikes.json.gz) run down the street's centre line. OpenStreetMap's own lines (from
+the same z14 OpenFreeMap tiles the street matching uses) follow every curve and every path. This
+keeps the streets, cycleways and paths within 40 m of a bike line of either source and writes them
+to pipeline/bike_osm.json.gz, which pipeline/clean_bikes.py snaps the bike network onto.
 
 Needs the network (it downloads the z14 tiles if they are not cached):
     python3 tools/extract_bike_osm.py
@@ -26,6 +27,7 @@ import match_shapes as ms  # noqa: E402
 
 OUT = os.path.join(HERE, "..", "pipeline", "bike_osm.json.gz")
 TRAILS = os.path.join(HERE, "..", "pipeline", "trails_saved.json")
+SDOT = os.path.join(HERE, "..", "pipeline", "sdot_bikes.json.gz")
 KEEP = ms.ROAD_CLASSES | {"path", "track", "cycleway"}
 NEAR = 40.0
 
@@ -34,6 +36,9 @@ def main():
     if not ms.tile_dir():
         ms.download_tiles()
     feats = json.load(open(TRAILS))["features"]
+    if os.path.exists(SDOT):
+        sd = json.load(gzip.open(SDOT, "rt"))
+        feats = feats + [f for lay in sd["layers"].values() for f in lay["features"]]
     bikes = []
     for f in feats:
         g = shape(f["geometry"])
