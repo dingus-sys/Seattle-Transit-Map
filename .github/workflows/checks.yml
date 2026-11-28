@@ -47,6 +47,7 @@ jobs:
           python3 tools/check_stop_coverage.py --max-far 3   # stops on a route's own patterns sit on its drawn line
           python3 tools/check_repair.py
           python3 tools/check_parallel_copies.py
+          python3 tools/check_bikes.py   # one clean line per bike route: no doubles, breaks or angles
       - name: Build the keyless website
         run: python3 pipeline/build_site.py
       - name: Run Playwright browser test sweep
@@ -60,4 +61,5 @@ jobs:
           node tools/test_hover_release.js
           node tools/test_hover_whole_route.js
           node tools/test_hover_trace.js
+          node tools/test_bikes.js   # bike lines flush beside the bands; hover and tap light the whole route
           node tools/test_live_tracking.js

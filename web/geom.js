@@ -176,8 +176,9 @@ const KCTMGeom = (() => {
     return out;
   }
 
-  // One continuous path along `steps`, in the lane laneOf(Lo, step) = [center, half width] (line
-  // units, before shifting) of each segment. Corners are rounded to suit the bundle width; lane
+  // One continuous path along `steps`, in the lane laneOf(Lo, step) = [center, half width, rigid]
+  // (line units, before shifting) of each segment; `rigid` is the part of the centre's offset that
+  // a tight corner doesn't squeeze (see below; a bike line's own half width beside a bundle). Corners are rounded to suit the bundle width; lane
   // changes are eased steps that may overlap, so a line crossing a busy street glides across
   // instead of jogging. With `fit`, where a corridor gets wider or narrower (routes joining or
   // leaving) the narrower piece starts right inside the wider one with no slant, so a thick line
@@ -193,11 +194,12 @@ const KCTMGeom = (() => {
       // a metre or two apart around every intersection (a chamfer, a kerb): points that close to the
       // line can't show as a corner at the radius a corner here gets, but they leave the arc no room,
       // so it collapses into a sharp elbow. Ends stay put, so junctions and lanes still line up.
-      if (g.length > 2 && !water) g = simplify(g, Math.min(0.25 * (1.25 * hwk + 6), 12));
+      // (A bike line's own geometry is already a smooth curve: keep every point of it.)
+      if (g.length > 2 && !water && !Lo.keep) g = simplify(g, Math.min(0.25 * (1.25 * hwk + 6), 12));
       if (k > 0) { joints.push(pts.length - 1); g = g.slice(1); }
       for (const q of g) pts.push(q);
-      const [c, h] = laneOf(Lo, steps[k]);
-      seg.push({ o: (fwd ? 1 : -1) * (c + Lo.shift) * S, h: h * S, hw: hwk });
+      const [c, h, r = 0] = laneOf(Lo, steps[k]);
+      seg.push({ o: (fwd ? 1 : -1) * (c + Lo.shift) * S, r: (fwd ? 1 : -1) * r * S, h: h * S, hw: hwk });
     }
     if (pts.length < 2) return;
 
@@ -246,14 +248,20 @@ const KCTMGeom = (() => {
       return Math.max(-room, Math.min(room, b.o - a.o));
     });
     const moves = D.map((d, k) => {
-      const delta = seg[k + 1].o - seg[k].o - jumps[k];
+      const delta = seg[k + 1].o - seg[k].o - jumps[k], dr = seg[k + 1].r - seg[k].r;
       // on the water, where ferry routes fan out from a dock, ease across slowly: a quick step
       // reads as a kink in a long straight crossing
       let L = water ? Math.max(220, 40 * Math.abs(delta), 30 * S) : Math.max(14, 3.4 * Math.abs(delta), 6 * S);
       // strands passing the same junction ease over the same length, so they stay side by side
       if (easeAt) L = Math.max(L, easeAt(steps[k].E.k, steps[k + 1].E.k));
-      return { d, delta, L };
-    }).filter((m) => Math.abs(m.delta) > 0.02);
+      // a bike line moving in (a narrower bundle next, or leaving it for its own path) eases in
+      // after the joint, and one moving out has eased out before it: never across a bundle's edge
+      if (lay[steps[k].E.k].keep && lay[steps[k + 1].E.k].keep && seg[k].o * seg[k + 1].o >= 0) {
+        const oa = Math.abs(seg[k].o), ob = Math.abs(seg[k + 1].o);
+        if (Math.abs(ob - oa) > 0.02) { L /= 2; d += ob < oa ? L : -L; } // (the whole ease, L long, on one side)
+      }
+      return { d, delta, dr, L };
+    }).filter((m) => Math.abs(m.delta) > 0.02 || Math.abs(m.dr) > 0.02);
     const ds = c.slice();
     for (const m of moves) for (let j = -8; j <= 8; j++) ds.push(m.d + (m.L * j) / 8);
     for (const d of D) ds.push(d);
@@ -269,7 +277,8 @@ const KCTMGeom = (() => {
     // corridor draws a little narrower through such a corner and widens again after it: every strand's
     // offset is scaled together, keeping their order and spacing, and the scale eases in and out over
     // about the corridor's half-width. It depends only on the centerline, so all strands of one
-    // corridor narrow in step.
+    // corridor narrow in step. Widths don't scale, so a line drawn against a bundle's edge scales
+    // only the part of its offset that is the bundle's outer strand (`rigid` stays), and stays flush.
     const hwAt = (d) => {
       let k = 0;
       while (k < D.length && d > D[k]) k++;
@@ -318,7 +327,18 @@ const KCTMGeom = (() => {
       for (let k = 0; k < D.length; k++) if (jumps[k] && d > D[k] + 0.01) o += jumps[k];
       return o;
     };
-    const Q = dd.map((d, j) => { const o = off(d) * Fd[j]; return [P[j][0] + mt[j][0] * o, P[j][1] + mt[j][1] * o]; });
+    const rig = (d) => {
+      let r = seg[0].r;
+      for (const m of moves) {
+        if (!m.dr) continue;
+        const t = (d - (m.d - m.L)) / (2 * m.L);
+        if (t >= 1) r += m.dr;
+        else if (t > 0) r += m.dr * t * t * (3 - 2 * t);
+      }
+      return r;
+    };
+    const squeeze = (d, F) => { const r = rig(d); return (off(d) - r) * F + r; };
+    const Q = dd.map((d, j) => { const o = squeeze(d, Fd[j]); return [P[j][0] + mt[j][0] * o, P[j][1] + mt[j][1] * o]; });
 
     let from = 0;
     const cuts = D.map((d) => { let b = from; while (b < dd.length - 1 && dd[b] < d - 0.01) b++; from = b; return b; });
@@ -327,7 +347,7 @@ const KCTMGeom = (() => {
     cuts.forEach((end, s) => {
       // a piece after a width change starts already inside its new lane
       let q0 = Q[start];
-      if (s > 0 && jumps[s - 1]) { const o = (off(dd[start]) + jumps[s - 1]) * Fd[start]; q0 = [P[start][0] + mt[start][0] * o, P[start][1] + mt[start][1] * o]; }
+      if (s > 0 && jumps[s - 1]) { const o = squeeze(dd[start], Fd[start]) + jumps[s - 1] * Fd[start]; q0 = [P[start][0] + mt[start][0] * o, P[start][1] + mt[start][1] * o]; }
       const piece = [q0];
       for (let j = start + 1; j <= end; j++) {
         const a = piece[piece.length - 1];
@@ -394,6 +414,43 @@ const KCTMGeom = (() => {
     const byKey = new Map();
     for (const E of EDGES) for (const v of E.byKey.keys()) { if (!byKey.has(v)) byKey.set(v, []); byKey.get(v).push(E); }
     const KEY_CHAINS = new Map([...byKey].map(([v, edges]) => [v, chainsFor(edges)]));
+    // The bike network (data/bikes.json, pipeline/build_bikes.py): each piece is a list of steps,
+    // either along a transit street segment (from/to as fractions of it, and the side of travel it
+    // keeps) or on its own line. Along a segment it is drawn with the segment's own geometry, just
+    // outside whatever bundle that segment shows in the view, so it runs flush and parallel to it.
+    const BIKES = ((init.bikes && init.bikes.pieces) || []).map((pc) => {
+      const bb = [Infinity, Infinity, -Infinity, -Infinity];
+      const grow = (b2) => { bb[0] = Math.min(bb[0], b2[0]); bb[1] = Math.min(bb[1], b2[1]); bb[2] = Math.max(bb[2], b2[2]); bb[3] = Math.max(bb[3], b2[3]); };
+      const steps = pc.s.map((st) => {
+        // [edge, from, to, side, metres off the street's centre line when the path keeps its own
+        // place beside it (a trail across a verge or a parking strip)]
+        if (st[0] >= 0) { const E = EDGES[st[0]]; if (E) grow(E.bb); return { e: st[0], f0: st[1], f1: st[2], side: st[3], d: st[4] || 0, simp: new Map() }; }
+        const pts = st.slice(1).map(([lon, lat]) => toM(lon, lat));
+        for (const [x, y] of pts) grow([x, y, x, y]);
+        return { e: -1, pts, simp: new Map() };
+      }).filter((st) => st.e < 0 || EDGES[st.e]);
+      const r = (init.bikes.routes || [])[pc.b] || {};
+      // the map label is the name without its kind ("NE 55th St", not "NE 55th St (Bicycle Lane)")
+      return { b: pc.b, p: pc.p, np: pc.n || 1, k: pc.k || r.k || "pbl", n: r.n || "", nl: (r.n || "").replace(/\s*\([^)]*\)\s*$/, ""), steps, bb };
+    });
+    // the part of a line from fraction f0 to f1 of its length (backwards when f1 < f0). With
+    // `snap` (metres), an end that falls that close before a corner starts at the corner instead:
+    // a stub of the street round the corner would set the line's first offset across the corner.
+    function subPath(pts, f0, f1, snap = 0) {
+      const cum = cumLen(pts), L = cum[cum.length - 1];
+      let a = f0 * L, b = f1 * L;
+      const rev = a > b;
+      if (rev) [a, b] = [b, a];
+      if (snap && b - a > 2 * snap) {
+        // (only ends inside the street: at a junction the next street carries on round the corner)
+        if (a > 0.5) for (let i = 1; i < pts.length - 1; i++) if (cum[i] > a && cum[i] - a < snap) { a = cum[i]; break; }
+        if (b < L - 0.5) for (let i = pts.length - 2; i > 0; i--) if (cum[i] < b && b - cum[i] < snap) { b = cum[i]; break; }
+      }
+      const out = [pointAt(pts, cum, a)];
+      for (let i = 0; i < pts.length; i++) if (cum[i] > a + 0.05 && cum[i] < b - 0.05) out.push(pts[i]);
+      out.push(pointAt(pts, cum, b));
+      return rev ? out.reverse() : out;
+    }
     const byLine = LINES.map(() => []);
     for (const E of EDGES) for (const i of E.l) byLine[i].push(E);
     const ROUTE_CHAINS = byLine.map((edges) => chainsFor(edges, true));
@@ -958,6 +1015,85 @@ const KCTMGeom = (() => {
           }
         }
       }
+      // bike routes: one line per piece, beside the bundle where it shares a transit street
+      const bikes = [];
+      if (p.bikes) {
+        const tol = 0.6 * mpp, ck = `${zs}`;
+        for (const B of BIKES) {
+          if (B.bb[2] < V[0] || B.bb[0] > V[2] || B.bb[3] < V[1] || B.bb[1] > V[3]) continue;
+          const bw = p.bikes[B.k] || 1.3, steps = [], blay = [];
+          B.steps.forEach((st, j) => {
+            const Lo = st.e >= 0 ? lay[st.e] : null;
+            let simp;
+            if (Lo) {
+              // exactly the centre line this view draws the street's bundle on (the same points,
+              // simplified the same way drawPath simplifies it), cut where the bike line joins and
+              // leaves it: so the bike line runs parallel to the bundle, not merely near it
+              const hwk = (Lo.T / 2 + Math.abs(Lo.shift)) * S;
+              const full = Lo.simp.length > 2 ? simplify(Lo.simp, Math.min(0.25 * (1.25 * hwk + 6), 12)) : Lo.simp;
+              simp = subPath(full, st.f0, st.f1, Math.max(3, 1.5 * S));
+            } else {
+              // its own line, or a street whose transit this view doesn't show
+              simp = st.simp.get(ck);
+              if (!simp) { simp = simplify(st.e >= 0 ? subPath(EDGES[st.e].pts, st.f0, st.f1) : st.pts, tol); st.simp.set(ck, simp); }
+            }
+            if (simp.length < 2) return;
+            // the bundle's centre, as an offset to the right of the direction of travel
+            const along = st.f1 >= st.f0 ? 1 : -1;
+            // how wide the bundle's outermost band on the bike line's side is
+            const side = st.side || 1;
+            let wo = 0;
+            if (Lo && Lo.keys.length) {
+              const out = Lo.keys.reduce((a, v) => (along * side * (Lo.pos.get(v) - Lo.pos.get(a)) > 0 ? v : a));
+              wo = Lo.wk.get(out) * Lo.s;
+            }
+            // a path that runs a little way off the street comes in toward it by about 14 pixels'
+            // worth: so where the map is zoomed out it lies flush against the band like a lane on the
+            // street, and zoomed in it slides out toward its own place, continuously with the zoom
+            blay.push({ T: Lo ? Lo.T : 0, s: Lo ? Lo.s : 1, wo, shift: Lo ? along * Lo.shift : 0, side,
+              far: Lo && st.d ? Math.max(0, Math.abs(st.d) - 14 * mpp) : 0, free: !Lo, simp, keep: true });
+            steps.push({ E: { k: blay.length - 1, a: `b${j}a`, b: `b${j}b` }, fwd: true });
+          });
+          // Beside a bundle: flush against its outer edge (a band is drawn 0.07 of its scale wider
+          // than its lanes on each side). A path that really runs a little way off the street keeps
+          // that distance where the map is zoomed in far enough for it to show, and is flush where
+          // the bundle is wider than the gap: never on top of the bundle, never cut off from it.
+          const lane = (Lo) => {
+            if (!Lo.T && !Lo.far) return [0, bw / 2, 0];
+            const edge = Lo.T > 0 ? Lo.wo / 2 + 0.07 * Lo.s + bw / 2 : 0, flush = Lo.T > 0 ? Lo.T / 2 + edge - Lo.wo / 2 : 0;
+            const far = Lo.far ? Lo.far / S - Lo.side * Lo.shift : 0;
+            // where the path keeps its own distance, a corner doesn't move it
+            return far > flush ? [Lo.side * far, bw / 2, Lo.side * far + Lo.shift] : [Lo.side * flush, bw / 2, Lo.side * edge];
+          };
+          // Where the bike line joins or leaves a street, its own path ends on the street's centre
+          // line (the line this view draws the street with), while its real course runs along the
+          // street's edge: a sideways hook. The line eases between its lane beside the bundle and its
+          // own path over the same length drawPath eases its offset, so that stretch of its own path
+          // is a straight glide from the joint (no hook, no slant along the bundle).
+          const ease = (Lo) => { const o = Math.abs(lane(Lo)[0] + Lo.shift) * S; return o < 0.5 ? 0 : Math.max(14, 3.4 * o, 6 * S); };
+          const glide = (pts, J, Lh, atEnd) => {
+            const q = atEnd ? pts.slice().reverse() : pts;
+            let acc = 0, i = 1;
+            for (; i < q.length - 1; i++) { acc += Math.hypot(q[i][0] - q[i - 1][0], q[i][1] - q[i - 1][1]); if (acc >= Lh) break; }
+            const out = [J, ...q.slice(i)];
+            return atEnd ? out.reverse() : out;
+          };
+          for (let k = 0; k < blay.length; k++) {
+            if (!blay[k].free) continue;
+            const A = blay[k - 1], Bn = blay[k + 1];
+            if (A && !A.free) { const Lh = ease(A); if (Lh) blay[k].simp = glide(blay[k].simp, A.simp[A.simp.length - 1], Lh, false); }
+            if (Bn && !Bn.free) { const Lh = ease(Bn); if (Lh) blay[k].simp = glide(blay[k].simp, Bn.simp[0], Lh, true); }
+          }
+          if (!steps.length) continue;
+          const coords = [];
+          drawPath(lane, steps, blay, S, (k, c) => {
+            for (let i = coords.length && c.length ? 1 : 0; i < c.length; i++) coords.push(c[i]);
+          }, false, false, null);
+          if (coords.length < 2) continue;
+          bikes.push({ type: "Feature", properties: { b: B.b, p: B.p, np: B.np, k: B.k, n: B.n, nl: B.nl, zu, wm: bw, cm: bw + 0.55 },
+            geometry: { type: "LineString", coordinates: coords.map(toLL) } });
+        }
+      }
       last = { lay, S, z, W, easeAt, zu, colors: p.colors, focusColors: p.focusColors };
 
       // 4. route-number tags. Connected blocks carrying the same routes form one stretch; a
@@ -1048,7 +1184,7 @@ const KCTMGeom = (() => {
           }
         }
       }
-      return { feats, selFeats, labels, selLabels, selIdx, zs };
+      return { feats, selFeats, labels, selLabels, selIdx, zs, bikes };
     }
     // Paths of routes in the last view, in their lanes, exactly over their corridor lines (for
     // hover previews).

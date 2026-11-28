@@ -75,22 +75,6 @@ def flex_zones():
         return saved["areas"], saved["hours"]
 
 
-def regional_trails(view):
-    """Major regional multi-use bike trails across Seattle, the Eastside, and Puget Sound."""
-    if os.path.exists(TRAILS_SAVED):
-        try:
-            saved = json.load(open(TRAILS_SAVED))
-            feats = []
-            for f in saved.get("features", []):
-                g = shape(f["geometry"])
-                if g.intersects(view):
-                    feats.append(f)
-            return feats
-        except Exception as e:
-            print(f"Error reading saved trails ({e})")
-    return []
-
-
 def rounded(geom, nd=5):
     def rnd(o):
         if isinstance(o, (list, tuple)):
@@ -150,7 +134,7 @@ def main():
         flex_labels.append({"type": "Feature", "properties": props,
                             "geometry": {"type": "Point", "coordinates": [round(pt.x, 5), round(pt.y, 5)]}})
 
-    trails = regional_trails(view)
+    # (the bike network is drawn from data/bikes.json: pipeline/clean_bikes.py and build_bikes.py)
 
     out = {
         "dart": {"type": "FeatureCollection", "features": dart},
@@ -158,11 +142,10 @@ def main():
             {"type": "Feature", "properties": {}, "geometry": rounded(access)}]},
         "flex": {"type": "FeatureCollection", "features": flex},
         "flexLabels": {"type": "FeatureCollection", "features": flex_labels},
-        "trails": {"type": "FeatureCollection", "features": trails},
     }
     path = os.path.join(SITE, "data", "areas.json")
     json.dump(out, open(path, "w"), separators=(",", ":"))
-    print(f"areas: {len(dart)} DART, {len(flex)} Metro Flex zones, {len(trails)} bike trails, access polygon; {os.path.getsize(path)/1e3:.0f} KB")
+    print(f"areas: {len(dart)} DART, {len(flex)} Metro Flex zones, access polygon; {os.path.getsize(path)/1e3:.0f} KB")
 
 
 if __name__ == "__main__":

@@ -77,6 +77,10 @@ node tools/test_hover_release.js              # 7 checks: the old highlight lets
 node tools/test_hover_whole_route.js          # 27 checks over 9 areas: every strand picks its own route, hover lights
                                               #   every edge the route is drawn on, real mouse moves light the whole route
 node tools/test_hover_trace.js                # 4 checks: pointer walked along 128/8/106/5 never lets go or goes street-only
+node tools/test_bikes.js                      # 30 checks over 8 areas: bike lines flush and parallel beside the bands at
+                                              #   3 zooms, hover/tap light the whole bike route and dim the rest, let go
+python3 tools/check_bikes.py                  # 7 checks: bikes.json matches network.json, on OSM ways, no doubles,
+                                              #   no breaks or angles, Burke-Gilman one route
 node tools/test_live_tracking.js              # 7 checks: a fake noisy WTA bus stays on its line, never backwards or perpendicular
 node tools/test_live_proxy.mjs                # 11 checks: the key proxy swaps in keys, refuses other sites and paths
 node tools/test_small_agency_live.js          # 3 checks: Island, WTA and Skagit (via the proxy) vehicles land on their routes
@@ -88,6 +92,7 @@ python3 tools/check_stop_coverage.py --max-far N   # every pattern stop inside t
 node tools/test_planner_edges.js              # picker above cards & Seattle time from any zone, Arrive by latest,
                                               #   holiday timetables, "X Station" search, Escape, bad links
 node tools/close.js '[["name",[-122.3365,47.6085],16]]'   # screenshot views to shots/c-name.png
+                                              #   (LAYERS=link,...,stops,trails picks the layers; default has no bikes)
 node tools/bench.js                           # layout time per zoom (worker 5-260 ms is normal)
 node tools/zoomgap2.js tag                    # pinch-zoom check (lines must stay together)
 node tools/strandorder.js                     # strand swaps at junctions (0 current; gate <= 8)
@@ -122,9 +127,21 @@ as a flat loop, e.g. Island Transit 4 out to Troxell Rd, becomes a dead-end stub
 then `merge_parallel.merge_parallel_copies` puts routes that the repairs restored as separate copies
 along one street onto one shared edge: within 15 m and parallel, splits under 60 m folded in, a
 closed bubble on a freeway within 40 m; `tools/check_parallel_copies.py` gates it at 2 km),
-then `build_site`.
+then `clean_bikes` and `build_bikes` (the bike network, below), then `build_site`.
 - `network.json`: `{lines: [route ids], edges: [{c: [[lon,lat]...], l: [line indexes], d: [direction per line]}]}`.
   Three separate layers: surface, rail, water.
+- Bike network: `trails_saved.json` (SDOT's bike network plus the county regional trails; points
+  50-300 m apart, the Burke-Gilman in two surveys, one piece per street name) goes through
+  `clean_bikes.py`: each line is HMM-matched onto OpenStreetMap ways (`pipeline/bike_osm.json.gz`,
+  committed; made by `tools/extract_bike_osm.py` in the `bike-osm.yml` workflow, which runs only on
+  `claude/**` branches because the sandbox can't reach the tiles), doubles dropped, and pieces of one
+  kind that meet end to end joined into routes (`b`, `bn`); short forms in names are spelled out
+  (`TIDY`: Av, Wy, Er/Wr roadway tags). Then `build_bikes.py` ties every stretch that runs along a
+  transit edge (within `ATTACH_M` 35 m, same way) to that edge: `site/data/bikes.json` steps are
+  `[edge, f0, f1, side(, off)]` or `[-1, lon/lat...]` for its own line. Side is per run of steps:
+  right of travel unless a parallel band crowds that side (`crowded`). `off` is the real distance
+  when over `SLACK_M` 12 m (a trail beside a street keeps its gap, compacted by 14 px in the page).
+  bikes.json carries network.json's hash, so rebuild it after any network change (`build_all` does).
 - `tidy_junctions.py` (idempotent, repeats until nothing changes) fixes what tracing leaves behind:
   a crossing traced as two junctions (routes jog or hop into the other line's bundle), knotted
   freeway interchanges, a bundle bent into a junction that sits on a street beside it, and
@@ -172,6 +189,16 @@ one file for the artifact):
   Hold rules: the held route wins only when it is under the pointer or within 1.5 px (or 1 px of the
   best), never against a line that is under the pointer. Pointing at a stop or place label on the lit
   route keeps the route lit (`onFocusLine`). `window.__atlasPick(pt)` is the test hook.
+- Bike lines (`BIKES` in `geom.js`, drawn with the same `drawPath` as routes): an attached step sits
+  flush outside the edge's bundle in the current view (`lane`: half the bundle plus half the bike
+  width, which is a little under a bus); the offset is "rigid" so corner squeeze never pulls it onto
+  the band; joins between attached and free steps glide over `ease` metres instead of hooking.
+  Hover/tap: a band under the pointer wins over a bike line unless the pointer is outside the band
+  (`pickLineOrBike`, `bikeAt`); stops and places come first. Hover lights the whole bike route solid
+  (no dashes) and dims everything else like a route hover. Hooks: `__atlas.lastBikes()`,
+  `bikeState()`, `bikeAt(pt)`.
+- Hovered rush-hour routes are drawn solid and bold with light dashes down the middle (the
+  `mid` stroke in `ribbons.js`), so they stay bold but don't look like all-day buses.
 - Overview one-way arrows: where the one-way service types on a street all go the same way, only
   the most important one carries chevrons (`arrowFor` in `geom.js`), one row per bundle.
 - Shared-band hover highlights the street only. Tapping a band opens `showCorridor`: all visible
