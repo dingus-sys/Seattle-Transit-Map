@@ -3,8 +3,11 @@
 //     edge all along (no gap, no overlap, not slanting toward or away from it), at every zoom.
 //  2. Hover: pointing at a bike line lights that whole bike route (every piece of it in view,
 //     solid and wide) and fades everything else; leaving the line lets go.
-//  3. Tap: chooses the route (the rest of the map fades to 0.38); Escape lets it go.
-// Usage (site served on :8765): node tools/test_bikes.js
+//  3. Tap: chooses the route (the rest of the map fades to 0.38), and it stays chosen and faded
+//     when the pointer then leaves the map for its card or a map button (Nov 28: that let go of
+//     the fade); Escape lets it go.
+// Usage (site served on :8765): node tools/test_bikes.js   (ONLY=Fremont runs one area; DBG=1 lists where
+// bike lines run over a band, and what a tap opened)
 const { loadPlaywright } = require('./pw.js');
 const SITE = process.env.SITE || 'http://127.0.0.1:8765';
 const MAPLIBRE_JS = process.env.MAPLIBRE_JS || '';
@@ -12,7 +15,7 @@ const VIEWS = [
   ['NE 55th St (route 79)', [-122.3010, 47.6683], 16], ['Ravenna', [-122.305, 47.676], 14.6], ['Downtown', [-122.3355, 47.6075], 15.5],
   ['Capitol Hill', [-122.3208, 47.6200], 15.2], ['Fremont', [-122.3500, 47.6510], 14.8], ['U District', [-122.3130, 47.6600], 15.4],
   ['Rainier Valley', [-122.2900, 47.5600], 14.2], ['Bellevue', [-122.2000, 47.6150], 14.6],
-];
+].filter(([n]) => !process.env.ONLY || n.includes(process.env.ONLY)); // ONLY=Fremont runs one area
 // route:segment pairs where the bike line keeps its own distance from the street (its 5th step value)
 const FAR = (() => {
   try {
@@ -69,7 +72,7 @@ const OVERLAP_SHARE = 0.03; // ...and at most this much runs over it
           }
         }
         let beside = 0, flush = 0, over = 0;
-        const bad = [];
+        const bad = [], overBy = {};
         for (const f of bikes) {
           const P = f.geometry.coordinates.map(m), bw = f.properties.wm * unit / 2;
           for (let i = 1; i < P.length; i++) {
@@ -91,14 +94,20 @@ const OVERLAP_SHARE = 0.03; // ...and at most this much runs over it
               if (best.gap > 0 && far.has(`${f.properties.b}:${best.e}`)) continue;
               beside += 2;
               if (Math.abs(best.gap) <= tol) flush += 2;
-              else if (best.gap < 0) { over += 2; if (bad.length < 3) bad.push(`${f.properties.nl} ${best.gap.toFixed(1)} m`); }
+              else if (best.gap < 0) {
+                over += 2; if (bad.length < 3) bad.push(`${f.properties.nl} ${best.gap.toFixed(1)} m`);
+                const at = `${f.properties.nl} (${f.properties.k}) by edge ${best.e}`;
+                const ll = [+(x / KX + lon0).toFixed(5), +(y / KY + lat0).toFixed(5)];
+                if (!overBy[at]) overBy[at] = [0, ll, ll]; overBy[at][0] += 2; overBy[at][2] = ll;
+              }
               else if (bad.length < 3) bad.push(`${f.properties.nl} +${best.gap.toFixed(1)} m`);
             }
           }
         }
-        return { n: bikes.length, beside, flush, over, bad };
+        return { n: bikes.length, beside, flush, over, bad, overBy: Object.entries(overBy).sort((a, b) => b[1][0] - a[1][0]).slice(0, 8) };
       }, FAR);
       if (!fl.n) { check(`${name}: bike lines drawn`, false, 'none in view'); continue; }
+      if (process.env.DBG) console.log('  over a band:', JSON.stringify(fl.overBy));
       check(`${name}: bike lines beside bus bands touch them, parallel`, fl.beside === 0 || (fl.flush / fl.beside >= FLUSH_SHARE && fl.over / fl.beside <= OVERLAP_SHARE),
         `${fl.beside} m beside bands: ${Math.round(100 * fl.flush / Math.max(1, fl.beside))}% flush, ${Math.round(100 * fl.over / Math.max(1, fl.beside))}% over a band; e.g. ${fl.bad.join(', ')}`);
 
@@ -163,6 +172,14 @@ const OVERLAP_SHARE = 0.03; // ...and at most this much runs over it
       await page.mouse.click(target.x, target.y);
       await page.waitForTimeout(450);
       const sel = await page.evaluate(() => window.__atlas.bikeState());
+      if (process.env.DBG) console.log('  after tap:', JSON.stringify(await page.evaluate(() => ({ sel: window.__atlas.bikeState(), cur: window.__atlasCur(), panel: document.querySelector('.sheet-body h2, .sheet-body .name')?.textContent, popup: document.querySelector('.maplibregl-popup')?.textContent?.slice(0, 80) }))), JSON.stringify(target));
+      // off the map, onto the zoom buttons: the choice and its fade stay
+      const btn = await page.evaluate(() => { const r = document.getElementById('zoomIn')?.getBoundingClientRect(); return r ? { x: r.x + r.width / 2, y: r.y + r.height / 2 } : null; });
+      if (btn) await page.mouse.move(btn.x, btn.y, { steps: 4 });
+      await page.waitForTimeout(500);
+      const kept = await page.evaluate(() => ({ st: window.__atlas.bikeState(), o: window.__map.getPaintProperty('trail-sharrow', 'line-opacity') }));
+      check(`${name}: the chosen route stays chosen, the rest faded, with the pointer off the map`, !!btn && kept.st.sel === target.b && Math.abs(kept.st.netDim - 0.38) < 0.01 && kept.o < 0.5,
+        `${btn ? '' : 'no map button; '}chosen ${kept.st.sel}, map ${kept.st.netDim}, other bike lines at ${kept.o}`);
       await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
       await page.waitForTimeout(300);
       const after = await page.evaluate(() => window.__atlas.bikeState());

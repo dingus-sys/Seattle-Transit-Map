@@ -79,12 +79,15 @@ node tools/test_hover_whole_route.js          # 27 checks over 9 areas: every st
 node tools/test_hover_trace.js                # 4 checks: pointer walked along 128/8/106/5 never lets go or goes street-only
 node tools/test_hover_reach.js                # 17 checks: route, tag and bike cards wait while the pointer moves onto them
                                               #   (along the line they follow, off it they let go) and open their page on click
-node tools/test_bikes.js                      # 30 checks over 8 areas: bike lines flush and parallel beside the bands at
-                                              #   3 zooms, hover/tap light the whole bike route and dim the rest, let go
-python3 tools/check_bikes.py                  # 8 checks: bikes.json matches network.json, on OSM ways, no doubles,
+node tools/test_bikes.js                      # 33 checks over 8 areas: bike lines flush and parallel beside the bands at
+                                              #   3 zooms, hover/tap light the whole bike route and dim the rest (a tap's
+                                              #   fade stays with the pointer off the map), let go
+python3 tools/check_bikes.py                  # 10 checks: bikes.json matches network.json, on OSM ways, no doubles,
                                               #   no breaks or angles, Burke-Gilman one route, Seattle is SDOT's own map
-                                              #   (each of its kinds drawn as itself along >= 97% of its length)
-node tools/test_live_tracking.js              # 7 checks: a fake noisy WTA bus stays on its line, never backwards or perpendicular
+                                              #   (each of its kinds drawn as itself along >= 97% of its length), lines
+                                              #   meet where SDOT's meet (>= 96% of corners), county trails not cut out
+node tools/test_live_tracking.js              # 8 checks: a fake noisy WTA bus stays on its line, never backwards or perpendicular;
+                                              #   a bus waiting at a stop with no heading still points the way it goes
 node tools/test_live_proxy.mjs                # 11 checks: the key proxy swaps in keys, refuses other sites and paths
 node tools/test_small_agency_live.js          # 3 checks: Island, WTA and Skagit (via the proxy) vehicles land on their routes
 node tools/stress_test_routing.js             # 18 planner tests: every leg timetabled, 2-min buffers, walk caps
@@ -98,7 +101,7 @@ node tools/close.js '[["name",[-122.3365,47.6085],16]]'   # screenshot views to 
                                               #   (LAYERS=link,...,stops,trails picks the layers; default has no bikes)
 node tools/bench.js                           # layout time per zoom (worker 5-260 ms is normal)
 node tools/zoomgap2.js tag                    # pinch-zoom check (lines must stay together)
-node tools/strandorder.js                     # strand swaps at junctions (0 current; gate <= 8)
+node tools/strandorder.js                     # strand swaps at junctions (2 current; gate <= 8)
 node tools/geometry_check.js                  # all routes/zoom levels, selection/hover agreement
 python3 tools/check_repair.py                 # omitted branches, anchored repairs, direction metadata
 python3 tools/check_parallel_copies.py        # routes on one street share one bundle (gate: <= 2 km of copies)
@@ -145,9 +148,18 @@ then `clean_bikes` and `build_bikes` (the bike network, below), then `build_site
   point, blocks listed twice once), HMM-matches each line onto OpenStreetMap ways
   (`pipeline/bike_osm.json.gz`, committed; made by `tools/extract_bike_osm.py` in the `bike-osm.yml`
   workflow, which runs only on `claude/**` branches: the sandbox's bundled tiles have no paths or
-  cycleways), drops doubles (SDOT first, then the better kind: `RANK`; a county line within 30 m of
-  SDOT's is SDOT's), and joins pieces into routes (`b`, `bn`): same kind or name end to end, the
-  only two of a kind at a junction, and one named trail across a gap under 800 m (the Burke-Gilman's
+  cycleways), drops doubles (SDOT first, then the better kind: `RANK`; a county line is SDOT's
+  within `DUP_SDOT` 30 m of one of SDOT's trails, but within only `DUP_STREET` 15 m of an SDOT street
+  facility, unless the county line itself runs down a street (`ON_STREET_M` 8 m of an OSM road):
+  Nov 28, the Green Lake loop runs 19-27 m inside the lake's protected lanes, SDOT has no Green Lake
+  trail, and the old 30 m rule cut it into pieces; the Arboretum and SR 520 trails likewise). Then
+  `close_gaps` carries every end that stops short of a line it meets in the source (`GAP_M` 30 m;
+  `MEET_SDOT` 2 m between SDOT lines, `MEET_COUNTY` 15 m otherwise) onto that line, and joins the
+  same street across a crossing (`CROSS_M` 40 m), so lines meet where SDOT's do. Routes (`b`, `bn`):
+  every kind but trails (`NETWORK_KINDS`) is one route per connected network of that kind, T
+  junctions included (a sharrow network up Discovery Park Blvd and 43rd Ave W lights as one, not
+  0.1 mi of it after a turn); kinds never merge into one route. Trails join same name end to end,
+  the only two at a junction, and one named trail across a gap under 800 m (the Burke-Gilman's
   missing link). Names are tidied (`sdot_name`, `TIDY`). `stats.sdot_miles` (each kind's miles in
   SDOT's data) goes to bikes.json for the key's shares. Then `build_bikes.py` ties every stretch that runs along a
   transit edge (within `ATTACH_M` 35 m, same way) to that edge: `site/data/bikes.json` steps are
@@ -186,6 +198,16 @@ one file for the artifact):
   own tags are redrawn at full strength in `hov-badges-0/1` (two cross-fading slots). Only while
   `netDim === 1`: a selection's 0.38 always wins. Never animate a data-driven paint expression
   (that re-tiles the source); constant values with `*-transition` are free.
+- Vehicles fade like their lines (`vehFader`): a vehicle of a lit route (selected, hovered, or
+  focused by a card: trip, stop, "Stay on board") stays full; every other one goes to the hover
+  fade or the network's (`netDim`, floor 0.25). Nov 28: only the hover fade reached vehicles, so
+  behind a card's 0.18-0.35 focus every bus stayed fully lit. `setNetDim` re-renders vehicles.
+- A chosen bike route keeps the map faded: `setNetDim(1)` means 0.38 while `trailHlCat` is set
+  (focusOff and cards' mouseleave ask for 1, and used to undo it), and it re-applies the bike paint.
+- Route tags fade out while a zoom moves `TAG_OUT` 0.4 out / `TAG_IN` 0.7 in from the zoom they
+  were laid out for (a fast zoom-out packed the whole set together and collisions flickered), and
+  the new layout's tags fade in once the source has them (`tagsBack`). `paintBadges` is the only
+  writer of the tag layers' opacity (net fade x hover fade x zoom fade).
 - Hover: `pickLine` finds the route strand under the pointer (sticky: the current target is held
   until the pointer is clearly off it); the route's whole path is drawn bold in one of two
   cross-fading hover layers; the tooltip glides, morphs between cards and fades. Hover opacity
@@ -217,13 +239,26 @@ one file for the artifact):
   Hover/tap: a band under the pointer wins over a bike line unless the pointer is outside the band
   (`pickLineOrBike`, `bikeAt`); stops and places come first. Hover lights the whole bike route solid
   (no dashes) and dims everything else like a route hover. Hooks: `__atlas.lastBikes()`,
-  `bikeState()`, `bikeAt(pt)`.
+  `bikeState()`, `bikeAt(pt)`. A mouse click does what the hover shows: a stop or station the
+  pointer isn't squarely on (`pickStop`) doesn't take the click from a line or bike lane under it
+  (`litElse` in the click handler; a finger tap still takes stops 7 px off). Since a route of one
+  kind is a whole network, the map label of each piece is its own street (`labels` sent to the
+  worker), and the tooltip and card name the street under the pointer plus "Part of one connected
+  network, also along ..." (`bikeTitle`, `bikeNetLine`; a piece names only its longest street).
+- Offset lines in `drawPath`: where a corner is tighter than the offset (the inside of a 3 m jog at a
+  junction), the points that run backwards are dropped, and the line rejoins the next segment's
+  offset line a short glide later (it used to slant from the fold to the next point, a block away:
+  a bike lane on N 45th St lay on the 44's band for 300 m). The corner squeeze also widens back
+  within its reach (`scaleAt`), not at the next point of the line.
 - Bike kinds are one table, `BIKE_KINDS` in `app.js` (name, color light/dark, dashes, width, min zoom,
   family: separated / painted / shared, description): the map layers (`trail-<k>`), widths, swatches,
   the key (a row per kind grouped by family, each kind's share of SDOT's miles; filters by kind or
   `fam:<family>`), tooltips and cards all read it. The key's "i" (`#bikeInfoBtn`, hover shows, click
   pins) explains every kind with its share and miles, and how much has nothing solid between bikes
-  and cars. Never add a kind in one place only.
+  and cars. Never add a kind in one place only. The transit key ("On the map") has its own "i"
+  (`#svcInfoBtn`, `svcInfoHTML`): each service type with its routes on the map, midday weekday
+  headway, hours a day and weekend share from `routes.json` `sched`, then how to read the drawing.
+  A quiet home refresh keeps an open "i" open.
 - Hovered rush-hour routes are drawn solid and bold with light dashes down the middle (the
   `mid` stroke in `ribbons.js`), so they stay bold but don't look like all-day buses.
 - Overview one-way arrows: where the one-way service types on a street all go the same way, only
@@ -271,11 +306,18 @@ WSDOT access code and is called with JSONP. Places (parks, schools, museums, zoo
 the map tiles; the bundled tiles keep only named places of the kinds in `POI_KEEP`
 (`build_basemap.py`). Highway shields work from the bundled tiles too.
 - Live vehicles ride their route (`placeOnPath`): each fix is matched to the route's schedule
-  patterns (direction from the last fix and the GPS bearing; bearing 0 means unknown), the marker
+  patterns (direction from the last fix and the GPS bearing; bearing 0 means unknown; most buses
+  send none, so also the stop it is at or heading to, from the feed's `stop_id` or OneBusAway's
+  `nextStop`, which only paths of its direction reach ahead of it, and OneBusAway's `orientation`
+  along the trip, from the status call when it is the same trip and under 2 min old), the marker
   glides along the path between fixes (never a straight line that cuts corners), faces along the
   path, and shows no pointer until the direction is known. Small backward GPS drift holds still; a
   big jump teleports. A bus missing from one answer is kept 60 s, and markers fade in and out over
   500 ms. Live and estimated vehicles share one 180 s freshness window (no swap at 90 s).
+- A vehicle heading a known way is one shape (`vdir:` image, `veh-dir`, turned to the heading): the
+  badge drawn out into a rounded point, joined by tangent lines, one white border and one shadow;
+  its symbol is drawn upright on top (`vglyph:` in `veh-icon`). Without a direction, the round
+  badge (`veh:`).
 
 ## Timetable and planner notes (audit of Nov 25, 2026)
 

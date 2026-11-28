@@ -2,7 +2,9 @@
 // fix (GPS noise of ~12 m to the side, a bearing of 0 the way many feeds say "unknown", a fix
 // that drifts back at a stop, and one answer that leaves the bus out). At every moment the marker
 // must be on its route's line, face along it in the way it is going (or show no pointer while
-// that isn't known yet), never drive backwards, and never vanish or jump.
+// that isn't known yet), never drive backwards, and never vanish or jump. A second bus waits at a
+// stop: it never moves and reports no heading, only the stop it is heading to (stop_id), and must
+// still point the way it goes from the start (Nov 28: such buses showed a bare circle).
 // Usage (site served on :8765): node tools/test_live_tracking.js
 const { loadPlaywright } = require('./pw.js');
 const fs = require('fs');
@@ -14,13 +16,16 @@ const field = (no, wt, body) => [...varint(no * 8 + wt), ...body];
 const bytes = (no, buf) => field(no, 2, [...varint(buf.length), ...buf]);
 const str = (no, s) => bytes(no, [...Buffer.from(s)]);
 const f32 = (no, x) => { const b = Buffer.alloc(4); b.writeFloatLE(x); return field(no, 5, [...b]); };
-function feed(fix) {
+function entity(fix, id) {
+  const now = Math.floor(Date.now() / 1000);
+  const vp = [...bytes(1, [...str(1, 'trip' + id), ...str(5, fix.route)]), ...bytes(2, [...f32(1, fix.lat), ...f32(2, fix.lon), ...f32(3, 0)]),
+    ...field(5, 0, varint(now)), ...(fix.stop ? str(7, fix.stop) : []), ...bytes(8, str(1, id))];
+  return bytes(2, [...str(1, 'e' + id), ...bytes(4, vp)]);
+}
+function feed(fix, waiting) {
   const now = Math.floor(Date.now() / 1000);
   const head = bytes(1, [...str(1, '2.0'), ...field(3, 0, varint(now))]);
-  if (!fix) return Buffer.from(head);
-  const vp = [...bytes(1, [...str(1, 'trip1'), ...str(5, fix.route)]), ...bytes(2, [...f32(1, fix.lat), ...f32(2, fix.lon), ...f32(3, 0)]),
-    ...field(5, 0, varint(now)), ...bytes(8, str(1, 'BUS1'))];
-  return Buffer.from([...head, ...bytes(2, [...str(1, 'eBUS1'), ...bytes(4, vp)])]);
+  return Buffer.from([...head, ...(fix ? entity(fix, 'BUS1') : []), ...(waiting ? entity(waiting, 'BUS2') : [])]);
 }
 
 // the route's longest path, in metres around its middle
@@ -42,6 +47,11 @@ const project = (lon, lat) => { const m = [(lon - pat.c[0][0]) * KX, (lat - LAT0
     if (!best || d < best.d) best = { d, s: cum[k] + Math.sqrt(L2) * u, b: (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360 }; }
   return best; };
 const S0 = cum[cum.length - 1] * 0.3;
+// the waiting bus: 200 m behind the moving one (in view, never beside it), on a stop that only this path (and those drawn on it) serves, ahead of it
+const L = cum[cum.length - 1], D = pat.d[pat.d.length - 1];
+const S2 = S0 - 200, shared = new Set(sched.patterns.filter((p) => p.r === ri && p.c && p !== pat && JSON.stringify(p.c) !== JSON.stringify(pat.c)).flatMap((p) => p.s));
+const iStop = pat.s.findIndex((id, i) => pat.d[i] / D * L > S2 + 40 && !shared.has(id));
+const W = at(S2), waiting = iStop < 0 ? null : (() => { const [lon, lat] = toLL(W.x, W.y); return { route: '331', lat, lon, stop: pat.s[iStop].replace(/^wta-/, '') }; })();
 // metres along the path at each poll, and how far to the side the GPS puts the bus (null: left out)
 const plan = [[S0, 10], [S0 + 140, -12], [S0 + 290, 12], [S0 + 272, -8], null, [S0 + 520, 10], [S0 + 660, -12], [S0 + 800, 6]];
 const angle = (a, b) => Math.abs((((b - a) % 360) + 540) % 360 - 180);
@@ -57,7 +67,7 @@ const angle = (a, b) => Math.abs((((b - a) % 360) + 540) % 360 - 180);
     await page.route(/^https:\/\//, (r) => (/maplibre-gl/.test(r.request().url()) ? r.continue() : r.abort()));
     if (MAPLIBRE_JS) await page.route(/maplibre-gl\.js$/, (r) => r.fulfill({ path: MAPLIBRE_JS, contentType: 'application/javascript', headers: { 'Access-Control-Allow-Origin': '*' } }));
     let fix = null;
-    await page.route('https://bustracker.ridewta.com/gtfsrt/vehicles', (r) => r.fulfill({ body: feed(fix), contentType: 'application/x-protobuf', headers: { 'Access-Control-Allow-Origin': '*' } }));
+    await page.route('https://bustracker.ridewta.com/gtfsrt/vehicles', (r) => r.fulfill({ body: feed(fix, waiting), contentType: 'application/x-protobuf', headers: { 'Access-Control-Allow-Origin': '*' } }));
     const setFix = (step) => {
       if (!step) { fix = null; return; }
       const q = at(step[0]), [lon, lat] = toLL(q.x + q.nx * step[1], q.y + q.ny * step[1]);
@@ -73,7 +83,7 @@ const angle = (a, b) => Math.abs((((b - a) % 360) + 540) % 360 - 180);
       const d = window.__map.getSource('vehicles')._data, f = (d.features || []).find((x) => x.properties.id === 'wta_BUS1');
       return f ? { c: f.geometry.coordinates, b: f.properties.b, o: f.properties.o } : null;
     });
-    const samples = [];
+    const samples = [], waits = [];
     let firstSeen = -1;
     for (let i = 0; i < plan.length; i++) {
       setFix(plan[i]);
@@ -84,6 +94,7 @@ const angle = (a, b) => Math.abs((((b - a) % 360) + 540) % 360 - 180);
         const v = await sample();
         if (v && firstSeen < 0) firstSeen = samples.length;
         samples.push({ i, v });
+        waits.push(await page.evaluate(() => { const f = (window.__map.getSource('vehicles')._data.features || []).find((x) => x.properties.id === 'wta_BUS2'); return f ? f.properties.b : null; }));
       }
       await polled;
     }
@@ -107,6 +118,9 @@ const angle = (a, b) => Math.abs((((b - a) % 360) + 540) % 360 - 180);
     const wrong = pointed.filter((x) => along(x) > 45);
     check('its pointer faces along the line, the way it is going', pointed.length > 0 && !wrong.length,
       `${pointed.length} moments with a pointer, ${wrong.length} not along the route (e.g. ${wrong.slice(0, 3).map((x) => x.v.b + ' vs ' + x.p.b.toFixed(0)).join(', ')})`);
+    const w = waits.filter((b) => b != null);
+    check('a bus waiting at a stop with no heading still points the way it goes', waiting && w.length > 0 && w.every((b) => b >= 0 && angle(b, W.b) <= 45),
+      waiting ? `${w.length} moments, pointer ${[...new Set(w)].slice(0, 4).join('/')} vs the line's ${W.b.toFixed(0)}` : 'no stop to wait at');
     const fadeIn = after.slice(0, 3).map((x) => x.v && x.v.o);
     check('it fades in rather than popping', fadeIn[0] != null && fadeIn[0] < 1, `opacity ${fadeIn.join(', ')}`);
   } catch (e) {

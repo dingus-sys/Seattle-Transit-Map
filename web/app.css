@@ -515,13 +515,10 @@ button, input { font: inherit; color: inherit; letter-spacing: inherit; }
 .live-line.off .pulse { background: var(--muted); opacity: .5; animation: none; }
 .nav-row { grid-template-columns: 30px minmax(0, 1fr) auto; }
 .nav-row .chev { color: var(--muted); opacity: .6; }
-.nav-row .icon { background: color-mix(in srgb, var(--accent) 12%, transparent); }
-.nav-row .guide-row-ic {
-  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
-  color: #ffffff;
-  border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(37, 99, 235, .28), inset 0 0.5px 0 rgba(255, 255, 255, .3);
-}
+.nav-row .icon { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
+/* every Explore icon: the same tinted tile with an 18 px glyph centred in it (Nov 28: the Guide's
+   map filled its tile to the edges, on a solid blue of its own) */
+.nav-row .icon > svg { width: 18px; height: 18px; }
 .guide-hero-ic {
   width: 44px; height: 44px; border-radius: 12px;
   background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
@@ -548,30 +545,6 @@ button, input { font: inherit; color: inherit; letter-spacing: inherit; }
 .svc-key .sw-sym { width: 20px; height: 20px; right: -2px; }
 .legend-note { margin: 10px 0 0; font-size: 12px; line-height: 1.45; color: var(--muted); }
 
-/* A high-visibility doorway for routes that continue through Downtown. */
-.through-routes-home {
-  width: 100%; margin: 2px 0 12px; padding: 11px 12px; display: grid;
-  grid-template-columns: 32px minmax(0, 1fr) auto auto; align-items: center; gap: 9px;
-  border: 1px solid color-mix(in srgb, #059669 30%, var(--rim)); border-radius: var(--r-group);
-  background: color-mix(in srgb, #059669 9%, var(--fill)); color: var(--ink); text-align: left; cursor: pointer;
-  box-shadow: inset 0 0 0 .5px color-mix(in srgb, #fff 32%, transparent);
-  transition: background .16s ease, border-color .16s ease, transform .16s ease;
-}
-.through-routes-home:hover, .through-routes-home:focus-visible {
-  background: color-mix(in srgb, #059669 15%, var(--fill)); border-color: color-mix(in srgb, #059669 55%, var(--rim));
-  transform: translateY(-1px); outline: none;
-}
-.through-routes-home-icon {
-  width: 30px; height: 30px; display: grid; place-items: center; border-radius: 9px;
-  background: #059669; color: #fff; font-size: 15px;
-}
-.through-routes-home .txt { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
-.through-routes-home .name { font-size: 13px; font-weight: 700; white-space: normal; line-height: 1.22; }
-.through-routes-home .desc { color: var(--ink-2); font-size: 11.5px; line-height: 1.28; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.through-routes-home-badges { display: flex; align-items: center; gap: 3px; white-space: nowrap; }
-.through-routes-home-badges .badge { transform: scale(.82); margin: -2px; }
-.through-routes-home-arrow { color: var(--muted); font-size: 11px; }
-.through-routes-home .chev { color: var(--muted); opacity: .7; }
 
 /* ---------- Bike Network Legend & Facility Filters ---------- */
 .bike-legend-card {
@@ -620,6 +593,18 @@ button, input { font: inherit; color: inherit; letter-spacing: inherit; }
 .bike-info-kind .ds { font-size: 11.5px; color: var(--muted); }
 .bike-info-pct { flex: none; font-variant-numeric: tabular-nums; color: var(--ink-2); font-weight: 600; font-size: 11.5px; }
 .bike-info-src { margin: 10px 0 0; font-size: 10.5px; color: var(--muted); }
+/* the transit key's "i": the same card, anchored under "On the map" */
+.svc-key-card { position: relative; }
+.svc-key-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 18px 4px 7px; }
+.svc-key-head .section { margin: 0; }
+.svc-info { top: 30px; }
+.svc-info-kind .sw { position: relative; height: 22px; display: grid; place-items: center; }
+.svc-info-kind .sw svg { width: 30px; height: 30px; }
+.svc-info-kind .sw .sw-sym { right: -1px; }
+.svc-info-kind .svc-facts { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.svc-how { list-style: none; margin: 2px 0 0; padding: 0; }
+.svc-how li { padding: 3px 0; font-size: 12px; }
+.svc-how b { color: var(--ink); }
 .bike-legend-fam {
   font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted);
   margin: 6px 8px 0;
