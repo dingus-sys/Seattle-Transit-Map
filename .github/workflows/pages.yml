@@ -48,6 +48,7 @@ jobs:
           python3 tools/check_stop_coverage.py --max-far 3   # stops on a route's own patterns sit on its drawn line
           python3 tools/check_repair.py
           python3 tools/check_parallel_copies.py   # routes on one street share one bundle
+          python3 tools/check_bikes.py   # one clean line per bike route: no doubles, breaks or angles
       - uses: actions/configure-pages@v5
       # The page (index.html, app.js, app.css, geom.js, ribbons.js, logos/) is built here from web/ and is
       # not kept in the repository; the data in site/data and site/tiles is.

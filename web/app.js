@@ -184,7 +184,7 @@
   };
 
   // ---------------------------------------------------------------- state
-  let ROUTES = [], RBY = {}, NET = null, STOPS = null, AREAS = null, META = null, STOPNAMES = {};
+  let ROUTES = [], RBY = {}, NET = null, STOPS = null, AREAS = null, BIKES = null, META = null, STOPNAMES = {};
   let LINES = [], LINEIDX = {};
   let stopIndex = {};
   let map, theme = themeName();
@@ -572,6 +572,13 @@
     for (const l of L) if (l.source === "net" && l.type === "line") l.paint["line-opacity-transition"] = { duration: 260 };
     return L;
   }
+  // one color per kind of bike line, for the lines that light up (hover and selection)
+  const BIKE_COLOR = (th) => ["match", ["get", "k"],
+    "greenway", th === "dark" ? "#86efac" : "#16a34a",
+    "lane", th === "dark" ? "#f472b6" : "#db2777",
+    "sharrow", th === "dark" ? "#fde047" : "#ca8a04",
+    "unpaved", th === "dark" ? "#fb923c" : "#9a3412",
+    th === "dark" ? "#2dd4bf" : "#047857"];
   function areaLayers(P, th = theme) {
     const acc = th === "dark" ? "#bf9cf5" : "#7b5cc4";
     const trailCol = th === "dark" ? "#2dd4bf" : "#047857";
@@ -598,64 +605,57 @@
       { id: "dart-hl-fill", type: "fill", source: "darthl", paint: { "fill-color": LINE[th].dart, "fill-opacity": th === "dark" ? 0.35 : 0.28 } },
       { id: "dart-hl-casing", type: "line", source: "darthl", paint: { "line-color": "#ffffff", "line-width": 5.0, "line-opacity": 0.95 } },
       { id: "dart-hl-line", type: "line", source: "darthl", paint: { "line-color": LINE[th].dart, "line-width": 3.0, "line-dasharray": ROUTE_DASH, "line-opacity": 1.0 } },
-      // 1. Casing for multi-use trails and protected bike lanes
-      { id: "trail-case", type: "line", source: "trails",
-        filter: ["in", ["get", "facility"], ["literal", ["trail", "pbl"]]],
-        paint: {
-          "line-color": trailCase, "line-opacity": th === "dark" ? 0.95 : 0.9,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 9, 3.2, 11, 4.4, 13, 5.8, 15, 7.2, 17, 8.5],
-        } },
+      // The bike network (data/bikes.json, placed by the geometry engine): each line carries its
+      // kind (k), route (b) and width in line units (wm, casing cm), sized like the transit lines
+      // (px), so a bike lane beside a bus band stays flush with it at every zoom.
+      // 1. A white casing under every bike line, as the transit lines have, so a bike line beside a
+      //    band reads as its own line
+      { id: "trail-case", type: "line", source: "trails", minzoom: 9,
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": trailCase, "line-opacity": th === "dark" ? 0.9 : 0.95, "line-width": px("cm") } },
       // 2. Multi-use trails and Protected Bike Lanes (PBL) - solid emerald line
       { id: "trail-pbl", type: "line", source: "trails",
-        filter: ["all", ["in", ["get", "facility"], ["literal", ["trail", "pbl"]]], ["!=", ["get", "surface"], "unpaved"]],
-        paint: {
-          "line-color": trailCol,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 9, 2.0, 11, 2.8, 13, 3.8, 15, 5.0, 17, 6.2],
-          "line-opacity": 0.95,
-        } },
-      // 3. Neighborhood Greenways & Healthy Streets - distinct green line with subtle dash (visible from regional view)
+        filter: ["==", ["get", "k"], "pbl"],
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": trailCol, "line-width": px("wm"), "line-opacity": 1 } },
+      // 3. Neighborhood Greenways & Healthy Streets - green with a long dash
       { id: "trail-greenway", type: "line", source: "trails", minzoom: 9,
-        filter: ["==", ["get", "facility"], "greenway"],
-        paint: {
-          "line-color": trailGreenway,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1.4, 11, 2.0, 13, 2.8, 15, 3.8, 17, 4.8],
-          "line-dasharray": [6, 3],
-          "line-opacity": 0.92,
-        } },
-      // 4. Bicycle Lanes (Buffered, Climbing & Striped Lanes) - clean teal lane stroke
+        filter: ["==", ["get", "k"], "greenway"],
+        layout: { "line-join": "round" },
+        paint: { "line-color": trailGreenway, "line-width": px("wm"), "line-dasharray": [3, 1.2], "line-opacity": 1 } },
+      // 4. Bicycle Lanes (buffered, climbing and striped) - rose
       { id: "trail-lane", type: "line", source: "trails", minzoom: 9.8,
-        filter: ["==", ["get", "facility"], "lane"],
-        paint: {
-          "line-color": trailLane,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 9.8, 1.2, 11.5, 1.6, 13, 2.4, 15, 3.2, 17, 4.0],
-          "line-opacity": 0.9,
-        } },
-      // 5. Sharrows & Shared Streets - dotted gold stroke
+        filter: ["==", ["get", "k"], "lane"],
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": trailLane, "line-width": px("wm"), "line-opacity": 1 } },
+      // 5. Sharrows & Shared Streets - gold dots
       { id: "trail-sharrow", type: "line", source: "trails", minzoom: 11,
-        filter: ["==", ["get", "facility"], "sharrow"],
-        paint: {
-          "line-color": trailSharrow,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 11, 1.4, 13, 1.9, 15, 2.5, 17, 3.2],
-          "line-dasharray": [1.2, 3],
-          "line-opacity": 0.92,
-        } },
-      // 6. Unpaved / gravel trails - dashed rust stroke, bolder at low zoom so it reads as a
-      // regional corridor rather than fading into the basemap when you're zoomed out
+        filter: ["==", ["get", "k"], "sharrow"],
+        layout: { "line-join": "round" },
+        paint: { "line-color": trailSharrow, "line-width": px("wm"), "line-dasharray": [1, 1.1], "line-opacity": 1 } },
+      // 6. Unpaved / gravel trails - rust dashes
       { id: "trail-dash", type: "line", source: "trails",
-        filter: ["==", ["get", "surface"], "unpaved"],
-        paint: {
-          "line-color": th === "dark" ? "#fb923c" : "#9a3412",
-          "line-width": ["interpolate", ["linear"], ["zoom"], 9, 2.2, 11, 2.8, 13, 3.4, 15, 4.2, 17, 5.2],
-          "line-dasharray": [3, 2],
-          "line-opacity": 0.95,
-        } },
-      // 7. Labels along major trails and protected bike lanes
-      { id: "trail-labels", type: "symbol", source: "trails", minzoom: 11,
+        filter: ["==", ["get", "k"], "unpaved"],
+        layout: { "line-join": "round" },
+        paint: { "line-color": th === "dark" ? "#fb923c" : "#9a3412", "line-width": px("wm"), "line-dasharray": [2.2, 1.2], "line-opacity": 1 } },
+      // 7. A hovered or chosen bike route, whole: a soft glow, a white casing and a solid line in its
+      //    color, wider than the rest (dashes made a lit greenway as hard to follow as an unlit one)
+      { id: "bike-hl-glow", type: "line", source: "trails", filter: ["in", ["get", "b"], ["literal", []]],
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": BIKE_COLOR(th), "line-opacity": th === "dark" ? 0.32 : 0.26, "line-blur": 3, "line-width": px("cm", 3.2) } },
+      { id: "bike-hl-case", type: "line", source: "trails", filter: ["in", ["get", "b"], ["literal", []]],
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": trailCase, "line-width": px("cm", 1.75) } },
+      { id: "bike-hl", type: "line", source: "trails", filter: ["in", ["get", "b"], ["literal", []]],
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": BIKE_COLOR(th), "line-width": px("wm", 1.75) } },
+      // 8. Labels along the bike routes
+      { id: "trail-labels", type: "symbol", source: "trails", minzoom: 12,
         layout: {
-          "symbol-placement": "line", "symbol-spacing": 350,
-          "text-field": ["get", "name"], "text-font": F_REG,
-          "text-size": ["interpolate", ["linear"], ["zoom"], 11, 9.5, 13, 10.5, 16, 12],
-          "text-padding": 8, "text-optional": true,
+          "symbol-placement": "line", "symbol-spacing": 420,
+          "text-field": ["get", "nl"], "text-font": F_REG,
+          "text-size": ["interpolate", ["linear"], ["zoom"], 12, 9.5, 14, 10.5, 16, 12],
+          "text-padding": 8, "text-optional": true, "text-offset": [0, 0.9],
         },
         paint: {
           "text-color": trailText, "text-halo-color": trailHalo, "text-halo-width": 1.8, "text-opacity": 0.95,
@@ -663,7 +663,7 @@
     ];
     // smooth, not a pop: the bike legend bolds/dims these on hover
     for (const l of L) {
-      if (l.source !== "trails") continue;
+      if (l.source !== "trails" || l.id.startsWith("bike-hl")) continue;
       if (l.type === "line") l.paint["line-width-transition"] = l.paint["line-opacity-transition"] = { duration: 220 };
       else if (l.type === "symbol") l.paint["text-opacity-transition"] = { duration: 220 };
     }
@@ -1412,7 +1412,8 @@
   let worker = null, engine = null, inFlight = null, queued = null, buildSeq = 0, appliedSeq = 0, lastBuildMs = 0, watchdog = 0;
   const idleWaiters = [];
   function engineInit() {
-    return { edges: NET.edges, lines: LINES.map((r) => ({ cat: dkey(r), rank: r._rank })), cat: CAT, gap: GAP };
+    return { edges: NET.edges, lines: LINES.map((r) => ({ cat: dkey(r), rank: r._rank })), cat: CAT, gap: GAP,
+      bikes: BIKES ? { pieces: BIKES.pieces, routes: BIKES.routes } : null };
   }
   function runHere() {
     if (worker) { worker.terminate(); worker = null; }
@@ -1500,6 +1501,8 @@
       ribbons.update("sel", m.selMesh || KCTMRibbons.compile(m.selFeats, { selected: true }));
     }
     map.getSource("net").setData({ type: "FeatureCollection", features: m.feats });
+    lastBikes = m.bikes || [];
+    if (map.getSource("trails")) map.getSource("trails").setData({ type: "FeatureCollection", features: lastBikes });
     if (hoverKey) focusRoutes(hoverRoutes, true);
     map.getSource("sel").setData({ type: "FeatureCollection", features: m.selFeats });
     const still = !map.isZooming();
@@ -1527,8 +1530,14 @@
     const f = z <= 10.0 ? 0.82 : z >= 12.5 ? 1 : 0.82 + 0.18 * (z - 10.0) / 2.5;
     return { local: f, peak: Math.max(0.72, f * 0.90), shuttle: f * 0.88, dart: Math.max(0.70, f * 0.88) };
   }
+  // Bike lines in line units: a little narrower than an all-day bus line (1.9), the kinds that
+  // matter most a little wider, slimming with the buses when zoomed out.
+  function bikeWidths(z) {
+    const f = minorScale(z).local;
+    return { pbl: 1.55 * f, unpaved: 1.45 * f, lane: 1.4 * f, greenway: 1.4 * f, sharrow: 1.25 * f };
+  }
   function tierFor(z) { const t = BUS_TIERS[settings.busDetail]; return z >= t[2] ? 2 : z >= t[1] ? 1 : 0; }
-  let lastZ = -1, labelStep = null, needsRebuild = false, builtView = null, lastFeats = [], lastSelFeats = [];
+  let lastZ = -1, labelStep = null, needsRebuild = false, builtView = null, lastFeats = [], lastSelFeats = [], lastBikes = [];
   // The area last drawn (meters): the view plus a wide margin, so panning stays smooth.
   function viewBox(margin) {
     const b = map.getBounds();
@@ -1579,7 +1588,7 @@
     const p = { z, zs, zNow, u, capU: interp(CAP_PX, z) / u, keyOn, routeFilter,
       selIdx: selected && selected.type === "route" ? LINEIDX[selected.id] : -1,
       view: (builtView = viewBox(0.45)), tags: tagSpacing(TAG_DENSITY[settings.tags], zNow), theme: theme[0], colors: netColors(theme), focusColors: LINE[theme],
-      wscale: minorScale(zNow) };
+      wscale: minorScale(zNow), bikes: enabled.has("trails") && BIKES ? bikeWidths(zNow) : null };
     lastParams = p;
     const msg = { id: ++buildSeq, p };
     if (!worker) {
@@ -4219,6 +4228,7 @@
   const HOVER_DIM_DASHED = 0.32;
   const hoverDimTarget = () => {
     if (!hovDim.ids || netDim !== 1) return 1;
+    if (hovDim.ids === BIKE_DIM) return HOVER_DIM_DASHED; // a bike line is thin: the rest fades further
     for (const id of hovDim.ids) { const r = RBY[id], c = r && CAT[dkey(r)]; if (c && c.dash && c.group !== "water") return HOVER_DIM_DASHED; }
     return HOVER_DIM;
   };
@@ -4312,7 +4322,7 @@
   function selectRoute(id, { fit = true, push = true } = {}) {
     const r = RBY[id];
     if (!r) return;
-    if (trailHlCat) setTrailSelection(null);
+    if (trailHlCat != null) setTrailSelection(null);
     selected = { type: "route", id };
     setHash("route-" + id, push);
     rebuild();
@@ -4341,7 +4351,7 @@
   function selectStop(id, { fly = true, push = true } = {}) {
     const s = stopIndex[id];
     if (!s) return;
-    if (trailHlCat) setTrailSelection(null);
+    if (trailHlCat != null) setTrailSelection(null);
     selected = { type: s.kind === "stop" ? "stop" : "station", id };
     setHash((s.kind === "stop" ? "stop-" : "station-") + id, push);
     rebuild();
@@ -4353,7 +4363,7 @@
   }
   function clearSelection({ push = false } = {}) {
     if (panelView === "directions") return;
-    if (trailHlCat) setTrailSelection(null);
+    if (trailHlCat != null) setTrailSelection(null);
     selected = null; activeRouteStop = null; activeRouteObj = null;
     panelView = "home"; corridorRoutes = [];
     setHash("", push);
@@ -6185,12 +6195,16 @@
       searchIndex.push({ kind: "station", id: s.id, key: extraWords.join(" ").toLowerCase(), s });
     }
     for (const s of STOPS.stops) searchIndex.push({ kind: "stop", id: s.id, key: (s.name + " " + (s.code || "")).toLowerCase(), s });
-    if (AREAS && AREAS.trails && AREAS.trails.features) {
-      for (const f of AREAS.trails.features) {
-        const p = f.properties;
-        if (!p || !p.name) continue;
-        searchIndex.push({ kind: "trail", id: p.name, key: `${p.name} ${p.street || ""} ${p.cat_name || ""} trail bike bicycle cycling pbl greenway lane sharrow ${p.region || ""}`.toLowerCase(), f });
-      }
+    if (BIKES) {
+      // one entry per bike route (a greenway along several streets is one route), found by any of
+      // its streets' names
+      const names = BIKES.routes.map(() => new Set());
+      for (const pc of BIKES.pieces) { const pp = BIKES.props[pc.p]; if (pp && pp.name) names[pc.b].add(pp.name); }
+      BIKES.routes.forEach((r, b) => {
+        if (!r.n) return;
+        const pp = BIKES.props[(BIKES.pieces.find((pc) => pc.b === b) || {}).p] || {};
+        searchIndex.push({ kind: "trail", id: "bike" + b, key: `${r.n} ${[...names[b]].join(" ")} ${pp.cat_name || ""} trail bike bicycle cycling pbl greenway lane sharrow ${pp.region || ""}`.toLowerCase(), f: bikeRouteFeature(b) });
+      });
     }
     for (const pr of PARK_AND_RIDES) {
       searchIndex.push({
@@ -6266,6 +6280,50 @@
       return true;
     }).slice(0, 9);
   }
+  // A bike route as one feature (its pieces' lines, on the transit streets they share as those
+  // streets' own lines), with the props of its longest piece and its name.
+  const bikeFeatCache = new Map();
+  function bikeRouteFeature(b) {
+    if (bikeFeatCache.has(b)) return bikeFeatCache.get(b);
+    const lines = [];
+    let best = null, bestN = -1;
+    for (const pc of BIKES.pieces) {
+      if (pc.b !== b) continue;
+      const cs = [];
+      for (const st of pc.s) {
+        if (st[0] < 0) { cs.push(...st.slice(1)); continue; }
+        const c = (NET.edges[st[0]] || {}).c || [], n = c.length - 1;
+        const i0 = Math.round(Math.min(st[1], st[2]) * n), i1 = Math.round(Math.max(st[1], st[2]) * n);
+        const part = c.slice(i0, i1 + 1);
+        cs.push(...(st[2] < st[1] ? part.reverse() : part));
+      }
+      if (cs.length >= 2) { lines.push(cs); if (cs.length > bestN) { bestN = cs.length; best = pc; } }
+    }
+    const r = BIKES.routes[b] || {};
+    const f = { type: "Feature", properties: { ...(best ? BIKES.props[best.p] : {}), name: r.n, b, k: r.k, km: r.km },
+      geometry: { type: "MultiLineString", coordinates: lines } };
+    bikeFeatCache.set(b, f);
+    return f;
+  }
+  function bikeCard(b, here, at) {
+    const r = (BIKES && BIKES.routes[b]) || {}, f = bikeRouteFeature(b), p = f.properties, k = r.k || "pbl";
+    const [kindName, col] = [bikeKindName(k, p), (BIKE_KIND[k] || BIKE_KIND.pbl)[1]];
+    const icon = poiIconSVG(k === "greenway" ? "park" : k === "pbl" && p.facility !== "trail" ? "shield" : "bike", 17);
+    const statusBadge = p.status === "UNDERCONS" ? ` · <span class="incline-badge" style="background:#fbbf24;color:#78350f">Under Construction</span>` : "";
+    const herePart = here && here.name && here.name !== r.n ? `<p class="trail-meta">Here: <strong>${esc(here.name)}</strong></p>` : "";
+    return `<div class="pop">
+      <div style="display:flex;align-items:center;gap:6px;margin:2px 0 6px">
+        <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;background:${col};color:#fff;padding:2px 8px;border-radius:6px">${esc(kindName)}</span>
+        ${statusBadge}
+      </div>
+      <h3 style="margin:0 0 4px">${icon} ${esc(r.n || p.name || "Bike route")}</h3>
+      <p class="trail-meta"><strong>${k === "unpaved" ? "Gravel / Unpaved Surface" : "Paved Surface"}</strong>${bikeMiles(r) ? ` · ${bikeMiles(r)}` : ""}${p.region ? ` · ${esc(p.region)}` : ""}</p>
+      ${herePart}
+      <p>${esc((here && here.desc) || p.desc || "Seattle & Puget Sound bicycle network facility connecting transit hubs, neighborhoods, and commercial centers.")}</p>
+      ${at ? `<div style="margin-top:10px">${directionsHTML(at[1], at[0], r.n || p.name)}</div>` : ""}
+      <p class="foot" style="margin-top:8px;font-size:11px;color:var(--muted)">City of Seattle SDOT & King County GIS Data</p>
+    </div>`;
+  }
   function selectTrail(f) {
     if (!f || !f.geometry) return;
     if (!enabled.has("trails")) {
@@ -6273,7 +6331,8 @@
       store.set("layers3", [...enabled]);
       applyLayerToggles();
     }
-    setTrailSelection(trailCatOf(f.properties));
+    const b = f.properties.b;
+    setTrailSelection(b);
     const coords = [];
     const getCoords = (c) => {
       if (typeof c[0] === "number") coords.push(c);
@@ -6285,24 +6344,7 @@
     const bounds = [[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]];
     map.fitBounds(bounds, { padding: isNarrow() ? { top: 60, bottom: 220, left: 30, right: 30 } : { top: 60, bottom: 60, left: 400, right: 60 }, maxZoom: 14.5 });
     const mid = coords[Math.floor(coords.length / 2)];
-    const p = f.properties;
-    const isUnpaved = p.surface === "unpaved";
-    const catName = p.cat_name || "Bicycle Facility";
-    const icon = poiIconSVG(p.facility === "pbl" ? "shield" : p.facility === "greenway" ? "park" : "bike", 17);
-    const badgeColor = p.facility === "pbl" || p.facility === "trail" ? "#047857" : p.facility === "greenway" ? "#10b981" : p.facility === "lane" ? "#db2777" : p.facility === "sharrow" ? "#a16207" : "#9a3412";
-    const statusBadge = p.status === "UNDERCONS" ? ` · <span class="incline-badge" style="background:#fbbf24;color:#78350f">Under Construction</span>` : "";
-    const html = `<div class="pop">
-      <div style="display:flex;align-items:center;gap:6px;margin:2px 0 6px">
-        <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;background:${badgeColor};color:#fff;padding:2px 8px;border-radius:6px">${esc(catName)}</span>
-        ${statusBadge}
-      </div>
-      <h3 style="margin:0 0 4px">${icon} ${esc(p.name)}</h3>
-      <p class="trail-meta"><strong>${isUnpaved ? "Gravel / Unpaved Surface" : "Paved Surface"}</strong>${p.length_mi ? ` · ${p.length_mi} miles` : ""}${p.region ? ` · ${esc(p.region)}` : ""}</p>
-      <p>${esc(p.desc || "Seattle & Puget Sound bicycle network facility connecting transit hubs, neighborhoods, and commercial centers.")}</p>
-      <div style="margin-top:10px">${directionsHTML(mid[1], mid[0], p.name)}</div>
-      <p class="foot" style="margin-top:8px;font-size:11px;color:var(--muted)">City of Seattle SDOT & King County GIS Data</p>
-    </div>`;
-    openPopup({ lng: mid[0], lat: mid[1] }, html, "300px");
+    openPopup({ lng: mid[0], lat: mid[1] }, bikeCard(b, null, mid), "300px");
   }
   function selectPR(pr) {
     if (!pr) return;
@@ -9614,12 +9656,13 @@
   // ---------------------------------------------------------------- layer toggles
   let bikeFacilityFilter = null;
   const TRAIL_CAT_LAYERS = {
-    pbl: ["trail-case", "trail-pbl", "trail-labels"],
+    pbl: ["trail-pbl", "trail-labels"],
     greenway: ["trail-greenway"],
     lane: ["trail-lane"],
     sharrow: ["trail-sharrow"],
     unpaved: ["trail-dash"],
   };
+  const BIKE_HL_LAYERS = ["bike-hl-glow", "bike-hl-case", "bike-hl"];
   function applyLayerToggles() {
     if (!map) return;
     const dartOn = enabled.has("dart") && specialFilter !== "snow";
@@ -9630,15 +9673,13 @@
     const vis = (key, ids) => ids.forEach((id) => map.getLayer(id) && map.setLayoutProperty(id, "visibility", enabled.has(key) ? "visible" : "none"));
     vis("access", ["access-fill", "access-line"]);
     vis("flex", ["flex", "flex-fill", "flex-line"]);
-    const trailLayers = ["trail-case", "trail-pbl", "trail-greenway", "trail-lane", "trail-sharrow", "trail-dash", "trail-labels"];
-    if (!enabled.has("trails")) {
-      trailLayers.forEach((id) => map.getLayer(id) && map.setLayoutProperty(id, "visibility", "none"));
-    } else if (!bikeFacilityFilter) {
-      trailLayers.forEach((id) => map.getLayer(id) && map.setLayoutProperty(id, "visibility", "visible"));
-    } else {
-      const allowed = TRAIL_CAT_LAYERS[bikeFacilityFilter] || trailLayers;
-      trailLayers.forEach((id) => map.getLayer(id) && map.setLayoutProperty(id, "visibility", allowed.includes(id) ? "visible" : "none"));
-    }
+    const trailLayers = [...TRAIL_LINE_LAYERS, "trail-labels", ...BIKE_HL_LAYERS];
+    const on = enabled.has("trails");
+    const allowed = bikeFacilityFilter ? new Set([...(TRAIL_CAT_LAYERS[bikeFacilityFilter] || []), "trail-case", ...BIKE_HL_LAYERS]) : null;
+    trailLayers.forEach((id) => map.getLayer(id) && map.setLayoutProperty(id, "visibility", on && (!allowed || allowed.has(id)) ? "visible" : "none"));
+    // the casing is one layer for every kind: filtered with them
+    if (map.getLayer("trail-case")) map.setFilter("trail-case", bikeFacilityFilter ? ["==", ["get", "k"], bikeFacilityFilter] : null);
+    if (!on) { setBikeHover(null); setTrailSelection(null); }
     vis("stops", ["stops", "stop-name"]);
     vis("pois", DESTINATION_LAYER_IDS);
     vis("live", ["veh-dir", "veh-icon", "veh-label"]);
@@ -9648,12 +9689,12 @@
     rebuild();
   }
 
-  // Trail highlighting: hovering a row in the bike legend bolds that facility type on the map
-  // and dims the rest (hovering the trail itself on the map does not trigger this — only the
-  // legend does); clicking a trail on the map bolds that trail's whole path — it's often split
-  // into several same-named segments — and dims every other trail, mirroring route selection.
-  // Whichever is active, the real transit network dims too (setNetDim), so every kind of line
-  // on the map — route or trail — gets the same "this one, not the rest" treatment on click.
+  // Bike highlighting. The bike network is made of routes (data/bikes.json `routes`, joined from
+  // the pieces SDOT and the counties publish street by street, pipeline/clean_bikes.py): pointing
+  // at a bike line lights its whole route, solid and bold on a white casing (a lit greenway kept its
+  // dashes and was as hard to follow as an unlit one), and fades the rest of the map, buses
+  // included, further than a bus hover does; tapping it chooses it (the rest fades like a route
+  // selection). Hovering a row of the bike legend brings out every line of that kind instead.
   const TRAIL_LINE_LAYERS = ["trail-case", "trail-pbl", "trail-greenway", "trail-lane", "trail-sharrow", "trail-dash"];
   const trailBasePaint = {};
   function trailBase(id, prop) {
@@ -9661,91 +9702,97 @@
     if (!(key in trailBasePaint)) trailBasePaint[key] = map.getPaintProperty(id, prop);
     return trailBasePaint[key];
   }
-  // a zoom expression may only sit at the top of its own interpolate, so scale (or branch) the
-  // stops in place rather than nesting the expression inside a "*" or a "case"
-  function scaleWidthExpr(expr, factor) {
-    if (typeof expr === "number") return expr * factor;
-    if (Array.isArray(expr) && expr[0] === "interpolate") {
-      const out = expr.slice();
-      for (let i = 4; i < out.length; i += 2) out[i] = out[i] * factor;
-      return out;
-    }
-    return expr;
-  }
-  function boldByName(expr, name, factor) {
-    const match = ["==", ["get", "name"], name];
-    if (typeof expr === "number") return ["case", match, expr * factor, expr];
-    if (Array.isArray(expr) && expr[0] === "interpolate") {
-      const out = expr.slice();
-      for (let i = 4; i < out.length; i += 2) out[i] = ["case", match, out[i] * factor, out[i]];
-      return out;
-    }
-    return expr;
-  }
-  function dimByName(expr, name, mul) {
-    const match = ["==", ["get", "name"], name];
-    return typeof expr === "number" ? ["case", match, 1, expr * mul] : expr;
-  }
-  // The facility type a trail belongs to, matching the layer it is drawn on (TRAIL_CAT_LAYERS).
+  // The facility type a bike line belongs to, matching the layer it is drawn on (TRAIL_CAT_LAYERS).
   function trailCatOf(p) {
     if (!p) return null;
+    if (p.k) return p.k;
     if (p.surface === "unpaved") return "unpaved";
     if (p.facility === "greenway" || p.facility === "lane" || p.facility === "sharrow") return p.facility;
     return "pbl";
   }
-  let trailHoverCat = null, trailHlCat = null, trailHoverName = null;
+  let trailHoverCat = null, trailHlCat = null, bikeHoverB = null;
+  const BIKE_DIM = new Set(["__bike"]); // hover-dim ids: no route stays bright
+  function bikeHlFilter() {
+    const ids = [...new Set([bikeHoverB, trailHlCat].filter((x) => x != null))];
+    for (const id of BIKE_HL_LAYERS) if (map.getLayer(id)) map.setFilter(id, ["in", ["get", "b"], ["literal", ids]]);
+  }
   function refreshTrailPaint() {
     if (!map || !map.getLayer("trail-pbl")) return;
-    // A hovered legend row, or a clicked trail, highlights its whole facility type (every trail
-    // of that kind, not just one): those layers bold and the rest of the trails dim.
-    const selCat = trailHoverCat || trailHlCat;
-    const active = selCat ? new Set(TRAIL_CAT_LAYERS[selCat] || []) : null;
-    // A plain hover just bolds the trail under the pointer without dimming the rest
-    // (mirrors plain route hover: "nothing else on the map changes").
-    const boldOnlyName = !selCat ? trailHoverName : null;
+    const active = trailHoverCat ? new Set([...(TRAIL_CAT_LAYERS[trailHoverCat] || []), "trail-case"]) : null;
     for (const id of TRAIL_LINE_LAYERS) {
       if (!map.getLayer(id)) continue;
-      const baseW = trailBase(id, "line-width"), baseO = trailBase(id, "line-opacity");
-      if (active) {
-        map.setPaintProperty(id, "line-width", active.has(id) ? scaleWidthExpr(baseW, 1.6) : baseW);
-        map.setPaintProperty(id, "line-opacity", active.has(id) ? 1 : baseO * 0.22);
-      } else {
-        // a selected route keeps the trails faded with the rest of the map (setNetDim)
-        map.setPaintProperty(id, "line-width", boldOnlyName ? boldByName(baseW, boldOnlyName, 1.5) : baseW);
-        map.setPaintProperty(id, "line-opacity", netDim === 1 ? baseO : baseO * netDim);
-      }
+      const baseO = trailBase(id, "line-opacity");
+      // a legend row: its kind stays, the other kinds fade; a chosen bike route: the rest fade;
+      // otherwise the lines follow the map's own fade (setNetDim)
+      const f = active ? (active.has(id) ? 1 : 0.2) : trailHlCat != null ? 0.3 : netDim;
+      map.setPaintProperty(id, "line-opacity", baseO * f);
     }
     if (map.getLayer("trail-labels")) {
       const baseTO = trailBase("trail-labels", "text-opacity");
       map.setPaintProperty("trail-labels", "text-opacity",
-        active ? (active.has("trail-labels") ? baseTO : baseTO * 0.22) : netDim === 1 ? baseTO : baseTO * netDim);
+        active ? (active.has("trail-labels") ? baseTO : baseTO * 0.2) : trailHlCat != null ? baseTO * 0.3 : baseTO * netDim);
     }
+    bikeHlFilter();
   }
-  // Hovering a trail directly on the map bolds it (no dimming of anything else), like plain
-  // route hover; it's a no-op while a different trail is click-selected, same as route hover
-  // is suppressed while another route is selected.
-  function setTrailHoverName(name) {
-    if (!map || !map.getLayer("trail-pbl") || trailHoverName === name) return;
-    trailHoverName = name;
-    refreshTrailPaint();
+  // Pointing at a bike line (the pointer handler asks on every move; the last answer of a move
+  // wins, so passing from one part of the handler to another never flashes the highlight).
+  let bikeWant = null, bikeFlush = false;
+  function setBikeHover(b) {
+    bikeWant = b == null ? null : b;
+    if (bikeFlush) return;
+    bikeFlush = true;
+    queueMicrotask(() => {
+      bikeFlush = false;
+      if (!map || !map.getLayer("bike-hl")) return;
+      const b2 = bikeWant;
+      if (b2 !== bikeHoverB) { bikeHoverB = b2; bikeHlFilter(); }
+      if (b2 != null) { if (hovDim.ids !== BIKE_DIM) { clearTimeout(hoverTimer); setHoverDim(BIKE_DIM); } }
+      else if (hovDim.ids === BIKE_DIM) setHoverDim(null);
+    });
   }
+  const setTrailHoverName = () => setBikeHover(null); // (older callers: the pointer left the map)
   function setBikeLegendHover(cat) {
     if (!map || !map.getLayer("trail-pbl") || trailHoverCat === cat) return;
     trailHoverCat = cat;
-    // Dim transit (and its vehicle badges) slightly so the hovered trail type reads clearly
-    // against the rest of the map, without hiding the streets it runs alongside.
-    setNetDim(cat ? 0.55 : (trailHlCat ? 0.38 : 1));
+    // Dim transit (and its vehicle badges) so the hovered kind reads clearly against the rest of the
+    // map, without hiding the streets it runs alongside.
+    setNetDim(cat ? 0.55 : (trailHlCat != null ? 0.38 : 1));
     refreshTrailPaint();
   }
-  // Click-select a trail: highlights every trail of its facility type (cat from trailCatOf), not
-  // just the one clicked. Clears any route/stop selection first so only one kind of line is
-  // ever focused at a time.
-  function setTrailSelection(cat) {
-    if (!map || !map.getLayer("trail-pbl") || trailHlCat === cat) return;
-    if (cat && selected) clearSelection();
-    trailHlCat = cat;
-    setNetDim(cat ? 0.38 : 1);
+  // Choose a bike route (its id in data/bikes.json), or none. Clears any route/stop selection first
+  // so only one kind of line is ever focused at a time.
+  function setTrailSelection(b) {
+    if (b === undefined) b = null;
+    if (!map || !map.getLayer("trail-pbl") || trailHlCat === b) return;
+    if (b != null && selected) clearSelection();
+    trailHlCat = b;
+    setNetDim(b != null ? 0.38 : 1);
     refreshTrailPaint();
+  }
+
+  // The bike line under the pointer (nearest of those within 7 px), with its route and source props.
+  function bikeAt(pt, r = 7) {
+    if (!enabled.has("trails") || !map.getLayer("trail-pbl")) return null;
+    const layers = ["trail-pbl", "trail-greenway", "trail-lane", "trail-sharrow", "trail-dash"].filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none");
+    const hits = map.queryRenderedFeatures([[pt.x - r, pt.y - r], [pt.x + r, pt.y + r]], { layers });
+    if (!hits.length) return null;
+    const ll = map.unproject(pt), p = toM(ll.lng, ll.lat);
+    let best = null, bd = Infinity;
+    for (const f of hits) { const d = distTo(f, p) - (f.properties.wm * f.properties.zu * MPP0) / 2; if (d < bd) { bd = d; best = f; } }
+    const b = best.properties.b, route = BIKES && BIKES.routes[b];
+    // out: pixels outside the line's stroke (0 on it)
+    return { b, k: best.properties.k, route, np: best.properties.np || 1, p: (BIKES && BIKES.props[best.properties.p]) || {}, out: Math.max(0, bd) / (MPP0 / 2 ** map.getZoom()) };
+  }
+  const BIKE_KIND = { pbl: ["Protected lane / trail", "#047857"], greenway: ["Neighborhood greenway", "#16a34a"], lane: ["Bike lane", "#db2777"],
+    sharrow: ["Shared street", "#a16207"], unpaved: ["Gravel trail", "#9a3412"] };
+  const bikeKindName = (k, p) => (p && p.facility === "trail" && k === "pbl" ? (p.cat_name || "Multi-use trail") : (BIKE_KIND[k] || BIKE_KIND.pbl)[0]);
+  const bikeMiles = (route) => (route && route.km ? `${(route.km / 1.609).toFixed(route.km < 16 ? 1 : 0)} mi` : "");
+  function bikeTip(bk) {
+    const k = bk.k, name = (bk.route && bk.route.n) || bk.p.name || "Bike route", col = (BIKE_KIND[k] || BIKE_KIND.pbl)[1];
+    const icon = poiIconSVG(k === "greenway" ? "park" : k === "pbl" && bk.p.facility !== "trail" ? "shield" : "bike", 16);
+    // (a line along several streets carries the details of its longest one: name it only when it is the one street)
+    const street = bk.np === 1 && bk.p.name && bk.p.name !== name ? `<br><span class="tt-more">Here: ${esc(bk.p.name)}</span>` : "";
+    return `<span class="tt-trail">${icon} <b>${esc(name)}</b>${bikeMiles(bk.route) ? ` · ${bikeMiles(bk.route)}` : ""}<br><span style="color:${col};font-weight:700">${esc(bikeKindName(k, bk.p))}</span>${k === "unpaved" ? " · Gravel" : ""} · Tap for details${street}</span>`;
   }
 
   // ---------------------------------------------------------------- interaction
@@ -9968,13 +10015,25 @@
         const mine = strands.find(([i]) => i === one);
         let pick = mine && Math.abs(mine[1] - off) <= half + 0.75 * mpp ? mine : null;
         if (!pick) for (const sd of strands) if (!pick || Math.abs(sd[1] - off) < Math.abs(pick[1] - off)) pick = sd;
-        return { f, r: pick[0], routes: [LINES[pick[0]]].filter(Boolean), n: strands.length, one: true, all: strands.map(([i]) => LINES[i]).filter(Boolean) };
+        return { f, r: pick[0], routes: [LINES[pick[0]]].filter(Boolean), n: strands.length, one: true, all: strands.map(([i]) => LINES[i]).filter(Boolean), out: best.out };
       }
-      if (one >= 0 && all.includes(one)) return { f, r: one, routes: [LINES[one]].filter(Boolean), n: pr.n || 1, one: true };
-      return { f, r: pr.r < 0 ? all[0] : pr.r, routes: all.map((i) => LINES[i]).filter(Boolean).sort(tagOrder), n: pr.n || 1 };
+      if (one >= 0 && all.includes(one)) return { f, r: one, routes: [LINES[one]].filter(Boolean), n: pr.n || 1, one: true, out: best.out };
+      return { f, r: pr.r < 0 ? all[0] : pr.r, routes: all.map((i) => LINES[i]).filter(Boolean).sort(tagOrder), n: pr.n || 1, out: best.out };
+    };
+    // A bike line runs flush beside the bus band on its street, so a pointer on the bike line is
+    // within a few pixels of the band too: the line squarely under the pointer is the one pointed
+    // at. (The band won every time, so a bike lane beside a bus street could not be hovered.)
+    const pickLineOrBike = (pt) => {
+      const ln = pickLine(pt);
+      if (!ln || !ln.out) return { ln, bk: ln ? null : bikeAt(pt) };
+      const bk = bikeAt(pt);
+      return bk && bk.out < ln.out ? { ln: null, bk } : { ln, bk: null };
     };
     // for tests: the route a pointer at pt (canvas pixels) would light, as hovering decides it
-    window.__atlasPick = (pt) => { const ln = pickLine(pt); return ln ? { r: ln.r >= 0 ? LINES[ln.r]?.id : null, routes: ln.routes.map((x) => x.id), one: !!ln.one, stop: !!pickStop(pt) } : null; };
+    // for tests: what the pointer is on now, and whether a stop at pt would take the pointer
+    window.__atlasCur = () => (cur ? { ...cur } : null);
+    window.__atlasStopAt = (pt) => !!pickStop(pt);
+    window.__atlasPick = (pt) => { const ln = pickLineOrBike(pt).ln; return ln ? { r: ln.r >= 0 ? LINES[ln.r]?.id : null, routes: ln.routes.map((x) => x.id), one: !!ln.one, stop: !!pickStop(pt) } : null; };
     const ev = (e, dy = 0) => ({ clientX: e.originalEvent.clientX, clientY: e.originalEvent.clientY + dy, ax: e.originalEvent.clientX, ay: e.originalEvent.clientY });
     function routeServiceDesc(r) {
       if (!r) return "";
@@ -10031,12 +10090,8 @@
           $("#tip").classList.remove("tip-leaving");
           return;
         }
-        // Independent of whatever wins the cursor/tooltip below, bold whichever trail is
-        // directly under the pointer (or none) so it always reflects the current position.
-        const trailAtPoint = map.queryRenderedFeatures([[e.point.x - 6, e.point.y - 6], [e.point.x + 6, e.point.y + 6]], {
-          layers: ["trail-pbl", "trail-greenway", "trail-lane", "trail-sharrow", "trail-dash"].filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none")
-        });
-        setTrailHoverName(trailAtPoint.length ? trailAtPoint[0].properties.name : null);
+        // a bike route lights only while the pointer is on it and on nothing else (set below)
+        setBikeHover(null);
         if (cur && cur.kind === "dart" && !(selected && selected.type === "route" && RBY[selected.id]?.cat === "dart")) {
           const stillDart = map.queryRenderedFeatures(e.point, { layers: ["dart-fill"] });
           if (!stillDart.length) highlightDartArea(null);
@@ -10148,7 +10203,7 @@
           return;
         }
         if (!tipLive) highlightStop(null);
-        const ln = pickLine(e.point);
+        const { ln, bk: bkNear } = pickLineOrBike(e.point);
         if (ln) {
           // a band shared by several routes belongs to none of them: it highlights the street and a tap offers the choice
           const sharedBand = !!(ln.f && ln.f.properties.r < 0 && ln.routes && ln.routes.length > 1 && !ln.one);
@@ -10212,16 +10267,12 @@
             return;
           }
         }
-        const trailHover = map.queryRenderedFeatures([[e.point.x - 6, e.point.y - 6], [e.point.x + 6, e.point.y + 6]], {
-          layers: ["trail-pbl", "trail-greenway", "trail-lane", "trail-sharrow", "trail-dash"].filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none")
-        });
-        if (trailHover.length) {
-          const tp = trailHover[0].properties;
-          offLine(); cur = { kind: "trail", name: tp.name };
+        const bk = bkNear || (ln ? bikeAt(e.point) : null);
+        if (bk) {
+          offLine(); cur = { kind: "trail", b: bk.b };
           map.getCanvas().style.cursor = "pointer";
-          const icon = poiIconSVG(tp.facility === "pbl" ? "shield" : tp.facility === "greenway" ? "park" : "bike", 16);
-          const badgeColor = tp.facility === "pbl" || tp.facility === "trail" ? "#047857" : tp.facility === "greenway" ? "#10b981" : tp.facility === "lane" ? "#db2777" : tp.facility === "sharrow" ? "#a16207" : "#9a3412";
-          tipShow("trail:" + tp.name, `<span class="tt-trail">${icon} <b>${esc(tp.name)}</b>${tp.length_mi ? ` · ${tp.length_mi} mi` : ""}<br><span style="color:${badgeColor};font-weight:700">${esc(tp.cat_name || "Bike Facility")}</span>${tp.surface === "unpaved" ? " · Gravel" : " · Paved"} · Tap for details</span>`, "", ev(e));
+          setBikeHover(bk.b);
+          tipShow("bike:" + bk.b, bikeTip(bk), "", ev(e));
           return;
         }
         if (enabled.has("dart") && specialFilter !== "snow") {
@@ -10359,9 +10410,18 @@
         selectStop(f.properties.id, { fly: false });
         return;
       }
+      // a bike line squarely under the pointer (or the one lit by hovering) is what's tapped, even
+      // beside a bus band
+      const pick = pickLineOrBike(e.point);
+      const bkTap = pick.bk || (cur && cur.kind === "trail" && !pick.ln ? bikeAt(e.point) : null);
+      if (bkTap) {
+        setTrailSelection(bkTap.b);
+        openPopup(e.lngLat, bikeCard(bkTap.b, bkTap.np === 1 ? bkTap.p : { ...bkTap.p, name: null }, [e.lngLat.lng, e.lngLat.lat]), "300px");
+        return;
+      }
       const rs = routesAt(e.point, isNarrow() ? 10 : 6);
       const hoveredRoute = (cur && cur.kind === "line" && cur.id >= 0) ? LINES[cur.id] : null;
-      const ln = pickLine(e.point);
+      const ln = pick.ln;
       // on a phone a finger can't pick one strand of a band: it offers every route on it
       if (ln && ln.one && ln.all && ln.all.length > 1 && isNarrow() && !hoveredRoute) ln.routes = ln.all, ln.one = false;
       const sharedBand = !!(ln && ln.f && ln.f.properties.r < 0 && ln.routes && ln.routes.length > 1 && !ln.one);
@@ -10377,30 +10437,6 @@
         const choices = rs.length > 1 ? rs : ln.routes;
         showCorridor(choices);
         focusRoutes(choices);
-        return;
-      }
-      const trailsHit = map.queryRenderedFeatures([[e.point.x - 7, e.point.y - 7], [e.point.x + 7, e.point.y + 7]], {
-        layers: ["trail-pbl", "trail-greenway", "trail-lane", "trail-sharrow", "trail-dash"].filter((l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none")
-      });
-      if (trailsHit.length) {
-        const tp = trailsHit[0].properties;
-        setTrailSelection(trailCatOf(tp));
-        const isUnpaved = tp.surface === "unpaved";
-        const catName = tp.cat_name || "Bicycle Facility";
-        const icon = poiIconSVG(tp.facility === "pbl" ? "shield" : tp.facility === "greenway" ? "park" : "bike", 16);
-        const badgeColor = tp.facility === "pbl" || tp.facility === "trail" ? "#047857" : tp.facility === "greenway" ? "#10b981" : tp.facility === "lane" ? "#db2777" : tp.facility === "sharrow" ? "#a16207" : "#9a3412";
-        const statusBadge = tp.status === "UNDERCONS" ? ` · <span class="incline-badge" style="background:#fbbf24;color:#78350f">Under Construction</span>` : "";
-        const html = `<div class="pop">
-          <div style="display:flex;align-items:center;gap:6px;margin:2px 0 6px">
-            <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;background:${badgeColor};color:#fff;padding:2px 8px;border-radius:6px">${esc(catName)}</span>
-            ${statusBadge}
-          </div>
-          <h3 style="margin:0 0 4px">${icon} ${esc(tp.name)}</h3>
-          <p class="trail-meta"><strong>${isUnpaved ? "Gravel / Unpaved Surface" : "Paved Surface"}</strong>${tp.length_mi ? ` · ${tp.length_mi} miles` : ""}${tp.region ? ` · ${esc(tp.region)}` : ""}</p>
-          <p>${esc(tp.desc || "Seattle & Puget Sound bicycle network facility connecting transit hubs, neighborhoods, and commercial centers.")}</p>
-          <p class="foot" style="margin-top:8px;font-size:11px;color:var(--muted)">City of Seattle SDOT & King County GIS Data</p>
-        </div>`;
-        openPopup(e.lngLat, html, "300px");
         return;
       }
       if (selected) {
@@ -10456,7 +10492,7 @@
       if (!$("#tip").hidden && tipLive) { tipHide(true); focusOff(); return; }
       if (popup) closePopup();
       else if (selected) clearSelection();
-      else if (trailHlCat) setTrailSelection(null);
+      else if (trailHlCat != null) setTrailSelection(null);
       // the trip planner closes as a whole: fields, trip line and pins with it
       else if (!$("#dirPanel").hidden) closeTripPlanner();
       else if (panelView !== "home") { panelView = "home"; focusOff(); showHome(); }
@@ -10947,10 +10983,13 @@
     registerProtocols();
     const getJSON = (u) => fetch(u).then((r) => { if (!r.ok) throw new Error(`${u}: ${r.status}`); return r.json(); })
       .catch((e) => { throw new StartupError("data", `${u}: ${e.message}`); });
-    const [routes, net, stops, areas, manifest, live] = await Promise.all([
+    const [routes, net, stops, areas, manifest, live, bikes] = await Promise.all([
       getJSON("data/routes.json"), getJSON("data/network.json"), getJSON("data/stops.json"), getJSON("data/areas.json?v=20261106_sdot"),
       getJSON("tiles/manifest.json").catch(() => null), liveTiles(),
+      // the bike network, placed against this network (pipeline/build_bikes.py); the map works without it
+      getJSON("data/bikes.json").catch(() => null),
     ]);
+    BIKES = bikes && bikes.pieces ? bikes : null;
     MANIFEST = manifest;
     META = routes.meta; ROUTES = routes.routes; STOPNAMES = routes.stopNames; NET = net; STOPS = stops; AREAS = areas;
     updateSubtitle();
@@ -10996,7 +11035,7 @@
           sellabels: { type: "geojson", data: empty, tolerance: 0.5 },
           stations: { type: "geojson", data: empty },
           stops: { type: "geojson", data: empty },
-          trails: { type: "geojson", data: (AREAS && AREAS.trails) || empty, tolerance: 0.5 },
+          trails: { type: "geojson", data: empty, tolerance: 0.3 },
           dart: { type: "geojson", data: AREAS.dart },
           darthl: { type: "geojson", data: empty },
           access: { type: "geojson", data: AREAS.access },
@@ -11051,6 +11090,8 @@
         return out;
       },
       hoverDim: () => ({ v: hovDim.v, to: hovDim.to, ids: hovDim.ids ? [...hovDim.ids] : null }),
+      // the bike lines this view draws, the bike route hovered and chosen, and the map's fade
+      lastBikes: () => lastBikes, bikeState: () => ({ hover: bikeHoverB, sel: trailHlCat, netDim }), bikeAt: (pt) => bikeAt(pt),
       // the hover highlight right now: which target, and each cross-fading slot's strength
       hoverState: () => ({ key: hoverKey, slot: hSlot, v: hAnim.map((a) => +a.v.toFixed(3)), to: hAnim.map((a) => a.to) }),
       // test fixtures: run notices through the real alert code and read back what the page would style

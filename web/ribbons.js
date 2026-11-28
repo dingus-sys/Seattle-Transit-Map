@@ -38,10 +38,11 @@ const KCTMRibbons = (() => {
         const scale = 1 / Math.max(0.5, x * b[0] + y * b[1]);
         miters.push([x * scale, y * scale]);
       }
-      const stroke = (role, width, pattern = 0, round = true) => {
+      // `along`: the width a pattern's lengths are measured in (by default the stroke's own)
+      const stroke = (role, width, pattern = 0, round = true, along = width) => {
         if (!(width > 0)) return;
-        const out = bucket(stack, role), hw = width * p.zu / 1024;
-        const vertex = (i, nx, ny, side) => out.push(pts[i][0], pts[i][1], nx * hw, ny * hw, side, hw, ds[i] / (2 * hw), ...c);
+        const out = bucket(stack, role), hw = width * p.zu / 1024, ha = along * p.zu / 1024;
+        const vertex = (i, nx, ny, side) => out.push(pts[i][0], pts[i][1], nx * hw, ny * hw, side, hw, ds[i] / (2 * ha), ...c);
         for (let i = 1; i < pts.length; i++) {
           const a = miters[i - 1], b = miters[i];
           vertex(i - 1, a[0], a[1], 1); vertex(i - 1, -a[0], -a[1], -1); vertex(i, b[0], b[1], 1);
@@ -66,9 +67,13 @@ const KCTMRibbons = (() => {
       // A hovered rush-hour route is drawn solid: a dashed line gets lost among the rest.
       const dashed = p.d && !(hover && p.g !== "water");
       stroke(dashed ? "dash" : "body", w, dashed ? 1 : 0, !dashed);
+      // ...but it must still read as rush-hour, not as an all-day bus: light dashes run down the
+      // middle of the solid line in the rhythm of its dashes at rest, so it is bold and continuous
+      // and still plainly a rush-hour line
+      if (p.d && !dashed) stroke("mid", w * 0.38, 1, false, w);
       if (!hover && !p.d && p.hm > 0) stroke(p.h === 3 ? "dots" : p.h === 4 ? "ties" : "shine", p.hm, p.h === 3 ? 2 : p.h === 4 ? 3 : 0, p.h !== 4);
     }
-    const order = ["shadow", "glow", "case", "body", "dash", "shine", "dots", "ties"];
+    const order = ["shadow", "glow", "case", "body", "dash", "shine", "dots", "ties", "mid"];
     return [...buckets.values()].sort((a, b) => a.stack - b.stack || order.indexOf(a.role) - order.indexOf(b.role))
       .map((b) => ({ ...b, data: new Float32Array(b.data) }));
   }
@@ -161,7 +166,7 @@ const KCTMRibbons = (() => {
             else gl.bindBuffer(gl.ARRAY_BUFFER, b.buffer);
             const sizes = [2, 2, 1, 1, 1, 3], offsets = [0, 2, 4, 5, 6, 7];
             for (let i = 0; i < attribs.length; i++) { gl.enableVertexAttribArray(attribs[i]); gl.vertexAttribPointer(attribs[i], sizes[i], gl.FLOAT, false, STRIDE * 4, offsets[i] * 4); }
-            const own = ["body", "dash", "glow"].includes(b.role), color = rgb(b.role === "case" || b.role === "ties" ? style.casing : b.role === "shadow" ? style.shadow : style.shine);
+            const own = ["body", "dash", "glow"].includes(b.role), color = rgb(b.role === "case" || b.role === "ties" || b.role === "mid" ? style.casing : b.role === "shadow" ? style.shadow : style.shine);
             gl.uniform4f(uniforms.color, ...color, 1); gl.uniform1f(uniforms.own, own ? 1 : 0);
             const alpha = b.role === "shadow" ? 0.12 : b.role === "glow" ? 0.28 : b.role === "shine" ? 0.4 : 1;
             gl.uniform1f(uniforms.opacity, opacity * alpha); gl.uniform1f(uniforms.pattern, b.pattern || 0);
