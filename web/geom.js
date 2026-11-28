@@ -262,16 +262,6 @@ const KCTMGeom = (() => {
       }
       return { d, delta, dr, L };
     }).filter((m) => Math.abs(m.delta) > 0.02 || Math.abs(m.dr) > 0.02);
-    const ds = c.slice();
-    for (const m of moves) for (let j = -8; j <= 8; j++) ds.push(m.d + (m.L * j) / 8);
-    for (const d of D) ds.push(d);
-    ds.sort((a, b) => a - b);
-    const dd = [];
-    for (const d of ds) if (d >= 0 && d <= total && (!dd.length || d - dd[dd.length - 1] > 0.02)) dd.push(d);
-    if (dd.length < 2 || total < 0.5) return; // nothing left to draw (a tiny loop, simplified away)
-    const P = sampleAt(line, c, dd);
-    const mt = miters(P);
-
     // Where a corner is tighter than the corridor is wide, its inner strands would run on a circle
     // smaller than their own offset and fold over themselves (ending in a sharp point). So the whole
     // corridor draws a little narrower through such a corner and widens again after it: every strand's
@@ -310,11 +300,32 @@ const KCTMGeom = (() => {
       for (let j = i + 1; j < nL && c[j] - c[i] <= W; j++) { sum += narrow[j]; n++; }
       fine[i] = sum / n;
     }
+    // and back to full width within that reach: the scale used to run on to the next point of the
+    // line, so after a squeezed corner followed by a long straight stretch it widened again only at
+    // the stretch's far end, and the strands slanted across the whole block.
+    const reach = (i) => Math.max(hwAt(c[i]), 4);
+    const scaleAt = (d, i) => {
+      const span = c[i + 1] - c[i], Ra = reach(i), Rb = reach(i + 1);
+      if (span <= Ra + Rb) return fine[i] + (fine[i + 1] - fine[i]) * (span > 1e-9 ? Math.min(1, Math.max(0, (d - c[i]) / span)) : 0);
+      const a = fine[i] + (1 - fine[i]) * Math.min(1, Math.max(0, d - c[i]) / Ra);
+      const b = fine[i + 1] + (1 - fine[i + 1]) * Math.min(1, Math.max(0, c[i + 1] - d) / Rb);
+      return Math.min(a, b);
+    };
+    const ds = c.slice();
+    for (const m of moves) for (let j = -8; j <= 8; j++) ds.push(m.d + (m.L * j) / 8);
+    for (const d of D) ds.push(d);
+    for (let i = 0; i < nL; i++) if (fine[i] < 0.999) ds.push(c[i] - reach(i), c[i] + reach(i)); // where a squeeze ends
+    ds.sort((a, b) => a - b);
+    const dd = [];
+    for (const d of ds) if (d >= 0 && d <= total && (!dd.length || d - dd[dd.length - 1] > 0.02)) dd.push(d);
+    if (dd.length < 2 || total < 0.5) return; // nothing left to draw (a tiny loop, simplified away)
+    const P = sampleAt(line, c, dd);
+    const mt = miters(P);
+
     let pi = 0;
     const Fd = dd.map((d) => {
       while (pi < nL - 2 && c[pi + 1] < d) pi++;
-      const span = c[pi + 1] - c[pi], t = span > 1e-9 ? Math.min(1, Math.max(0, (d - c[pi]) / span)) : 0;
-      return fine[pi] + (fine[pi + 1] - fine[pi]) * t;
+      return scaleAt(d, pi);
     });
 
     const off = (d) => {
@@ -349,11 +360,31 @@ const KCTMGeom = (() => {
       let q0 = Q[start];
       if (s > 0 && jumps[s - 1]) { const o = squeeze(dd[start], Fd[start]) + jumps[s - 1] * Fd[start]; q0 = [P[start][0] + mt[start][0] * o, P[start][1] + mt[start][1] * o]; }
       const piece = [q0];
+      let folded = false;
       for (let j = start + 1; j <= end; j++) {
         const a = piece[piece.length - 1];
         const fwd = (Q[j][0] - a[0]) * (P[j][0] - P[j - 1][0]) + (Q[j][1] - a[1]) * (P[j][1] - P[j - 1][1]);
-        if (fwd > 0) piece.push(Q[j]);
-        else if (j === end && piece.length > 0) {
+        if (fwd > 0) {
+          // After a fold (the inside of a corner tighter than the offset, e.g. a 3 m jog where a
+          // street meets a junction), the points that ran backwards are gone: rejoin this segment's
+          // own offset line a short glide past where the line got to, rather than slanting from
+          // there all the way to this point, which can be a whole block away (a bike lane beside
+          // N 45th St ran onto the 44's band for 300 m).
+          if (folded) {
+            const sx = Q[j][0] - Q[j - 1][0], sy = Q[j][1] - Q[j - 1][1], S2 = sx * sx + sy * sy;
+            if (S2 > 1e-6) {
+              const u = ((a[0] - Q[j - 1][0]) * sx + (a[1] - Q[j - 1][1]) * sy) / S2;
+              const ab = [Q[j - 1][0] + sx * u, Q[j - 1][1] + sy * u], gap = Math.hypot(ab[0] - a[0], ab[1] - a[1]);
+              const w = u + (3 * gap) / Math.sqrt(S2);
+              if (gap > 0.05 && u > -0.01 && w < 0.98) piece.push([Q[j - 1][0] + sx * w, Q[j - 1][1] + sy * w]);
+            }
+          }
+          piece.push(Q[j]);
+          folded = false;
+          continue;
+        }
+        folded = true;
+        if (j === end && piece.length > 0) {
           const dir = [P[j][0] - P[j - 1][0], P[j][1] - P[j - 1][1]];
           const L = Math.hypot(dir[0], dir[1]) || 1;
           const u = [dir[0] / L, dir[1] / L];
@@ -418,7 +449,7 @@ const KCTMGeom = (() => {
     // either along a transit street segment (from/to as fractions of it, and the side of travel it
     // keeps) or on its own line. Along a segment it is drawn with the segment's own geometry, just
     // outside whatever bundle that segment shows in the view, so it runs flush and parallel to it.
-    const BIKES = ((init.bikes && init.bikes.pieces) || []).map((pc) => {
+    const BIKES = ((init.bikes && init.bikes.pieces) || []).map((pc, i) => {
       const bb = [Infinity, Infinity, -Infinity, -Infinity];
       const grow = (b2) => { bb[0] = Math.min(bb[0], b2[0]); bb[1] = Math.min(bb[1], b2[1]); bb[2] = Math.max(bb[2], b2[2]); bb[3] = Math.max(bb[3], b2[3]); };
       const steps = pc.s.map((st) => {
@@ -430,8 +461,10 @@ const KCTMGeom = (() => {
         return { e: -1, pts, simp: new Map() };
       }).filter((st) => st.e < 0 || EDGES[st.e]);
       const r = (init.bikes.routes || [])[pc.b] || {};
-      // the map label is the name without its kind ("NE 55th St", not "NE 55th St (Bicycle Lane)")
-      return { b: pc.b, p: pc.p, np: pc.n || 1, k: pc.k || r.k || "pbl", n: r.n || "", nl: (r.n || "").replace(/\s*\([^)]*\)\s*$/, ""), steps, bb };
+      // the map label is the piece's own street (a route of one kind runs along many), without its
+      // kind ("NE 55th St", not "NE 55th St (Bicycle Lane)")
+      const nl = ((init.bikes.labels || [])[i] || r.n || "").replace(/\s*\([^)]*\)\s*$/, "");
+      return { b: pc.b, p: pc.p, np: pc.n || 1, k: pc.k || r.k || "pbl", n: r.n || "", nl, steps, bb };
     });
     // the part of a line from fraction f0 to f1 of its length (backwards when f1 < f0). With
     // `snap` (metres), an end that falls that close before a corner starts at the corner instead:

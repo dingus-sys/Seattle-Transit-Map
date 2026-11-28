@@ -1233,15 +1233,16 @@
   }
   function liveLayers(P) {
     return [
-      // an upright badge that says what it is: a bus, a train, a streetcar or a boat...
-      { id: "veh-icon", type: "symbol", source: "vehicles",
-        layout: { "icon-image": ["concat", "veh:", ["get", "c"], ":", ["get", "m"]], "icon-rotation-alignment": "viewport",
-          "icon-allow-overlap": true, "icon-ignore-placement": true, "icon-size": VEH_SIZE, "symbol-sort-key": ["get", "s"] },
-        // "o": fades back while another route is hovered (set per vehicle in renderVehicles)
-        paint: { "icon-opacity": ["*", ["coalesce", ["get", "o"], 1], ["case", ["==", ["get", "est"], 1], 0.82, 1]] } },
-      // ...and which way it's heading: the badge's point, turning with the vehicle
+      // A vehicle heading a known way is one smooth shape, a badge drawn out into a point, turning
+      // with it (veh-dir), with its upright symbol on top (veh-icon: "vglyph"). One that isn't
+      // known yet is the round badge alone ("veh"), the symbol in it.
       { id: "veh-dir", type: "symbol", source: "vehicles", filter: [">=", ["get", "b"], 0],
         layout: { "icon-image": ["concat", "vdir:", ["get", "c"]], "icon-rotate": ["get", "b"], "icon-rotation-alignment": "map",
+          "icon-allow-overlap": true, "icon-ignore-placement": true, "icon-size": VEH_SIZE, "symbol-sort-key": ["get", "s"] },
+        // "o": fades back while another route is hovered or focused (set per vehicle in renderVehicles)
+        paint: { "icon-opacity": ["*", ["coalesce", ["get", "o"], 1], ["case", ["==", ["get", "est"], 1], 0.82, 1]] } },
+      { id: "veh-icon", type: "symbol", source: "vehicles",
+        layout: { "icon-image": ["concat", ["case", [">=", ["get", "b"], 0], "vglyph:", "veh:"], ["get", "c"], ":", ["get", "m"]], "icon-rotation-alignment": "viewport",
           "icon-allow-overlap": true, "icon-ignore-placement": true, "icon-size": VEH_SIZE, "symbol-sort-key": ["get", "s"] },
         paint: { "icon-opacity": ["*", ["coalesce", ["get", "o"], 1], ["case", ["==", ["get", "est"], 1], 0.82, 1]] } },
       { id: "veh-label", type: "symbol", source: "vehicles", minzoom: 14.5,
@@ -1425,7 +1426,9 @@
   const idleWaiters = [];
   function engineInit() {
     return { edges: NET.edges, lines: LINES.map((r) => ({ cat: dkey(r), rank: r._rank })), cat: CAT, gap: GAP,
-      bikes: BIKES ? { pieces: BIKES.pieces, routes: BIKES.routes } : null };
+      // each piece's map label is its own street's name: a network of one kind is one route across
+      // many streets (Nov 28: every downtown protected lane was labelled "2nd Ave")
+      bikes: BIKES ? { pieces: BIKES.pieces, routes: BIKES.routes, labels: BIKES.pieces.map((pc) => { const pp = BIKES.props[pc.p] || {}; return pp.street || pp.name || ""; }) } : null };
   }
   function runHere() {
     if (worker) { worker.terminate(); worker = null; }
@@ -1520,10 +1523,13 @@
     const still = !map.isZooming();
     if (still || m.zs !== labelStep || m.zs == null) {
       labelStep = m.zs;
+      if (buildZoom.has(m.id)) labelZ = buildZoom.get(m.id);
       map.getSource("netlabels").setData({ type: "FeatureCollection", features: m.labels });
       map.getSource("sellabels").setData({ type: "FeatureCollection", features: m.selLabels });
       refreshStations();
+      if (still && !map.isMoving()) tagsBack();
     }
+    for (const id of buildZoom.keys()) if (id <= m.id) buildZoom.delete(id);
     // the selected route's stops sit on its drawn line (which moves with the lanes as you zoom)
     if (selected && selected.type === "route" && m.selIdx === LINEIDX[selected.id]) {
       const r = RBY[selected.id];
@@ -1550,6 +1556,45 @@
   }
   function tierFor(z) { const t = BUS_TIERS[settings.busDetail]; return z >= t[2] ? 2 : z >= t[1] ? 1 : 0; }
   let lastZ = -1, labelStep = null, needsRebuild = false, builtView = null, lastFeats = [], lastSelFeats = [], lastBikes = [];
+  // Route tags are laid out for one zoom: spaced for it, and thinned so they never collide.
+  // Zooming away from it they no longer fit (zooming out packs the whole set together and
+  // MapLibre's collision flips tags on and off every frame; zooming in leaves gaps), so once
+  // the zoom has moved TAG_OUT/TAG_IN from the layout they fade out, and the new layout's tags
+  // fade in where the zoom comes to rest, once they are in the source.
+  const TAG_OUT = 0.4, TAG_IN = 0.7;
+  const buildZoom = new Map(); // build id -> the zoom it was laid out for
+  let labelZ = null, tagFade = 1, tagHov = 1, tagWait = 0;
+  function paintBadges(dur) {
+    if (!map || !map.getLayer("badges")) return;
+    const net = netDim === 1 ? tagHov : Math.max(0.12, netDim * 0.6);
+    try {
+      for (const [id, v] of [["badges", net * tagFade], ["sel-badges", tagFade]]) {
+        map.setPaintProperty(id, "icon-opacity-transition", { duration: calm() ? 0 : dur, delay: 0 });
+        map.setPaintProperty(id, "icon-opacity", v);
+      }
+    } catch (e) { /* style mid-rebuild */ }
+  }
+  function setTagFade(v, dur) {
+    if (v === tagFade) return;
+    tagFade = v;
+    if (v === 0) tagWait++; // a fade-in still waiting on the source is cancelled
+    paintBadges(dur);
+  }
+  // Fade the tags back in once the labels just handed to the source are drawn (setData is
+  // read in a worker and the tiles reload), so the stale set never flashes back first.
+  function tagsBack() {
+    if (tagFade === 1) return;
+    const my = ++tagWait;
+    let content = false;
+    const done = () => { map.off("sourcedata", seen); clearTimeout(t); if (my === tagWait && !map.isMoving()) requestAnimationFrame(() => { if (my === tagWait) setTagFade(1, 260); }); };
+    const seen = (e) => {
+      if (e.sourceId !== "netlabels") return;
+      if (e.sourceDataType === "content") content = true;
+      else if (content && e.tile && map.isSourceLoaded("netlabels")) done();
+    };
+    const t = setTimeout(done, 500); // never stay hidden
+    map.on("sourcedata", seen);
+  }
   // The area last drawn (meters): the view plus a wide margin, so panning stays smooth.
   function viewBox(margin) {
     const b = map.getBounds();
@@ -1561,6 +1606,7 @@
     if (!builtView) { rebuild(); return; }
     const v = viewBox(0.05);
     if (needsRebuild || Math.abs(map.getZoom() - lastZ) > 0.005 || v[0] < builtView[0] || v[1] < builtView[1] || v[2] > builtView[2] || v[3] > builtView[3]) rebuild();
+    else if (tagFade < 1) setTagFade(1, 260);
     requestAnimationFrame(() => renderLive()); // its own frame, so the settle after a gesture isn't one long task
   }
 
@@ -1603,6 +1649,7 @@
       wscale: minorScale(zNow), bikes: enabled.has("trails") && BIKES ? bikeWidths(zNow) : null };
     lastParams = p;
     const msg = { id: ++buildSeq, p };
+    buildZoom.set(msg.id, zNow);
     if (!worker) {
       const t = performance.now();
       const out = engine.build(p); drawStats.requested++;
@@ -1614,6 +1661,9 @@
   // the final view, so the gesture never competes with a stream of obsolete geometry.
   function onZoom() {
     needsRebuild = true;
+    if (labelZ == null || tagFade === 0) return;
+    const dz = map.getZoom() - labelZ;
+    if (dz < -TAG_OUT || dz > TAG_IN) setTagFade(0, 140);
   }
 
   // ---------------------------------------------------------------- route tags (canvas)
@@ -1833,10 +1883,9 @@
     // and the fade also sets others (stop and tag opacity)
     if (hovDim.to !== 1) {
       for (const [id, prop] of DIM_OWN) dimPaint(id, prop, 1, 0);
-      dimPaint("badges", "icon-opacity", 1, 0);
     }
     dimBase.clear(); cancelAnimationFrame(hovDim.raf); Object.assign(hovDim, { v: 1, from: 1, to: 1, raf: 0, key: "" });
-    netDim = 1; // the loop below resets every layer to its normal look
+    netDim = 1; tagHov = 1; // the loop below resets every layer to its normal look
     for (const set of [baseLayers(P), transitLayers(P), areaLayers(P, theme), poiLayers(P, theme), destLayers(P, theme), stopLayers(P, theme), tripLayers(P, theme), liveLayers(P), topLabelLayers(P)]) {
       for (const L of set) {
         try {
@@ -1847,6 +1896,7 @@
         } catch {}
       }
     }
+    paintBadges(0);
     for (const L of poiLayers(P, theme)) {
       try {
         if (map.getLayer(L.id) && L.layout && L.layout["icon-image"]) map.setLayoutProperty(L.id, "icon-image", L.layout["icon-image"]);
@@ -1929,6 +1979,7 @@
             return false;
           });
           if (f3 === 5 && wt3 === 0) { v.ts = varint(r); return true; } // timestamp
+          if (f3 === 7 && wt3 === 2) { v.stop = str(); return true; }     // stop_id: the stop it is at or heading to
           if (f3 === 9 && wt3 === 0) { v.occ = varint(r); return true; }     // occupancy_status
           if (f3 === 10 && wt3 === 0) { v.occPct = varint(r); return true; } // occupancy_percentage
           if (f3 === 8 && wt3 === 2) return sub((f4, wt4) => {   // vehicle descriptor
@@ -2505,15 +2556,38 @@
   const pathS = (v, now) => v.s0 + (v.s1 - v.s0) * Math.min(1, Math.max(0, (now - v.t0) / (v.dur || POLL_MS)));
   // A new fix for a vehicle on route r: which path it is on, and where along it. prev is the
   // vehicle as shown so far (or null), bearing its reported heading (or null).
-  function placeOnPath(r, lonlat, bearing, prev, now) {
+  // A stop id from a live feed ("1_2010" or "2010", agency a) as this map names it ("kcm-2010")
+  function ownStopId(id, a) {
+    id = String(id || "");
+    if (!id) return null;
+    if (!ownStopId.rev) ownStopId.rev = Object.fromEntries(Object.entries((LIVE && LIVE.stopAgency) || {}).map(([k, v]) => [String(v), k]));
+    const i = id.indexOf("_"), ag = i > 0 ? id.slice(0, i) : a, rest = i > 0 ? id.slice(i + 1) : id;
+    const key = ownStopId.rev[ag] || ownStopId.rev[a];
+    return key ? `${key}-${rest}` : null;
+  }
+  // where along path p its stop `stop` lies at or after s - near (metres), or null
+  function stopAhead(p, stop, s, near) {
+    if (!p.s || !p.d) return null;
+    const L = p.cum[p.cum.length - 1], D = p.d[p.d.length - 1] || 1;
+    for (let i = 0; i < p.s.length; i++) if (p.s[i] === stop && p.d[i] / D * L >= s - near) return p.d[i] / D * L;
+    return null;
+  }
+  function placeOnPath(r, lonlat, bearing, prev, now, hint = null) {
     const paths = routePaths(r);
     if (!paths || !paths.length) return null;
     const m = toM(lonlat[0], lonlat[1]);
     const lastM = prev && prev.fixM, curS = prev && prev.pat ? pathS(prev, now) : null;
+    // the stop the vehicle is at or heading to counts only if one of the route's paths serves it
+    const byStop = hint && paths.some((p) => p.s && p.s.includes(hint.stop)) ? hint : null;
     let best = null;
     for (const p of paths) {
       for (const h of pathHits(p, m)) {
         let score = h.d, sure = false;
+        if (byStop) {
+          // a path that doesn't reach that stop from here is the other direction's (or a variant's)
+          if (stopAhead(p, byStop.stop, h.s, byStop.near) == null) score += 150;
+          else { score -= 15; sure = true; }
+        }
         // progress along this path since the last fix says which way the vehicle goes
         if (lastM) {
           const back = pathHits(p, lastM).reduce((q, x) => (!q || Math.abs(x.s - h.s) < Math.abs(q.s - h.s) ? x : q), null);
@@ -2600,8 +2674,10 @@
           for (const x of (d.data && d.data.list) || []) {
             const ts = x.tripStatus;
             if (!ts) continue;
+            const o = ts.orientation; // degrees counterclockwise from east, along the trip's own path
             live.status.set(a + "_" + plainId(x.vehicleId), { dev: ts.scheduleDeviation, predicted: !!ts.predicted, upd: x.lastUpdateTime, got: Date.now(),
-              occ: occCode(ts.occupancyStatus), occN: ts.occupancyCount, occCap: ts.occupancyCapacity });
+              occ: occCode(ts.occupancyStatus), occN: ts.occupancyCount, occCap: ts.occupancyCapacity,
+              ori: o != null && isFinite(o) ? ((90 - o) % 360 + 360) % 360 : null, next: ts.nextStop || ts.closestStop || "", trip: plainId(ts.activeTripId || x.tripId || "") });
           }
         }
       } catch (e) { /* status is a bonus; positions still work */ }
@@ -2627,9 +2703,17 @@
           if (prev) { prev.unseenAt = 0; prev.leaving = 0; }
           // On land, the vehicle rides its route's path (placeOnPath). A bearing of exactly 0 is how
           // many feeds say "unknown", so it doesn't count as north.
-          const brg = v.bearing != null && isFinite(v.bearing) && v.bearing > 0 ? v.bearing : null;
+          // Most buses report no heading at all, so until one had moved 20 m along its route between two
+          // fixes it showed no pointer (a bus waiting at a stop or a layover never got one: Nov 28).
+          // Two more things say which way it goes: the stop it is at or heading to (the feed's own
+          // stop_id, else OneBusAway's next stop) and OneBusAway's heading along the bus's trip.
+          const st = live.status.get(a + "_" + plainId(v.id));
+          const stFresh = st && Date.now() - st.got < 120000 && (!st.trip || !v.trip || st.trip === plainId(v.trip)) ? st : null;
+          let brg = v.bearing != null && isFinite(v.bearing) && v.bearing > 0 ? v.bearing : null;
+          if (brg == null && stFresh && stFresh.ori != null) brg = stFresh.ori;
+          const hint = v.stop ? { stop: ownStopId(v.stop, a), near: 80 } : stFresh && stFresh.next ? { stop: ownStopId(stFresh.next, a), near: 600 } : null;
           const samePrev = prev && prev.r && prev.r.id === r.id ? prev : null;
-          const placed = a !== "95" && CAT[dkey(r)]?.group !== "water" ? placeOnPath(r, to, brg, samePrev, now) : null;
+          const placed = a !== "95" && CAT[dkey(r)]?.group !== "water" ? placeOnPath(r, to, brg, samePrev, now, hint && hint.stop ? hint : null) : null;
           const extra = { ts: v.ts, label: v.label || (prev && prev.label), vid: v.id, name, head: v.head || (prev && prev.head),
             occ: occCode(v.occ) != null ? occCode(v.occ) : prev && prev.occ, occPct: v.occPct != null ? v.occPct : prev && prev.occPct };
           if (placed) {
@@ -2886,6 +2970,19 @@
     if (LIVE && live.last && !live.error && Date.now() - live.last < 90000) return "live";
     return SCHED ? "est" : null;
   }
+  // How bright each route's vehicles are: the same as its line. A vehicle of a route that is
+  // lit (selected, hovered, or focused by a card: a trip, a stop, "Stay on board") stays full;
+  // every other one fades with the rest of the network, whether a hover faded it (hovDim) or
+  // a selection or focus did (netDim). Only the hover fade used to reach the vehicles, so behind
+  // a focus that dims the network to 0.18-0.38 every bus stayed fully lit (Nov 28).
+  function vehFader() {
+    const lit = new Set();
+    if (selected && selected.type === "route") lit.add(selected.id);
+    if (hovDim.ids && hovDim.ids !== BIKE_DIM) for (const id of hovDim.ids) lit.add(id);
+    if (hoverKey) for (const r of hoverRoutes) if (r) lit.add(r.id);
+    const rest = Math.min(hovDim.ids ? hovDim.v : 1, netDim < 1 ? Math.max(0.25, netDim) : 1);
+    return (id) => (lit.has(id) ? 1 : rest);
+  }
   function renderVehicles(now = performance.now()) {
     if (!map || !map.getSource("vehicles")) return;
     const mode = live.mode = vehMode();
@@ -2927,6 +3024,7 @@
     const priority = (v) => v.r ? CAT[dkey(v.r)]?.prio ?? 99 : 99;
     const ordered = sel ? list : list.slice().sort((a, b) => Number(!!a.est) - Number(!!b.est) || priority(a) - priority(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     const anyCatOn = LAYERS.some((l) => enabled.has(l.key) && KEY_NAME[l.key]);
+    const fadeOf = vehFader();
     for (const v of ordered) {
       const r = v.r;
       if (!r || LINEIDX[r.id] == null) continue;
@@ -2950,7 +3048,7 @@
         markerGrid.get(key).push(p);
       }
       feats.push({ type: "Feature", properties: { id: v.id, r: r.id, c, tc: c, lab: v.name || shortLabel(r), b: Math.round(b), m: vehKind(r),
-        s: 20 - CAT[dkey(r)].prio, est: v.est ? 1 : 0, o: +((hovDim.ids && !hovDim.ids.has(r.id) ? hovDim.v : 1) * (v.fade != null ? v.fade : 1)).toFixed(3) }, geometry: { type: "Point", coordinates: pos } });
+        s: 20 - CAT[dkey(r)].prio, est: v.est ? 1 : 0, o: +(fadeOf(r.id) * (v.fade != null ? v.fade : 1)).toFixed(3) }, geometry: { type: "Point", coordinates: pos } });
     }
     let liveCount = 0, estCount = 0;
     for (const f of feats) {
@@ -3237,29 +3335,33 @@
     cv.width = cv.height = S;
     const ctx = cv.getContext("2d", { willReadFrequently: true }), c = S / 2, R = VEH_R * dpr;
     if (kind === "vdir") {
-      // The point of a pin: drawn over the badge, so the badge's white border runs out into the
-      // point and its color fills it, one outline around circle and point together (the layer
-      // turns it to the heading). Only the part outside the colored circle is drawn, so the
-      // symbol on the badge stays clear.
-      const Ro = R + 2 * dpr, T = Ro + 12 * dpr;
-      const pin = (ro, t) => {
-        const th = Math.acos(ro / t);
-        ctx.beginPath(); ctx.moveTo(c, c - t);
-        ctx.lineTo(c + ro * Math.sin(th), c - ro * Math.cos(th));
-        ctx.arc(c, c, ro, -Math.PI / 2 + th, 3 * Math.PI / 2 - th, false);
+      // One smooth shape: the badge drawn out into a rounded point, circle and point joined by
+      // the lines tangent to both, so the outline never breaks or kinks. One white border and one
+      // soft shadow go around the whole of it (the shadow straight under, as the shape turns).
+      // The layer turns it to the heading; the upright symbol is drawn on top ("vglyph").
+      // Nov 28: the point used to be a separate wedge laid over a round badge, and read as a
+      // circle with an arrow stuck to it.
+      const Ro = R + 2 * dpr, T = Ro * 1.72, rt = 2.6 * dpr, up = -Math.PI / 2;
+      const hull = (r1, r2) => {
+        const a = Math.acos((r1 - r2) / T);
+        ctx.beginPath();
+        ctx.moveTo(c + r1 * Math.cos(up + a), c + r1 * Math.sin(up + a));
+        ctx.lineTo(c + r2 * Math.cos(up + a), c - T + r2 * Math.sin(up + a));
+        ctx.arc(c, c - T, r2, up + a, up - a, true);
+        ctx.lineTo(c + r1 * Math.cos(up - a), c + r1 * Math.sin(up - a));
+        ctx.arc(c, c, r1, up - a, up + a, true);
         ctx.closePath();
       };
-      ctx.save();
-      ctx.beginPath(); ctx.rect(0, 0, S, S); ctx.arc(c, c, R - 0.5 * dpr, 0, Math.PI * 2, true); ctx.clip();
-      ctx.lineJoin = "round";
-      // a soft shadow under the point only (the badge casts its own)
-      ctx.save();
-      ctx.beginPath(); ctx.rect(0, 0, S, c - Ro * 0.55); ctx.clip();
-      ctx.shadowColor = "rgba(0,0,0,.28)"; ctx.shadowBlur = 3 * dpr; ctx.shadowOffsetY = 0.8 * dpr;
-      pin(Ro, T); ctx.fillStyle = "#fff"; ctx.fill();
-      ctx.restore();
-      pin(Ro, T); ctx.fillStyle = "#fff"; ctx.fill(); ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.4 * dpr; ctx.stroke();
-      pin(R, T * R / Ro); ctx.fillStyle = color; ctx.fill(); ctx.strokeStyle = color; ctx.lineWidth = 1 * dpr; ctx.stroke();
+      ctx.shadowColor = "rgba(0,0,0,.3)"; ctx.shadowBlur = 3.5 * dpr;
+      hull(Ro, rt); ctx.fillStyle = "#fff"; ctx.fill();
+      ctx.shadowColor = "transparent";
+      hull(R, Math.max(0.5 * dpr, rt - 2 * dpr)); ctx.fillStyle = color; ctx.fill();
+    } else if (kind === "vglyph") {
+      // the symbol alone, upright, for the shape under it; the colored disc behind it is drawn
+      // again so the symbol's cut-outs land on exactly that color
+      ctx.beginPath(); ctx.arc(c, c, R - 0.6 * dpr, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill();
+      ctx.save(); ctx.translate(c, c); ctx.scale(R * 0.6, R * 0.6);
+      vehGlyph(ctx, mode || "bus", color);
       ctx.restore();
     } else {
       ctx.shadowColor = "rgba(0,0,0,.3)"; ctx.shadowBlur = 3.5 * dpr; ctx.shadowOffsetY = 1 * dpr;
@@ -4182,6 +4284,10 @@
   // Fade the network back (level < 1) so one route stands out; 1 restores it.
   let netDim = 1;
   function setNetDim(level) {
+    // A chosen bike route keeps the rest of the map faded. Whatever lets go of a hover, a focus or
+    // a card asks for 1 here (focusOff when the pointer leaves the map or a pan starts, a card's
+    // mouseleave), and that used to undo the bike's fade while its card was still open (Nov 28).
+    if (level === 1 && trailHlCat != null) level = 0.38;
     if (!map || !map.getLayer("line-bus") || level === netDim) return;
     netDim = level;
     if (ribbons) map.triggerRepaint();
@@ -4190,7 +4296,8 @@
       const base = L.paint["line-opacity"] != null ? L.paint["line-opacity"] : 1;
       map.setPaintProperty(L.id, "line-opacity", level === 1 ? base : typeof base === "number" ? base * level : ["*", base, level]);
     }
-    map.setPaintProperty("badges", "icon-opacity", level === 1 ? 1 : Math.max(0.12, level * 0.6));
+    paintBadges(200);
+    if (!liveAnimRaf) renderVehicles();
     // Bike trails are lines too: a selected route or trail dims every other line on the map,
     // not just other routes. setBikeLegendHover/setTrailSelection refine this further (by
     // facility or by name) right after calling setNetDim, so this generic fade is their base.
@@ -4203,6 +4310,7 @@
       const baseTO = trailBase("trail-labels", "text-opacity");
       map.setPaintProperty("trail-labels", "text-opacity", level === 1 ? baseTO : baseTO * level);
     }
+    if (trailHlCat != null || trailHoverCat != null) refreshTrailPaint(); // the bike refinement on top of the generic fade
     syncHoverDim(); // a hover fade only applies on top of the full-strength map
   }
 
@@ -4256,8 +4364,9 @@
     const to = hoverDimTarget(), dur = calm() ? 0 : to < 1 ? 200 : 190;
     if (to !== hovDim.to) {
       for (const [id, prop] of DIM_OWN) dimPaint(id, prop, to, dur);
+      tagHov = to;
       if (netDim === 1) {
-        dimPaint("badges", "icon-opacity", to, dur);
+        paintBadges(dur);
         for (const id of TRAIL_LINE_LAYERS) dimPaint(id, "line-opacity", to, dur);
         dimPaint("trail-labels", "text-opacity", to, dur);
         if (!ribbons) for (const L of transitLayers(BASE[theme])) if (L.source === "net" && L.type === "line") dimPaint(L.id, "line-opacity", to, dur);
@@ -4704,6 +4813,12 @@
   // full set of switches ("Layers"). Everything advanced lives on the Layers page.
   let panelView = "home", corridorRoutes = [];
   // the service types in the Guide, in the order a rider meets them
+  // Explore's Layers icon: three stacked sheets, the top one outlined, the two under it solid,
+  // drawn in the panel's accent (18 px, like the other Explore icons)
+  const LAYERS_ICON = `<svg class="layers-ic" viewBox="0 0 20 20" aria-hidden="true">
+    <path d="M10 2.4 17.3 6.3 10 10.2 2.7 6.3Z" fill="currentColor" fill-opacity=".16" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+    <path d="m2.9 9.9 7.1 3.8 7.1-3.8" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="m2.9 13.5 7.1 3.8 7.1-3.8" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" opacity=".55"/></svg>`;
   const SERVICE_TYPES = [
     ["link", "Sound Transit light rail: the 1, 2 and T Lines"],
     ["rail", "Sounder commuter trains and Amtrak Cascades intercity trains"],
@@ -4934,12 +5049,13 @@
       </ul>` : "";
 
     const throughRoutePreview = [RBY["metro-1"], RBY["metro-14"]].filter(Boolean);
-    const throughRoutesHomeHTML = `<button type="button" class="through-routes-home press" id="openThroughRoutes">
-      <span class="through-routes-home-icon" aria-hidden="true">${poiIconSVG("transfer", 19)}</span>
-      <span class="txt"><span class="name">Stay on board through Downtown</span><span class="desc">Some buses continue as another route — no curbside transfer or extra fare.</span></span>
-      <span class="through-routes-home-badges" aria-hidden="true">${throughRoutePreview.map((r) => badgeHTML(r)).join("<span class=\"through-routes-home-arrow\">➔</span>")}</span>
-      <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="m1.5 1.5 5 5.5-5 5.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    </button>`;
+    // Nov 28: this was a green card of its own above Explore, louder than anything else on the
+    // panel; it is one of the things to explore, so it is a row like the others.
+    const throughRoutesHomeHTML = `<li><button type="button" class="row nav-row" id="openThroughRoutes">
+          <span class="icon"><svg viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3 3 7l4 4M3 7h12a4 4 0 0 1 4 4v1M17 21l4-4-4-4m4 4H9a4 4 0 0 1-4-4v-1"/></g></svg></span>
+          <span class="txt"><span class="name">Stay on board through Downtown</span><span class="desc">Buses that continue as another route</span></span>
+          <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="m1.5 1.5 5 5.5-5 5.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button></li>`;
 
     const nonTrailKeys = keys.filter((l) => l.key !== "trails");
     const hasTrails = enabled.has("trails");
@@ -4948,28 +5064,34 @@
     const html = `<div class="home-view">
       <p class="live-line${live ? "" : " off"}"><span class="pulse" aria-hidden="true"></span><span${live ? ' id="liveDesc"' : ""}>${live ? esc(liveStatusText()) : "Vehicles are hidden"}</span></p>
       ${favSectionHTML}
-      ${throughRoutesHomeHTML}
       <h3 class="section">Explore</h3>
       <ul class="group" role="list">
         <li><button class="row nav-row" id="openLayers" type="button">
-          <span class="icon"><svg viewBox="0 0 30 30" aria-hidden="true"><path d="M15 7 25 12 15 17 5 12Z" fill="var(--accent)" opacity=".9"/><path d="M6.5 16.3 15 20.5l8.5-4.2" stroke="var(--accent)" stroke-width="1.8" fill="none" stroke-linejoin="round" stroke-linecap="round" opacity=".55"/></svg></span>
+          <span class="icon">${LAYERS_ICON}</span>
           <span class="txt"><span class="name">Layers</span><span class="desc">${shown} of ${LAYERS.length} shown${isDefaultLayers() ? "" : " · customized"}</span></span>
           <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="m1.5 1.5 5 5.5-5 5.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button></li>
         <li><button class="row nav-row" id="openLegendGuide" type="button">
-          <span class="icon guide-row-ic">${poiIconSVG("legend", 20)}</span>
+          <span class="icon">${poiIconSVG("legend", 18)}</span>
           <span class="txt"><span class="name">Transit Map Guide & Legend</span><span class="desc">Service levels, bus runs & symbols</span></span>
           <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="m1.5 1.5 5 5.5-5 5.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button></li>
+        ${throughRoutesHomeHTML}
         ${alertRow}
       </ul>
-      ${nonTrailKeys.length ? `<h2 class="section">On the map</h2><ul class="key-grid" role="list">${nonTrailKeys.map((l) =>
-        `<li><span class="sw">${swatch(l)}${keySymbol(l.key)}</span><span>${esc(KEY_NAME[l.key])}</span></li>`).join("")}</ul>` : ""}
+      ${nonTrailKeys.length ? `<div class="svc-key-card">
+        <div class="svc-key-head"><h2 class="section">On the map</h2>
+          <button type="button" class="bike-info-btn" id="svcInfoBtn" aria-label="What each kind of line means, and how many routes it has" aria-expanded="false" aria-controls="svcInfo">i</button></div>
+        <div class="bike-info svc-info" id="svcInfo" role="dialog" aria-label="Service types" hidden>${svcInfoHTML()}</div>
+        <ul class="key-grid" role="list">${nonTrailKeys.map((l) =>
+        `<li><span class="sw">${swatch(l)}${keySymbol(l.key)}</span><span>${esc(KEY_NAME[l.key])}</span></li>`).join("")}</ul></div>` : ""}
       ${bikeLegendHTML}
       ${!keys.length ? `<p class="hint">Every layer is off. Turn some on in Layers.</p>` : `<p class="hint">Tap a colored band or bike route to choose it. Its path, stops, and details will stand out.</p>`}
       ${aboutFooterHTML()}
     </div>`;
     const existing = body().querySelector(".home-view");
+    // a quiet refresh (new alerts, a filter) keeps an open "i" card open, pinned or not
+    const openInfo = existing ? [...existing.querySelectorAll(".bike-info:not([hidden])")].map((e) => [e.id, e.dataset.pinned === "1"]) : [];
     if (quiet && existing) existing.outerHTML = html;
     else setView(html);
     $("#openLayers")?.addEventListener("click", () => { panelView = "layers"; showLayers(); openSheet("half"); });
@@ -4993,11 +5115,13 @@
     const oa = $("#openAlerts");
     if (oa) oa.addEventListener("click", () => { panelView = "alerts"; showAlerts(); openSheet("half"); });
     bindFavListEvents();
-    // the key's "i": hovering it (or its card) shows what each kind means; a click keeps it open
-    const ib = body().querySelector("#bikeInfoBtn"), info = body().querySelector("#bikeInfo");
-    if (ib && info) {
+    // the keys' "i" (transit and bikes): hovering it (or its card) shows what each kind means; a click keeps it open
+    for (const [ib, info] of [["#svcInfoBtn", "#svcInfo"], ["#bikeInfoBtn", "#bikeInfo"]].map(([a, b]) => [body().querySelector(a), body().querySelector(b)])) {
+      if (!ib || !info) continue;
       let pinned = false, t = 0;
-      const show = (on) => { clearTimeout(t); info.hidden = !on; ib.setAttribute("aria-expanded", on ? "true" : "false"); ib.classList.toggle("on", on); };
+      const show = (on) => { clearTimeout(t); info.hidden = !on; info.dataset.pinned = on && pinned ? "1" : ""; ib.setAttribute("aria-expanded", on ? "true" : "false"); ib.classList.toggle("on", on); };
+      const was = quiet && openInfo.find(([id]) => id === info.id);
+      if (was) { pinned = was[1]; show(true); }
       const later = () => { clearTimeout(t); if (!pinned) t = setTimeout(() => show(false), 220); };
       ib.addEventListener("click", (e) => { e.stopPropagation(); pinned = !(pinned && !info.hidden); show(pinned); });
       for (const el of [ib, info]) {
@@ -5415,6 +5539,67 @@
     return `<div class="bike-info-head"><b>What each kind of bike line means</b><button type="button" class="bike-info-x" aria-label="Close">×</button></div>
       ${sum}${bar}<ul class="bike-info-list" role="list">${groups}</ul>
       <p class="bike-info-src">Shares by length of SDOT's own bike map (its Existing Bike Facilities and Multi-use Trails${sh && sh.fetched ? `, downloaded ${esc(sh.fetched)}` : ""}). Gravel trails are outside Seattle, from county data.</p>`;
+  }
+  // The transit key's "i": what each kind of line means, how many routes of it are on the map
+  // and how they run (midday weekday headway, hours a day, weekends), all from the timetables,
+  // then how to read the drawing itself. Counts are of the routes on the map (LINES).
+  const SVC_GROUPS = [["Trains", ["link", "rail", "streetcar", "monorail"]], ["Buses", ["rapid", "frequent", "local", "peak"]],
+    ["On the water", ["water"]], ["On demand", ["dart", "flex"]]];
+  function svcStats(key) {
+    const item = LAYERS.find((l) => l.key === key);
+    if (key === "flex") { const n = (AREAS && AREAS.flex && AREAS.flex.features || []).length; return n ? { n, unit: n === 1 ? "zone" : "zones" } : null; }
+    if (!item || !item.cats.length) return null;
+    const rs = LINES.filter((r) => r && item.cats.includes(r.cat));
+    if (!rs.length) return null;
+    const med = (xs) => { xs = xs.filter((x) => x != null).sort((a, b) => a - b); return xs.length ? xs[(xs.length - 1) >> 1] : null; };
+    const wk = rs.map((r) => (r.sched && r.sched.weekday) || {});
+    const mid = med(wk.map((w) => (w.mid_n >= 3 ? w.mid : null)));
+    const span = med(wk.map((w) => w.span_h));
+    const wkend = rs.filter((r) => r.sched && ((r.sched.saturday && r.sched.saturday.trips) || (r.sched.sunday && r.sched.sunday.trips))).length;
+    const rail = ["link", "rail", "streetcar", "monorail"].includes(key);
+    return { n: rs.length, unit: rail ? (rs.length === 1 ? "line" : "lines") : rs.length === 1 ? "route" : "routes", mid, span, wkend };
+  }
+  function svcInfoHTML() {
+    const P = LINE[theme];
+    const color = { link: P.link1, rail: P.sounder, streetcar: P.streetcar, monorail: P.monorail, rapid: P.rapidride, frequent: P.frequent,
+      local: P.local, peak: P.peak, water: P.ferry, dart: P.dart, flex: FLEX[theme] };
+    const desc = Object.fromEntries(SERVICE_TYPES);
+    const st = Object.fromEntries(SVC_GROUPS.flatMap(([, ks]) => ks).map((k) => [k, svcStats(k)]));
+    const n = (ks) => ks.reduce((a, k) => a + ((st[k] && k !== "flex" && st[k].n) || 0), 0);
+    const total = n(["link", "rail", "streetcar", "monorail", "rapid", "frequent", "local", "peak", "water", "dart"]);
+    const often = n(["link", "streetcar", "monorail", "rapid", "frequent"]);
+    const facts = (k) => {
+      const s = st[k];
+      if (!s || k === "flex") return "";
+      const bits = [];
+      if (s.mid != null && s.mid < 60) bits.push(`Midday about every ${s.mid} min`);
+      if (s.span) bits.push(`${bits.length ? "" : "Runs "}${Math.round(s.span)} hours a day`);
+      if (s.wkend === s.n) bits.push(s.n > 1 ? "all run weekends" : "runs weekends");
+      else if (s.wkend) bits.push(`${s.wkend} of ${s.n} run weekends`);
+      else bits.push("weekdays only");
+      return bits.join(" · ");
+    };
+    const bar = total ? `<div class="bike-info-bar" role="img" aria-label="${SVC_GROUPS.flatMap(([, ks]) => ks).filter((k) => st[k] && k !== "flex").map((k) => `${KEY_NAME[k]} ${st[k].n}`).join(", ")}">${
+      SVC_GROUPS.flatMap(([, ks]) => ks).filter((k) => st[k] && k !== "flex").map((k) => `<span style="flex:${st[k].n};background:${color[k]}" title="${esc(KEY_NAME[k])}: ${st[k].n}"></span>`).join("")}</div>` : "";
+    const groups = SVC_GROUPS.map(([name, ks]) => {
+      ks = ks.filter((k) => st[k]);
+      if (!ks.length) return "";
+      return `<li class="bike-info-fam"><div class="bike-info-fam-head"><b>${esc(name)}</b></div>
+        <ul role="list">${ks.map((k) => `<li class="bike-info-kind svc-info-kind"><span class="sw">${swatch({ key: k })}${keySymbol(k)}</span><span class="txt"><span class="nm"><b>${esc(KEY_NAME[k])}</b><span class="bike-info-pct">${st[k].n} ${st[k].unit}</span></span><span class="ds">${esc(desc[k] || "")}</span>${facts(k) ? `<span class="ds svc-facts">${esc(facts(k))}</span>` : ""}</span></li>`).join("")}</ul></li>`;
+    }).join("");
+    const how = [
+      ["Wider bands", "More routes share that street. Point at a band to pick out each route; tap it to choose one."],
+      ["Dashed lines", "Rush-hour and part-day buses, boats, and the areas a Dial-a-Ride bus can leave its route in."],
+      ["Route numbers", "Tags along each line; \u201c+3\u201d means three more routes share it."],
+      ["Small chevrons", "The street is one way for those buses, in the direction they point."],
+      ["Markers with a point", "Trains, buses and boats, pointing the way they are heading. Solid ones are live GPS; slightly faded ones are where the timetable puts a trip."],
+    ];
+    return `<div class="bike-info-head"><b>What each kind of line means</b><button type="button" class="bike-info-x" aria-label="Close">×</button></div>
+      ${total ? `<p class="bike-info-sum"><b>${total} routes</b> are on the map. <b>${often}</b> of them come every 15 minutes or better most of the day; ${st.local ? `<b>${st.local.n}</b> run all day, less often; ` : ""}${st.peak ? `<b>${st.peak.n}</b> run only at rush hour or a few times a day.` : ""}</p>` : ""}
+      ${bar}<ul class="bike-info-list" role="list">${groups}
+        <li class="bike-info-fam"><div class="bike-info-fam-head"><b>Reading the map</b></div>
+          <ul role="list" class="svc-how">${how.map(([a, b]) => `<li><b>${esc(a)}</b> ${esc(b)}</li>`).join("")}</ul></li></ul>
+      <p class="bike-info-src">From the agencies' timetables${builtText() ? `, updated ${esc(builtText())}` : ""}. Midday is 9 AM to 3 PM on a weekday, in the busier direction; hours are first to last trip.</p>`;
   }
   function bikeLegendCardHTML() {
     const sh = bikeShares(), f = bikeFacilityFilter;
@@ -6343,22 +6528,61 @@
     bikeFeatCache.set(b, f);
     return f;
   }
+  // A bike route of one kind is a whole connected network, often along many streets (one route lights
+  // as one): its cards name the street the pointer is on, and the network it belongs to.
+  const bikeStreetName = (s) => (s || "").replace(/\s*\([^)]*\)\s*$/, "");
+  const bikeStreetsMemo = new Map();
+  // the streets a route's pieces name (each piece names its longest street, so a piece along
+  // several hides the rest: `more`), the route's own street first
+  function bikeStreets(b) {
+    if (!bikeStreetsMemo.has(b)) {
+      const len = new Map(), r = (BIKES && BIKES.routes[b]) || {};
+      let more = false;
+      for (const pc of (BIKES && BIKES.pieces) || []) {
+        if (pc.b !== b) continue;
+        const pp = BIKES.props[pc.p] || {}, n = bikeStreetName(pp.street || pp.name);
+        if (n) len.set(n, (len.get(n) || 0) + (pp.length_mi || 0));
+        if ((pc.n || 1) > 1) more = true;
+      }
+      const main = bikeStreetName(r.n);
+      const names = [...len.keys()].sort((a, c) => (c === main) - (a === main) || len.get(c) - len.get(a));
+      bikeStreetsMemo.set(b, { names, more, multi: names.length > 1 || more });
+    }
+    return bikeStreetsMemo.get(b);
+  }
+  // the street the pointer is on (the piece's own, or its longest when it runs along several), else
+  // the route's own name
+  function bikeTitle(b, here) {
+    const r = (BIKES && BIKES.routes[b]) || {}, h = here && here.name ? bikeStreetName(here.street || here.name) : "";
+    return bikeStreets(b).multi ? (h || bikeStreetName(r.n)) : r.n;
+  }
+  // "Part of one connected network, also along 2nd Ave, 4th Ave, Pike St, Dexter Ave N and more"
+  function bikeNetLine(b, title, full) {
+    const { names, more, multi } = bikeStreets(b);
+    if (!multi) return "";
+    const rest = names.filter((n) => n !== title), shown = full ? rest.slice(0, 4) : [];
+    const tail = rest.length > shown.length || more ? " and more" : "";
+    const k = ((BIKES && BIKES.routes[b]) || {}).k;
+    return `Part of one connected ${k === "trail" || k === "unpaved" ? "trail" : "network"}${shown.length ? `, also along ${shown.map(esc).join(", ")}${tail}` : ""}`;
+  }
   function bikeCard(b, here, at) {
     const r = (BIKES && BIKES.routes[b]) || {}, f = bikeRouteFeature(b), p = f.properties, k = r.k || "trail";
     const [kindName, col] = [bikeKindName(k, p), (BIKE_KIND[k] || BIKE_KIND.trail)[1]];
     const icon = bikeIcon(k, 17);
     const statusBadge = p.status === "UNDERCONS" ? ` · <span class="incline-badge" style="background:#fbbf24;color:#78350f">Under Construction</span>` : "";
-    const herePart = here && here.name && here.name !== r.n ? `<p class="trail-meta">Here: <strong>${esc(here.name)}</strong></p>` : "";
+    const title = bikeTitle(b, here) || p.name || "Bike route", net = bikeNetLine(b, title, true);
+    const herePart = net ? `<p class="trail-meta">${net}</p>`
+      : here && here.name && here.one !== false && here.name !== r.n ? `<p class="trail-meta">Here: <strong>${esc(here.name)}</strong></p>` : "";
     return `<div class="pop">
       <div style="display:flex;align-items:center;gap:6px;margin:2px 0 6px">
         <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;background:${col};color:#fff;padding:2px 8px;border-radius:6px">${esc(kindName)}</span>
         ${statusBadge}
       </div>
-      <h3 style="margin:0 0 4px">${icon} ${esc(r.n || p.name || "Bike route")}</h3>
-      <p class="trail-meta"><strong>${k === "unpaved" ? "Gravel / Unpaved Surface" : "Paved Surface"}</strong>${bikeMiles(r) ? ` · ${bikeMiles(r)}` : ""}${p.region ? ` · ${esc(p.region)}` : ""}</p>
+      <h3 style="margin:0 0 4px">${icon} ${esc(title)}</h3>
+      <p class="trail-meta"><strong>${k === "unpaved" ? "Gravel / Unpaved Surface" : "Paved Surface"}</strong>${bikeMiles(r) ? ` · ${bikeMiles(r)}${net ? " in all" : ""}` : ""}${p.region ? ` · ${esc(p.region)}` : ""}</p>
       ${herePart}
       <p>${esc((BIKE_BY[k] && k !== "unpaved" && k !== "trail" ? BIKE_BY[k].desc : "") || (here && here.desc) || p.desc || (BIKE_BY[k] || BIKE_BY.trail).desc)}</p>
-      ${at ? `<div style="margin-top:10px">${directionsHTML(at[1], at[0], r.n || p.name)}</div>` : ""}
+      ${at ? `<div style="margin-top:10px">${directionsHTML(at[1], at[0], title)}</div>` : ""}
       <p class="foot" style="margin-top:8px;font-size:11px;color:var(--muted)">${p.region === "Seattle" ? "From SDOT's bike map" : `From ${esc(p.region || "county")} trail data`}</p>
     </div>`;
   }
@@ -9824,11 +10048,13 @@
   const bikeIcon = (k, size) => poiIconSVG(k === "greenway" ? "park" : k === "pbl" ? "shield" : "bike", size);
   const bikeMiles = (route) => (route && route.km ? `${(route.km / 1.609).toFixed(route.km < 16 ? 1 : 0)} mi` : "");
   function bikeTip(bk) {
-    const k = bk.k, name = (bk.route && bk.route.n) || bk.p.name || "Bike route", col = (BIKE_KIND[k] || BIKE_KIND.trail)[1];
+    const k = bk.k, col = (BIKE_KIND[k] || BIKE_KIND.trail)[1];
     const icon = bikeIcon(k, 16);
     // (a line along several streets carries the details of its longest one: name it only when it is the one street)
-    const street = bk.np === 1 && bk.p.name && bk.p.name !== name ? `<br><span class="tt-more">Here: ${esc(bk.p.name)}</span>` : "";
-    return `<span class="tt-trail">${icon} <b>${esc(name)}</b>${bikeMiles(bk.route) ? ` · ${bikeMiles(bk.route)}` : ""}<br><span style="color:${col};font-weight:700">${esc(bikeKindName(k, bk.p))}</span>${k === "unpaved" ? " · Gravel" : ""} · Tap for details${street}</span>`;
+    const name = bikeTitle(bk.b, bk.p) || bk.p.name || "Bike route", net = bikeNetLine(bk.b, name, false);
+    const street = net ? `<br><span class="tt-more">${net}${bikeMiles(bk.route) ? `, ${bikeMiles(bk.route)}` : ""}</span>`
+      : bk.np === 1 && bk.p.name && bk.p.name !== name ? `<br><span class="tt-more">Here: ${esc(bk.p.name)}</span>` : "";
+    return `<span class="tt-trail">${icon} <b>${esc(name)}</b>${!net && bikeMiles(bk.route) ? ` · ${bikeMiles(bk.route)}` : ""}<br><span style="color:${col};font-weight:700">${esc(bikeKindName(k, bk.p))}</span>${k === "unpaved" ? " · Gravel" : ""} · Tap for details${street}</span>`;
   }
 
   // ---------------------------------------------------------------- interaction
@@ -10146,7 +10372,7 @@
     }
     function openBikeCard(bk, ll) {
       setTrailSelection(bk.b);
-      openPopup(ll, bikeCard(bk.b, bk.np === 1 ? bk.p : { ...bk.p, name: null }, [ll.lng, ll.lat]), "300px");
+      openPopup(ll, bikeCard(bk.b, { ...bk.p, one: bk.np === 1 }, [ll.lng, ll.lat]), "300px");
     }
     function openAreaPopup(f, ll) {
       if (f.layer.id === "dart-fill") highlightDartArea(f.properties.slug || f.properties.route);
@@ -10462,6 +10688,9 @@
         }
       }
     });
+    // what pressed last: a mouse (it has been hovering, so a click does what the hover shows) or a finger
+    let byMouse = false;
+    map.getCanvasContainer().addEventListener("pointerdown", (ev) => { byMouse = ev.pointerType === "mouse"; }, { passive: true, capture: true });
     map.on("click", (e) => {
       tipHide(true);
       closePopup(); showLens(null);
@@ -10469,11 +10698,19 @@
         handleMapClickForDirections(e.lngLat);
         return;
       }
+      // A tap takes a stop or station a little way off (a finger is wide). With a mouse, though, a
+      // click does what the pointer shows: a stop it isn't squarely on doesn't take the click from the
+      // bike lane or route the pointer is on, lit or about to be (Nov 28: a click on a lit bike lane on
+      // Broadway opened the streetcar stop 10 px away).
+      const litElse = byMouse && !pickStop(e.point) && ((cur && cur.kind !== "stop") || (() => { const p = pickLineOrBike(e.point); return !!(p.ln || p.bk); })());
       // a tap right on a station's circle opens the station, even with a train, bus or place label beside it
-      const onStation = map.getLayer("stations") && map.getLayoutProperty("stations", "visibility") !== "none"
+      const onStation = !litElse && map.getLayer("stations") && map.getLayoutProperty("stations", "visibility") !== "none"
         ? map.queryRenderedFeatures([[e.point.x - 4, e.point.y - 4], [e.point.x + 4, e.point.y + 4]], { layers: ["stations"] }) : [];
-      if (enabled.has("pois") && !onStation.length) {
-        const destHits = map.queryRenderedFeatures([[e.point.x - 10, e.point.y - 10], [e.point.x + 10, e.point.y + 10]], {
+      // places too: a finger takes one 10 px off; a mouse only where hovering shows it (8 px, and not
+      // while the pointer is on a lit route)
+      const pr = byMouse ? 8 : 10;
+      if (enabled.has("pois") && !onStation.length && !(byMouse && onFocusLine(e.point))) {
+        const destHits = map.queryRenderedFeatures([[e.point.x - pr, e.point.y - pr], [e.point.x + pr, e.point.y + pr]], {
           layers: DESTINATION_LAYER_IDS.filter((l) => map.getLayer(l))
         });
         if (destHits.length) {
@@ -10483,7 +10720,7 @@
             return;
           }
         }
-        const basePoiHits = map.queryRenderedFeatures([[e.point.x - 10, e.point.y - 10], [e.point.x + 10, e.point.y + 10]], {
+        const basePoiHits = map.queryRenderedFeatures([[e.point.x - pr, e.point.y - pr], [e.point.x + pr, e.point.y + pr]], {
           layers: BASE_POI_LAYER_IDS.filter((l) => map.getLayer(l))
         });
         const basePoi = mapPoiFromFeature(basePoiHits.find((f) => f.properties?.name), e.lngLat);
@@ -10515,7 +10752,7 @@
         }
         return;
       }
-      const hit = map.queryRenderedFeatures([[e.point.x - 7, e.point.y - 7], [e.point.x + 7, e.point.y + 7]], { layers: hitLayers() });
+      const hit = litElse ? [] : map.queryRenderedFeatures([[e.point.x - 7, e.point.y - 7], [e.point.x + 7, e.point.y + 7]], { layers: hitLayers() });
       if (hit.length) {
         const f = hit.find((h) => h.layer.id === "stations") || hit[0];
         if (f.layer.id === "flex") {
@@ -11248,7 +11485,7 @@
     map.touchZoomRotate.disableRotation();
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
     map.on("styleimagemissing", (e) => {
-      if (e.id.startsWith("veh:") || e.id.startsWith("vdir:")) drawVehicle(e.id);
+      if (e.id.startsWith("veh:") || e.id.startsWith("vdir:") || e.id.startsWith("vglyph:")) drawVehicle(e.id);
       else if (e.id.startsWith("poi:")) drawPoiIcon(e.id);
       else if (e.id.startsWith("shield:")) drawShield(e.id);
       else if (e.id.startsWith("b:")) drawBadge(e.id);

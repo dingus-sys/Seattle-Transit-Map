@@ -15,7 +15,12 @@ it to the transit network (site/data/bikes.json). Checked here:
  6. the Burke-Gilman Trail is one route of its full length;
  7. inside Seattle it is SDOT's own network (pipeline/sdot_bikes.json.gz, its bike map's
     "Existing Bike Facilities" and "Multi-use Trails"): every one of its eight kinds is drawn, as
-    that kind, along nearly all of its length.
+    that kind, along nearly all of its length;
+ 8. no gaps at corners: where SDOT's own lines meet (the end of one on another), the map's lines
+    meet too (43rd Ave W stopped 11 m short of Discovery Park Blvd; 485 of 1,885 corners had a gap);
+ 9. every county trail through Seattle is drawn its whole length, except where it runs beside one
+    of SDOT's own street lines (the Green Lake loop was cut wherever the protected lanes on the
+    lake's streets came within 30 m of it).
 """
 import gzip
 import hashlib
@@ -41,6 +46,10 @@ ON_OSM = 0.92          # share of the network that must lie on OpenStreetMap's w
 ANGLE_LIMIT = 25       # corners between two long stretches allowed in all
 SDOT_SHARE = 0.97      # share of each kind of SDOT's network drawn as that kind, within SDOT_M
 SDOT_M = 15.0          # (its lines run down the street's middle; the map's follow OpenStreetMap's)
+NETWORK = {"pbl", "offst", "buffered", "lane", "climb", "greenway", "sharrow", "unknown"}
+CORNER_SHARE = 0.96    # share of SDOT's corners where the map's lines meet too (within CORNER_M)
+CORNER_M = 1.0
+TRAIL_SHARE = 0.92     # share of each county trail through Seattle drawn, as that trail or beside SDOT's line
 SDOT_KIND = {"BKF-NGW": "greenway", "BKF-PBL": "pbl", "BKF-BBL": "buffered", "BKF-BL": "lane",
              "BKF-CLMB": "climb", "BKF-SHW": "sharrow", "BKF-OFFST": "offst"}
 
@@ -146,8 +155,9 @@ def main():
             continue
         i, j = ends[x][0], ends[y][0]
         if B[i] != B[j]:
-            # two kinds with two names (a trail ending where a bike lane starts) are two routes
-            if kind[i] == kind[j] or (name[i] and name[i] == name[j]):
+            # two kinds with two names (a trail ending where a bike lane starts) are two routes, and
+            # two of SDOT's street kinds are two networks (pipeline/clean_bikes.py NETWORK_KINDS)
+            if kind[i] == kind[j] or (name[i] and name[i] == name[j] and not (kind[i] in NETWORK and kind[j] in NETWORK)):
                 split.append(f"{K[i]} / {K[j]} at {feats[i]['geometry']['coordinates'][0 if x % 2 == 0 else -1]}")
         elif np.hypot(*(ends[x][1] - ends[y][1])) > 0.5:
             gaps.append(K[i])
@@ -207,7 +217,75 @@ def main():
     check("Seattle is SDOT's own bike map: all eight kinds and its trails, each drawn as itself", len(want) >= 9 and not low,
           ", ".join(f"{k} {share[k]:.1%} of {miles[k]:.1f} mi" for k in sorted(share, key=lambda k: -miles[k])))
 
-    print(f"{len(fails)} of 8 checks failed" if fails else "all 8 bike checks passed")
+    # 8. corners: SDOT's merged lines (one per street, kind and state, as pipeline/clean_bikes.py
+    #    makes them) whose end lies on another's; the map's lines of those two streets near there
+    sys.path.insert(0, os.path.join(ROOT, "pipeline"))
+    import clean_bikes
+    src = []
+    for f in clean_bikes.sdot_lines()[0]:
+        g = f["geometry"]
+        for c in ([g["coordinates"]] if g["type"] == "LineString" else g["coordinates"]):
+            src.append(((f["properties"].get("street"), f["properties"]["facility"]), LineString(to_m(c))))
+    drawn = defaultdict(list)
+    for f, l in zip(feats, lines):
+        if f["properties"].get("region") == "Seattle":
+            drawn[(f["properties"].get("street"), f["properties"]["k"])].append(l)
+    st = STRtree([l for _, l in src])
+    corners, apart = 0, []
+    for i, (ka, la) in enumerate(src):
+        for e in (la.coords[0], la.coords[-1]):
+            E = shapely.Point(e)
+            for j in st.query(E, predicate="dwithin", distance=1.5):
+                kb = src[j][0]
+                if j == i or kb == ka:
+                    continue
+                A = [l for l in drawn.get(ka, []) if l.distance(E) < 40]
+                B = [l for l in drawn.get(kb, []) if l.distance(E) < 40]
+                if not A or not B:
+                    continue  # one of them is drawn as a better kind there
+                corners += 1
+                d = min(a.distance(b) for a in A for b in B)
+                if d > CORNER_M:
+                    apart.append((d, ka[0], kb[0]))
+    apart.sort(reverse=True)
+    check("where SDOT's lines meet at a corner, the map's lines meet (no gaps)", 1 - len(apart) / max(corners, 1) >= CORNER_SHARE,
+          f"{1 - len(apart) / max(corners, 1):.1%} of {corners} corners, at least {CORNER_SHARE:.0%}; widest: "
+          + "; ".join(f"{a} / {b} {d:.0f} m" for d, a, b in apart[:3]))
+
+    # 9. the county trails through Seattle (the Green Lake loop is not in SDOT's trail layer)
+    ct = json.load(open(os.path.join(ROOT, "pipeline", "trails_saved.json")))["features"]
+    sdot_t = STRtree([l for _, l in src])
+    name_t = defaultdict(list)
+    for f, l in zip(feats, lines):
+        name_t[re.sub(r"[^a-z]", "", (f["properties"].get("name") or "").lower())].append(l)
+    short = []
+    for f in ct:
+        p = f["properties"]
+        if p.get("region") == "Seattle" or p.get("surface") == "unpaved":
+            continue
+        g = f["geometry"]
+        nm = re.sub(r"[^a-z]", "", (p.get("name") or "").lower())
+        own = STRtree(name_t[nm]) if name_t.get(nm) else None
+        for c in ([g["coordinates"]] if g["type"] == "LineString" else g["coordinates"]):
+            m = to_m(c)
+            pts, _ = resample(m, 10.0)
+            P = shapely.points(pts)
+            near_sdot = np.zeros(len(pts), bool)
+            near_sdot[sdot_t.query(P, predicate="dwithin", distance=SDOT_M)[0]] = True
+            if not near_sdot.any() and len(sdot_t.query(shapely.MultiPoint(pts), predicate="dwithin", distance=300)) == 0:
+                continue  # beyond Seattle
+            ok = near_sdot.copy()
+            if own is not None:
+                # the county's line is coarse (points 50-250 m apart): its chords cut the curves by up to 30 m
+                ok[own.query(P, predicate="dwithin", distance=35.0)[0]] = True
+            share = ok.mean()
+            if share < TRAIL_SHARE and len(pts) > 5:
+                short.append((share, p.get("name"), len(pts) * 10))
+    short.sort()
+    check("every county trail through Seattle is drawn its whole length (no gaps)", not short,
+          "; ".join(f"{n} {s:.0%} of {L / 1000:.1f} km" for s, n, L in short[:5]))
+
+    print(f"{len(fails)} of 10 checks failed" if fails else "all 10 bike checks passed")
     sys.exit(1 if fails else 0)
 
 

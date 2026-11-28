@@ -40,7 +40,7 @@ import numpy as np
 import shapely
 from pyproj import Transformer
 from shapely.geometry import LineString, MultiLineString, shape
-from shapely.ops import linemerge
+from shapely.ops import linemerge, nearest_points
 from shapely.strtree import STRtree
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -55,8 +55,18 @@ STEP = 5.0          # resample every 5 m
 SIGMA = 7.0         # how far the saved lines sit off OSM's
 DUP_M = 9.0         # a line within 9 m of a kept one, the same way, is a double
 DUP_NAMED = 22.0    # ...or within 22 m when it has the same name (two surveys of one trail)
-DUP_SDOT = 30.0     # ...and a county line within 30 m of one of SDOT's (a county survey of a Seattle trail
-                    # on the footway beside SDOT's protected lane, Linden Ave N) is SDOT's
+DUP_SDOT = 30.0     # ...and a county line within 30 m of one of SDOT's own trails is that trail (two surveys
+                    # under two names: "520 Trail" and "SR 520 Trail")
+DUP_STREET = 15.0   # ...or within 15 m of one of SDOT's street facilities: the county's survey of that street's
+                    # sidewalk or cycle track (the Interurban along Phinney, Greenwood and Dexter, the Elliott Bay
+                    # Trail on Alaskan Way). A path further off is a path of its own: the Green Lake loop runs
+                    # 20-30 m inside the protected lanes on the lake's streets, and was cut out where they came close
+ON_STREET_M = 8.0   # ...but a county line that itself runs down a street (within 8 m of its middle) is that
+                    # street's out to DUP_SDOT
+GAP_M = 30.0        # an end left this short of a line it meets in the source is carried on to it
+MEET_SDOT = 2.0     # SDOT's blocks meet at the street corner (within 2 m); the counties' coarse lines within 15 m
+MEET_COUNTY = 15.0
+CROSS_M = 40.0      # one street's bike route is carried across a crossing this wide
 MIN_PIECE = 25.0    # leftovers shorter than this are dropped
 NODE_M = 8.0        # ends within 8 m meet
 TRAIL_GAP_M = 800.0 # two pieces of one named trail this close are one route (a gap where streets carry it)
@@ -90,6 +100,11 @@ RANK = {"trail": 0, "pbl": 1, "offst": 2, "buffered": 3, "lane": 4, "climb": 5, 
 KINDS = set(RANK)
 # kinds on a path of their own (a cycleway or path is their best match, a street only fair)
 OFF_ROAD = {"trail", "pbl", "offst", "unpaved"}
+# SDOT's street kinds: a route is all of one kind that connects (a greenway network, the protected
+# lanes downtown, the sharrows round Discovery Park), through every corner and T-junction, so hovering
+# or tapping any street of it lights all of it. Trails keep their own names (the regional trails all
+# connect into one network of hundreds of kilometres).
+NETWORK_KINDS = KINDS - {"trail"}
 # Inside Seattle SDOT's own data comes first: the counties' regional trails include on-street links
 # (the Interurban Trail along Fremont, Linden and Phinney Ave N, the Magnolia Connector along Gilman
 # Ave W, the Elliott Bay Trail along Alaskan Way), which outranked the greenway, lanes or sharrows
@@ -195,7 +210,18 @@ def sdot_lines():
             if key not in seen:
                 seen.add(key)
                 uniq.append(c)
-        merged = linemerge(MultiLineString(uniq))
+        # ...and a block lying on top of a longer one of the same street (Broad St "between 4th Ave N
+        # and John St", 22 m over the end of the next block) is that block: merged, it made the line
+        # fold back on itself at the corner, so the line ended 22 m short of 4th Ave N
+        uniq.sort(key=lambda c: -LineString(to_m(c)).length)
+        keep = []
+        for c in uniq:
+            m = to_m(c)
+            pts = shapely.points(resample(m, 2.0))
+            if keep and all(shapely.distance(shapely.MultiLineString([to_m(k) for k in keep]), pts) < 3.0):
+                continue
+            keep.append(c)
+        merged = linemerge(MultiLineString(keep))
         for line in getattr(merged, "geoms", [merged]):
             mi = LineString(to_m(line.coords)).length / 1609.344
             # (a trail named for the street it runs beside says it is a trail)
@@ -450,15 +476,18 @@ def finish(out, on, raw):
 # ---------------------------------------------------------------- doubles
 class Kept:
     def __init__(self):
-        self.lines, self.names, self.sdot, self.tree = [], [], [], None
+        self.lines, self.names, self.sdot, self.kinds, self.tree = [], [], [], [], None
 
-    def add(self, pts, name="", sdot=False):
+    def add(self, pts, name="", sdot=False, k=""):
         self.lines.append(LineString(pts))
         self.names.append(name)
         self.sdot.append(sdot)
+        self.kinds.append(k)
         self.tree = None
 
-    def covered(self, pts, name="", county=False):
+    def covered(self, pts, name="", county=False, street=None):
+        """Per point: is it a double of a kept line? `street` marks the points of a county line whose
+        own survey runs down a street."""
         if not self.lines:
             return np.zeros(len(pts), bool)
         if self.tree is None:
@@ -469,8 +498,11 @@ class Kept:
         cov = np.zeros(len(pts), bool)
         if len(pi):
             near = shapely.distance(self.arr[li], shapely.points(pts[pi]))
-            lim = np.array([DUP_SDOT if county and self.sdot[j] else DUP_NAMED if name and self.names[j] == name
-                            else DUP_M for j in li])
+            sd = np.array([county and self.sdot[j] for j in li], bool)
+            tr = np.array([self.kinds[j] == "trail" for j in li], bool)
+            st = street[pi] if street is not None else np.zeros(len(pi), bool)
+            nm = np.array([bool(name) and self.names[j] == name for j in li], bool)
+            lim = np.where(sd, np.where(tr | st, DUP_SDOT, DUP_STREET), np.where(nm, DUP_NAMED, DUP_M))
             pi, li = pi[near <= lim], li[near <= lim]
         if len(pi):
             G = self.arr[li]
@@ -499,14 +531,99 @@ def runs(mask):
 
 
 # ---------------------------------------------------------------- routes
+def on_street(s, raw, ways):
+    """Per point of a county line (as matched): does the county's own survey run down a street here?"""
+    rl = LineString(raw)
+    r = shapely.line_interpolate_point(rl, shapely.line_locate_point(rl, shapely.points(s)))
+    out = np.zeros(len(s), bool)
+    if ways.tree is None:
+        return out
+    pi, wi = ways.tree.query(r, predicate="dwithin", distance=ON_STREET_M)
+    road = np.array([ways.cls[w] in ROAD for w in wi], bool)
+    out[pi[road]] = True
+    return out
+
+
+def close_gaps(pieces):
+    """Where two lines meet in the source, they meet on the map. SDOT's blocks meet at the street
+    corner, but a line's last metres can match onto the cross street's OSM way, or be cut off as a
+    double of it or as a leftover too short to keep, leaving its end short of the line it meets:
+    43rd Ave W stopped 11 m short of Discovery Park Blvd, 4th Ave N and Broad St both stopped 25 m
+    short of their corner. Such an end is carried on to the corner: onto the other line where it
+    passes the corner, or to the corner itself, where the other line is carried too. And one street's
+    two pieces of bike route facing each other across a crossing (S Willow St and S Alaska St across
+    the two roadways and the tracks of Martin Luther King Jr Way, where SDOT's own lines stop at each
+    kerb) are carried across it, up to CROSS_M."""
+    lines = [LineString(p["pts"]) for p in pieces]
+    raws = [LineString(p["raw"]) for p in pieces]
+    streets = [norm_name(p["p"].get("street") or p["p"].get("name")) for p in pieces]
+    tree = STRtree(lines)
+    n = 0
+
+    def heading_ok(c, end, t, d):
+        a, b = c[end], c[1 if end == 0 else -2]
+        out, to = a - b, t - a
+        ang = math.acos(max(-1.0, min(1.0, float(out @ to) / (np.hypot(*out) * np.hypot(*to) + 1e-9))))
+        return d <= 10 or ang <= math.radians(60)  # (a corner within 10 m is reached whichever way the end turns)
+
+    for i, p in [(i, p) for _ in range(2) for i, p in enumerate(pieces)]:  # twice: a corner reached by one line
+        for end in (0, -1):                                                # is then there for the next
+            c = p["pts"]
+            E = shapely.Point(c[end])
+            # (a line this end already touches needs nothing; another it meets at the same corner may)
+            near = [int(j) for j in tree.query(E, predicate="dwithin", distance=max(GAP_M, CROSS_M))
+                    if j != i and lines[j].distance(E) >= 0.5]
+            if not near:
+                continue
+            # the source's own line here: its last GAP_M metres where it ends near (a block can run a
+            # few metres past the corner and back), else the point beside this end (a double cut it)
+            if min(E.distance(shapely.Point(raws[i].coords[k])) for k in (0, -1)) < GAP_M:
+                src = raws[i].intersection(E.buffer(GAP_M))
+            else:
+                src = raws[i].interpolate(raws[i].project(E))
+            best = None
+            for j in near:
+                lim = MEET_SDOT if p["sdot"] and pieces[j]["sdot"] else MEET_COUNTY
+                md = src.distance(raws[j]) if not src.is_empty else 1e9
+                if md <= lim:
+                    # the corner, on the source: carried onto line j where it passes the corner (within
+                    # 6 m), else to the corner itself
+                    Q = nearest_points(src, raws[j])[1]
+                    t = np.asarray(lines[j].interpolate(lines[j].project(Q)).coords[0])
+                    if lines[j].distance(Q) > 6:
+                        t = np.asarray(Q.coords[0])
+                elif streets[i] and streets[i] == streets[j]:
+                    # the same street across a crossing: end to end, facing each other
+                    cj = pieces[j]["pts"]
+                    ej = min((0, -1), key=lambda k: E.distance(shapely.Point(cj[k])))
+                    t = cj[ej]
+                    if E.distance(shapely.Point(t)) > CROSS_M or not heading_ok(cj, ej, c[end], 99):
+                        continue
+                else:
+                    continue
+                d = float(np.hypot(*(t - c[end])))
+                if d <= GAP_M + (CROSS_M if md > lim else 0) and heading_ok(c, end, t, d) and (best is None or d < best[0]):
+                    best = (d, t)
+            if best is None or best[0] < 0.3:
+                continue
+            t = best[1]
+            p["pts"] = np.vstack([t[None], c]) if end == 0 else np.vstack([c, t[None]])
+            lines[i] = LineString(p["pts"])
+            n += 1
+    return n
+
+
 def join_routes(pieces):
     """Union pieces that meet end to end into routes. At a meeting point of two pieces they join
     when they are the same kind or the same street or trail (a trail that runs on the street for
     a few blocks is still that trail); where three or more meet, the same name first, then the
     two of one kind when no other of that kind meets there (a greenway turning a corner where a
     trail ends), then the straightest pair of one kind (under 50 degrees) joins, and the rest end
-    there. Last, the pieces of one named trail with a short gap between them (the Burke-Gilman's
-    missing link in Ballard, where SDOT's map has the streets' own lanes) are one route too."""
+    there; all the ends of one street or trail there are one route. SDOT's street kinds are then
+    joined into networks: every piece of one kind that touches another of that kind, end to end or
+    at a T-junction (NETWORK_KINDS). Last, the pieces of one named trail with a short gap between
+    them (the Burke-Gilman's missing link in Ballard, where SDOT's map has the streets' own lanes)
+    are one route too."""
     ends = []  # (piece, which end, point, heading pointing away from the piece)
     for i, p in enumerate(pieces):
         c = p["pts"]
@@ -523,8 +640,13 @@ def join_routes(pieces):
         return x
 
     def join(A, B):
-        # one route, and one point where the two pieces meet, so the line has no gap or step there
-        parent[find(A[0])] = find(B[0])
+        # one route, and one point where the two pieces meet, so the line has no gap or step there;
+        # two of SDOT's street kinds meet but stay two routes (each is its own kind's network: a
+        # street whose painted lane becomes sharrows lights the lanes, then the sharrows; chained,
+        # the networks of every kind made one route of 76 km)
+        if not (pieces[A[0]]["k"] != pieces[B[0]]["k"] and pieces[A[0]]["k"] in NETWORK_KINDS
+                and pieces[B[0]]["k"] in NETWORK_KINDS):
+            parent[find(A[0])] = find(B[0])
         m = (np.asarray(A[2]) + np.asarray(B[2])) / 2
         for e in (A, B):
             pieces[e[0]]["pts"][0 if e[1] == 0 else -1] = m
@@ -575,6 +697,22 @@ def join_routes(pieces):
                     continue
                 used |= {x, y}
                 join(node[x], node[y])
+            # one street or trail through its own junction (a loop and its stem) is one route
+            for x in range(len(node)):
+                for y in range(x + 1, len(node)):
+                    A, B = node[x], node[y]
+                    if names[A[0]] and names[A[0]] == names[B[0]] and pieces[A[0]]["k"] == pieces[B[0]]["k"]:
+                        parent[find(A[0])] = find(B[0])
+    # SDOT's street kinds: everything of one kind that touches, at its ends or at a T-junction
+    lines = [LineString(p["pts"]) for p in pieces]
+    lt = STRtree(lines)
+    for i, p in enumerate(pieces):
+        if p["k"] not in NETWORK_KINDS:
+            continue
+        for e in (p["pts"][0], p["pts"][-1]):
+            for j in lt.query(shapely.Point(e), predicate="dwithin", distance=NODE_M):
+                if j != i and pieces[j]["k"] == p["k"]:
+                    parent[find(i)] = find(int(j))
     # one named trail across a short gap
     tr = [e for e in ends if pieces[e[0]]["k"] in OFF_ROAD and names[e[0]]]
     if tr:
@@ -625,7 +763,7 @@ def main():
         s = resample(q["pts"], 2.5)
         nm = norm_name(q["p"].get("name")) if q["k"] in OFF_ROAD else ""
         sdot = q["p"].get("region") == "Seattle"
-        cov = kept.covered(s, nm, county=not sdot)
+        cov = kept.covered(s, nm, county=not sdot, street=None if sdot else on_street(s, q["raw"], ways))
         # a covered stretch shorter than 20 m is a crossing, not a double
         for c, i, j in runs(cov):
             if c and (j - i) * 2.5 < 20:
@@ -644,11 +782,12 @@ def main():
             if len(seg) < 2 or (j - i) * 2.5 < MIN_PIECE:
                 continue
             pts = simplify(seg, 0.15)
-            pieces.append({"p": q["p"], "k": q["k"], "pts": pts})
+            pieces.append({"p": q["p"], "k": q["k"], "pts": pts, "raw": q["raw"], "sdot": sdot})
         for c, i, j in runs(cov):
             if not c and (j - i) * 2.5 >= MIN_PIECE:
-                kept.add(s[i:j], nm, sdot)
+                kept.add(s[i:j], nm, sdot, q["k"])
     print(f"doubles removed: {dropped / 1000:.1f} km; {len(pieces)} pieces kept")
+    print(f"ends carried on to the line they meet: {close_gaps(pieces)}")
     groups = join_routes(pieces)
     out = []
     for b, grp in enumerate(sorted(groups, key=lambda g: -sum(LineString(pieces[i]["pts"]).length for i in g))):
